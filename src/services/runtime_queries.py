@@ -373,6 +373,27 @@ async def get_governance_metrics_data(agent_id: str, arguments: Dict[str, Any], 
     return standardized_metrics
 
 
+# Per-prefix scan ceiling for the `redis_cache.keys` health-check section.
+# At 10000 keys per prefix and a typical SCAN cost of <0.1s the probe stays
+# well inside the 15s budget; values past the cap are reported as "{cap}+".
+_HEALTH_KEYS_CAP = 10000
+_HEALTH_KEYS_SCAN_PAGE = 500
+
+
+async def _bounded_scan_count(redis, pattern: str, *, cap: int = _HEALTH_KEYS_CAP, page: int = _HEALTH_KEYS_SCAN_PAGE):
+    """Count keys matching `pattern` without materializing the cursor.
+
+    Returns the integer count, or `f"{cap}+"` once the ceiling is hit.
+    Caller should run multiple invocations under `asyncio.gather` for parallel fan-out.
+    """
+    n = 0
+    async for _ in redis.scan_iter(match=pattern, count=page):
+        n += 1
+        if n >= cap:
+            return f"{cap}+"
+    return n
+
+
 async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[str, Any]:
     """Build plain health-check data for operators and transports."""
     server = server or mcp_server
@@ -485,12 +506,27 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
                         "note": "Keyspace hit/miss counts cover the whole Redis instance, not just session_cache lookups.",
                     }
                     try:
-                        checks["redis_cache"]["keys"] = {
-                            "sessions": len([k async for k in redis.scan_iter(match="session:*", count=100)]),
-                            "rate_limits": len([k async for k in redis.scan_iter(match="rate_limit:*", count=100)]),
-                            "metadata": len([k async for k in redis.scan_iter(match="agent_meta:*", count=100)]),
-                            "locks": len([k async for k in redis.scan_iter(match="lock:*", count=100)]),
-                        }
+                        # Count keys per prefix in parallel with a per-prefix ceiling.
+                        # Sequential materializing scans (`len([k async for k in scan_iter(...)])`)
+                        # blew the 15s probe budget once `session:*` and `agent_meta:*` grew past
+                        # ~10K keys combined. `_bounded_scan_count` streams the cursor without
+                        # materializing the key list and short-circuits at `cap`, returning
+                        # `f"{cap}+"` so operators still see an "above ceiling" signal.
+                        labels = ("sessions", "rate_limits", "metadata", "locks")
+                        patterns = ("session:*", "rate_limit:*", "agent_meta:*", "lock:*")
+                        # Read cap/page from module namespace so test patches and operator
+                        # overrides take effect without per-call argument plumbing.
+                        results = await asyncio.gather(
+                            *(_bounded_scan_count(redis, p, cap=_HEALTH_KEYS_CAP, page=_HEALTH_KEYS_SCAN_PAGE) for p in patterns),
+                            return_exceptions=True,
+                        )
+                        keys_info: Dict[str, Any] = {}
+                        for label, value in zip(labels, results):
+                            if isinstance(value, BaseException):
+                                keys_info[f"{label}_error"] = str(value)
+                            else:
+                                keys_info[label] = value
+                        checks["redis_cache"]["keys"] = keys_info
                     except Exception as e:
                         checks["redis_cache"]["keys_error"] = str(e)
             except Exception as e:
