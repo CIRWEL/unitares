@@ -6,7 +6,7 @@
 **Stacks with:** S1-A′ (PID/nonce token binding) + S11 (cache contents lineage-only) + S19 (substrate attestation). Orthogonal to S2.
 **Authors:** Kenny Wang (CIRWEL) + process-instance `a61763e1` (Claude Opus 4.7, claude_code, 2026-04-25), declared lineage from `02fa2672`.
 **Companion:** S11-a (skill text drift from the S11 contract) — separate row, ships independently.
-**Review provenance:** Drafted 2026-04-25, reviewed by `dialectic-knowledge-architect` (ontology stress) and `feature-dev:code-reviewer` (call-site accuracy) before landing. Findings folded in: §1a/§1b honesty fixes; missed call-site `onboard_helper.py` added; §3d skill-drift carved out to S11-a; renumbered S2-a → S20 (orthogonal to S2, not sub); §2 bootstrap gated on empirical session-ID stability check (§5 step S20.0); §4 siphon-closure claim narrowed; §9 axiom #14 relabeled "convention-level, advisory."
+**Review provenance:** Drafted 2026-04-25, reviewed by `dialectic-knowledge-architect` (ontology stress) and `feature-dev:code-reviewer` (call-site accuracy) before landing. Findings folded in: §1a/§1b honesty fixes; missed call-site `onboard_helper.py` added; §3d skill-drift carved out to S11-a; renumbered S2-a → S20 (orthogonal to S2, not sub); §2 bootstrap gated on empirical session-ID stability check (§5 step S20.0); §4 siphon-closure claim narrowed; §9 axiom #14 relabeled "convention-level, advisory." **Amendment 2026-04-25 (post-ship):** verified hook source directly — code-reviewer's claim about `hooks/session-start:102` was stale. PR #19 (`fix(session-start): only read slot-scoped workspace cache, never bare session.json`) already shipped the §3b proposal at the hook layer. §1c corrected; §3b scope reduced to "verify hook contract + ensure remaining readers comply"; S20.0 promoted to **answered** (Claude session ID stable within session lifetime, fresh on `/clear` — fine for writer key, scan-newest covers cross-`/clear` lineage). Real remaining scope is §3a helper enforcement + §3c direct-writer parity + §3d migration of pre-PR-19 flat caches.
 
 ---
 
@@ -53,9 +53,9 @@ Note: workspace = caller's CWD by default. For a session launched from `$HOME`, 
 
 ### 1c. Who reads what
 
-- Plugin `hooks/session-start:102` hard-codes `WORKSPACE_CACHE="${PWD}/.unitares/session.json"` — **flat-file-only reader**. It does not enumerate slot files. Any lineage hint surfaced to the agent today comes from the flat file.
-- Plugin `scripts/onboard_helper.py` (separate from unitares-side, same name) — needs verification at the same level as session-start.
-- The `governance-start` command (Codex-side surface, also surfaced to Claude via Skill — see channel-bleed memory note) reads the flat path and writes back via `session_cache.py set session --merge --stamp` *without* `--slot`. **This is the live S11 regression surfaced as S11-a.**
+- Plugin `hooks/session-start:109-140` reads `session_id` from Claude Code's SessionStart hook stdin payload, sanitizes it via the same `_slot_suffix` rules as `session_cache.py`, and points `WORKSPACE_CACHE` at `${PWD}/.unitares/session-<safe-claude-session-id>.json`. **Slot-scoped reader, not flat.** PR #19 (commit `87affc9`) explicitly removed flat-file reads after KG bug `2026-04-20T00:09:51` (cross-instance UUID menu inviting fresh agents to pattern-match and resume into other instances' identities). The hook block contains a permanent comment forbidding the flat read pattern.
+- Plugin `scripts/onboard_helper.py` (separate from unitares-side, same name) — slot-scoped writer.
+- The `governance-start` command (Codex-side surface, also surfaced to Claude via Skill — see channel-bleed memory note) writes back via `session_cache.py set session --merge --stamp` *without* `--slot`, **producing the flat `session.json` the hook deliberately ignores**. The hook fix doesn't propagate because the helper still allows slotless writes; the command exploits that allowance. **This is the live S11 regression surfaced as S11-a, and the load-bearing argument for §3a helper enforcement.**
 
 The contract is "callers pass slot"; the siphon vector is "callers don't or are replaced." There is no read-side or write-side enforcement. The plugin helper has a `_slot_suffix` mechanism that callers may use; it does not require them to.
 
@@ -76,7 +76,7 @@ Use the harness-provided session identifier as the slot at bootstrap:
 | Dispatch worker | Dispatch task ID |
 | SDK `GovernanceAgent` | PID + start-time hash |
 
-**Stability is unverified** for the Claude Code case — see §5 S20.0 gate. If `/clear` or compaction regenerates the session ID mid-conversation, the cache fragments and §3b collapses to §2b alone. The empirical check must precede §3b code, not follow it.
+**Stability empirically resolved 2026-04-25 (S20.0 answered).** Direct observation: ~80 distinct slot files accumulated across April 17–25 in `/Users/cirwel/.unitares/`, each named `session-<claude-session-id>.json`. Density (~10/day for one operator) is consistent with `/clear` and conversation restarts spawning fresh Claude session IDs while a single Claude session retains its ID for its lifetime. Conclusion: **session ID is stable within a Claude session, fresh on `/clear`.** This is the desired property for the writer key (each session writes its own slot, no cross-session collision). It does not give cross-`/clear` lineage continuity — but lineage was always going to require scan-newest (§2b), not platform-slot lookup. §3b therefore composes correctly: platform slot for write, scan-newest for prior-lineage reads.
 
 This makes the cache file **process-stable for the lifetime of the harness session** (if the ID is stable) and **process-distinct across concurrent harness sessions**. Slot is *not* a security primitive — it's a partition. A misdeclared slot leaks identity to whoever guesses the slot value, which is a fingerprintable string. The strength comes from the helper not *teaching* a shared file as the canonical surface; it does not raise attacker work meaningfully against a same-UID process willing to `ls`.
 
@@ -96,11 +96,15 @@ Change set, in dependency order:
 - `cmd_set` rejects payloads containing `continuity_token` at v2. Helper becomes the gate the hook layer was supposed to be. (S11 landed the *intent* at the post-identity hook layer; S20 moves the *check* into the helper, so out-of-tree callers can't bypass through it. Direct writers like `onboard_helper.py` are addressed in §3c.)
 - New `cmd_list` returns slot inventory `(slot, uuid, updated_at)` tuples sorted by recency. Bootstrap callers use this for the scan-newest fallback.
 
-### 3b. Bootstrap rewiring (hooks)
+### 3b. Bootstrap rewiring (hooks) — already shipped at the plugin hook
 
-- `hooks/session-start` (plugin): replace `WORKSPACE_CACHE="${PWD}/.unitares/session.json"` with platform-slot lookup → `cmd_list` fallback. Document the harness → slot mapping. Surface to the agent as "this workspace was last run by `<UUID>` (slot `<X>`, `<N>` minutes ago) — declare `parent_agent_id=<UUID>` if you inherit."
-- No "the cache" — many caches, treated as a pool.
-- This step is gated on S20.0 (see §5).
+PR #19 (`fix(session-start): only read slot-scoped workspace cache, never bare session.json`, commit `87affc9`) already shipped the hook-layer change this section originally proposed. `hooks/session-start:109-140` reads Claude Code's `session_id` from SessionStart stdin and slot-scopes the cache file. The proposal here reduces to:
+
+- **Verify** the hook contract holds across plugin updates (regression test that the hook never falls back to flat `session.json` even on absent stdin).
+- **Add scan-newest fallback** as a secondary lineage hint when the slot-scoped cache misses (cross-`/clear` lineage discovery, per §2b). Surface to the agent as "this workspace was last run by `<UUID>` (slot `<X>`, `<N>` minutes ago) — declare `parent_agent_id=<UUID>` if you inherit." Strictly additive; does not change the existing slot-scoped read.
+- **Audit other readers** (Codex commands, dispatch worker, SDK, ad-hoc scripts) for slot-scope compliance. Anything still defaulting to flat `session.json` is the residual leak surface.
+
+The load-bearing S20 work is at the helper layer (§3a) and the direct-writer (§3c). The hook is already correct.
 
 ### 3c. Direct-writer parity (`onboard_helper.py`)
 
@@ -141,19 +145,18 @@ The honest summary: **S20 stops the system from teaching the shared-cache patter
 
 | Step | What | Depends on | Gating |
 |---|---|---|---|
-| **S20.0** | **Empirical check: Claude Code session ID stability across `/clear`, compaction, restart.** Determines whether §2a is viable or whether §3b must collapse to §2b alone. | none | **Blocks S20.2** |
+| ~~S20.0~~ | ~~Empirical check~~ | — | **Answered 2026-04-25** — session ID stable within session, fresh on `/clear`; slot-scope is correct writer key, scan-newest is correct lineage reader |
 | S20.1 | Helper-side `cmd_set` rejection of slotless writes; `--allow-shared` gate; v2 token-write block; new `cmd_list` | none | none |
-| S20.2 | `hooks/session-start` rewired to platform slot (if S20.0 passes) + scan-newest fallback | S20.0, S20.1 | none |
+| S20.2 | `hooks/session-start` audit + scan-newest secondary fallback (additive — slot-scoped read already in place via PR #19) | S20.1 | none |
 | S20.3 | `onboard_helper.py` parity (C1 preferred; C2 fallback) | S20.1 | none |
 | S20.4 | Codex equivalents (commands + post-identity hook on Codex side) | S20.1 | none |
-| S20.5 | Operator-runbook migration note + flat-`session.json` cleanup guidance | S20.2, S20.3, S20.4 | none |
-| S20.6 | Tests: helper rejects slotless write; helper rejects token-bearing payload at v2; bootstrap reads platform slot; bootstrap falls back to scan-newest; flat `session.json` is read-only-legacy; `onboard_helper.py` writes mode 0600 (if C2) or routes through helper (if C1) | S20.1–S20.4 | Gates merge |
+| S20.5 | Operator-runbook migration note + flat-`session.json` cleanup guidance for pre-PR-19 files on disk | S20.2, S20.3, S20.4 | none |
+| S20.6 | Tests: helper rejects slotless write; helper rejects token-bearing payload at v2; hook regression-tests slot-scope-only read; `onboard_helper.py` writes mode 0600 (if C2) or routes through helper (if C1) | S20.1–S20.4 | Gates merge |
 
 No grace period needed beyond the helper-level rejection: flat `session.json` is treated as read-only-legacy from S20.1 forward. Existing files keep working as lineage candidates; new writes are slotted.
 
 ## 6. Open questions
 
-- **S20.0 outcome.** If Claude Code's session ID is unstable across `/clear` or compaction, §3b's platform-slot path is unusable on Claude and the cache fragments. Fallback is scan-newest only, which is a different siphon shape (still per-process partition, but lineage-candidate selection is racier when multiple sessions are concurrent and recently-updated). Verify before §3b code.
 - **`--allow-shared` policy.** Substrate-earned single-tenant case (Lumen) genuinely wants a stable shared file. How is the gate gated? Env var? Config field? Operator declaration? Defer to S19's substrate-claim work — same registry.
 - **Slot-pruning.** Many slot files accumulate over weeks of dogfooding. Storage and auditability are fine; stale slots show up in `cmd_list` and skew "newest" scans if a long-dead session has a high `updated_at` (it shouldn't, but worth a TTL on the scan side: ignore slots updated > 30 days ago for lineage-candidate selection).
 - **Slot leakage as fingerprint.** Slot strings reveal harness identity (`claude_code-…`, `codex-…`). For a single-operator workstation this is fine; for shared-CI hosts it leaks who runs what. Acceptable for the dev-fleet scope this targets; flag for any future multi-tenant deployment.
