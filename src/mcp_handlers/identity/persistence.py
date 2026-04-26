@@ -122,7 +122,7 @@ async def _cache_session(
             if session_key not in _bind_fingerprints:
                 _bind_fingerprints[session_key] = bind_ip_ua
         except Exception as e:
-            logger.debug(f"_bind_fingerprints update failed for {session_key[:20]}...: {e}")
+            logger.debug(f"_bind_fingerprints update failed: {e}")
 
     session_cache = _get_redis()
     if session_cache:
