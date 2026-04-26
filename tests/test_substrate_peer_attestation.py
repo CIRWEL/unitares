@@ -97,6 +97,11 @@ def _mock_launchctl(monkeypatch: pytest.MonkeyPatch, *, returncode: int = 0,
     fake.returncode = returncode
     fake.stdout = stdout
     monkeypatch.setattr(pa.subprocess, "run", lambda *a, **k: fake)
+    # On non-darwin CI, pa._require_supported_platform() raises NotImplementedError
+    # before the subprocess mock can take effect — these tests exercise the
+    # launchctl parser, which is a pure-Python operation worth testing on every
+    # platform. Spoof platform=darwin so the parser is reachable everywhere.
+    monkeypatch.setattr(pa.sys, "platform", "darwin")
 
 
 def test_read_service_label_finds_governance_mcp(
@@ -142,6 +147,7 @@ def test_read_service_label_rejects_negative_pid_without_subprocess(
     Defense in depth: even if a caller passes a malformed PID upstream,
     we don't shell out and don't risk a false-positive on a shell quirk.
     """
+    monkeypatch.setattr(pa.sys, "platform", "darwin")
     called = MagicMock()
     monkeypatch.setattr(pa.subprocess, "run", called)
     assert pa.read_service_label(-1) is None
@@ -161,6 +167,7 @@ def test_read_service_label_handles_missing_launchctl(
     def boom(*a: object, **k: object) -> None:
         raise FileNotFoundError("launchctl")
 
+    monkeypatch.setattr(pa.sys, "platform", "darwin")
     monkeypatch.setattr(pa.subprocess, "run", boom)
     assert pa.read_service_label(123) is None
 
@@ -169,6 +176,7 @@ def test_read_service_label_handles_timeout(monkeypatch: pytest.MonkeyPatch) -> 
     def boom(*a: object, **k: object) -> None:
         raise subprocess.TimeoutExpired(["launchctl", "list"], 2.0)
 
+    monkeypatch.setattr(pa.sys, "platform", "darwin")
     monkeypatch.setattr(pa.subprocess, "run", boom)
     assert pa.read_service_label(123) is None
 
