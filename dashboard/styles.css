@@ -5141,6 +5141,23 @@ main {
     opacity: 0.85;
 }
 
+/* Error badge — surfaces when any Chronicler `.error` twin has points.
+   Hidden via [hidden] when nothing is failing. */
+.fleet-metrics-error-badge {
+    margin-left: 10px;
+    font-size: 0.65em;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    background: rgba(231, 76, 60, 0.18);
+    color: var(--red, #e74c3c);
+    border: 1px solid rgba(231, 76, 60, 0.4);
+    cursor: help;
+    vertical-align: middle;
+}
+
 /* Chart.js grow-loop guard (GitHub chartjs/Chart.js#11821, #1798, #5805).
  *
  * `responsive: true` + `maintainAspectRatio: false` inside a flex-column
