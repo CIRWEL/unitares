@@ -13,6 +13,8 @@ dashboard instead of as a missing line.
 from __future__ import annotations
 
 import asyncio
+import functools
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -36,12 +38,14 @@ def _fetchval(sql: str) -> float:
     dsn = os.environ.get("CHRONICLER_DB_DSN", DEFAULT_DSN)
 
     async def _run() -> float:
-        conn = await asyncpg.connect(dsn)
+        conn = None
         try:
+            conn = await asyncpg.connect(dsn)
             value = await conn.fetchval(sql)
             return float(value or 0)
         finally:
-            await conn.close()
+            if conn is not None:
+                await conn.close()
 
     return asyncio.run(_run())
 
@@ -118,6 +122,76 @@ def checkins_7d(_repo_root: Path) -> float:
     )
 
 
+# ---------------------------------------------------------------------------
+# GitHub traffic (CIRWEL org, non-archived repos, rolling 14-day window)
+# ---------------------------------------------------------------------------
+#
+# One process-lifetime fetch backs all four traffic scrapers — Chronicler is
+# a one-shot launchd job, so `lru_cache` here means "once per scrape run",
+# not "across cron invocations". That keeps the daily snapshot consistent
+# (all four series read the same underlying response) and keeps the GitHub
+# API call count to one repo-list + 2N traffic calls per day.
+#
+# Repo set is resolved live via `gh repo list CIRWEL` so the metric tracks
+# "current non-archived org surface" — adding a new public repo automatically
+# folds it into the next day's snapshot, and archiving one drops it.
+
+GITHUB_ORG = "CIRWEL"
+
+
+@functools.lru_cache(maxsize=1)
+def _fetch_cirwel_traffic() -> dict[str, int]:
+    """Fetch + aggregate GitHub traffic for non-archived ``GITHUB_ORG`` repos.
+
+    Returns a dict with keys ``views``, ``views_uniques``, ``clones``,
+    ``clones_uniques``. Each is a 14-day rolling total summed across the
+    org. Cached for the process lifetime — call ``cache_clear()`` from tests
+    that need to vary the underlying response.
+
+    Uses the ``gh`` CLI rather than raw HTTP so we inherit the user's
+    existing auth (no PAT plumbing needed in launchd). If ``gh`` is missing
+    or unauthenticated, ``subprocess.run`` raises and Chronicler emits the
+    paired ``.error`` metric.
+    """
+    list_proc = subprocess.run(
+        ["gh", "repo", "list", GITHUB_ORG, "--limit", "200", "--json", "name,isArchived"],
+        check=True, capture_output=True, text=True,
+    )
+    repos = [r for r in json.loads(list_proc.stdout) if not r.get("isArchived")]
+
+    totals = {"views": 0, "views_uniques": 0, "clones": 0, "clones_uniques": 0}
+    for repo in repos:
+        name = repo["name"]
+        for kind, count_key, uniq_key in (
+            ("views", "views", "views_uniques"),
+            ("clones", "clones", "clones_uniques"),
+        ):
+            proc = subprocess.run(
+                ["gh", "api", f"repos/{GITHUB_ORG}/{name}/traffic/{kind}"],
+                check=True, capture_output=True, text=True,
+            )
+            data = json.loads(proc.stdout)
+            totals[count_key] += int(data.get("count", 0))
+            totals[uniq_key] += int(data.get("uniques", 0))
+    return totals
+
+
+def github_cirwel_traffic_views_14d(_repo_root: Path) -> float:
+    return float(_fetch_cirwel_traffic()["views"])
+
+
+def github_cirwel_traffic_views_uniques_14d(_repo_root: Path) -> float:
+    return float(_fetch_cirwel_traffic()["views_uniques"])
+
+
+def github_cirwel_traffic_clones_14d(_repo_root: Path) -> float:
+    return float(_fetch_cirwel_traffic()["clones"])
+
+
+def github_cirwel_traffic_clones_uniques_14d(_repo_root: Path) -> float:
+    return float(_fetch_cirwel_traffic()["clones_uniques"])
+
+
 # Registry: metric name → scrape callable. Chronicler iterates this on each run.
 #
 # Keep this in sync with the server-side catalog in
@@ -130,4 +204,8 @@ SCRAPERS: dict[str, Callable[[Path], float]] = {
     "agents.active.7d": agents_active_7d,
     "kg.entries.count": kg_entries_count,
     "checkins.7d": checkins_7d,
+    "github.cirwel.traffic.views.14d": github_cirwel_traffic_views_14d,
+    "github.cirwel.traffic.views.uniques.14d": github_cirwel_traffic_views_uniques_14d,
+    "github.cirwel.traffic.clones.14d": github_cirwel_traffic_clones_14d,
+    "github.cirwel.traffic.clones.uniques.14d": github_cirwel_traffic_clones_uniques_14d,
 }

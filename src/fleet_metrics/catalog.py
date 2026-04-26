@@ -35,7 +35,13 @@ catalog: dict[str, Metric] = {}
 
 
 def register(metric: Metric) -> Metric:
-    """Add a metric to the catalog. Idempotent on identical re-registration."""
+    """Add a metric to the catalog. Idempotent on identical re-registration.
+
+    Also auto-registers a paired ``<name>.error`` twin so Chronicler's
+    failure-visibility path (POST ``<name>.error = 1`` on scrape failure)
+    isn't silently 404'd by the catalog gate. Metrics whose name already
+    ends in ``.error`` skip the auto-twin to avoid ``.error.error`` chains.
+    """
     existing = catalog.get(metric.name)
     if existing is not None and existing != metric:
         raise ValueError(
@@ -43,6 +49,14 @@ def register(metric: Metric) -> Metric:
             f"fields: existing={existing!r}, new={metric!r}"
         )
     catalog[metric.name] = metric
+    if not metric.name.endswith(".error"):
+        twin_name = f"{metric.name}.error"
+        if twin_name not in catalog:
+            catalog[twin_name] = Metric(
+                name=twin_name,
+                description=f"1 when the {metric.name} scraper raised; absence = success.",
+                unit="errors",
+            )
     return metric
 
 
@@ -93,4 +107,30 @@ register(Metric(
     name="checkins.7d",
     description="`process_agent_update` calls in the last 7 days — governance traffic (feeds paper v7 corpus-maturity status).",
     unit="calls",
+))
+
+# GitHub traffic for the CIRWEL org. The GitHub traffic API only exposes a
+# rolling 14-day window, so daily snapshots overlap heavily by design — the
+# longitudinal value is the trend curve, not point-in-time deltas. Aggregated
+# across all non-archived repos because per-repo series would mean ~64 entries
+# in this catalog before any of them earned their rent.
+register(Metric(
+    name="github.cirwel.traffic.views.14d",
+    description="GitHub page-view count summed across non-archived CIRWEL repos. GitHub traffic API rolling 14-day window; not daily delta.",
+    unit="views",
+))
+register(Metric(
+    name="github.cirwel.traffic.views.uniques.14d",
+    description="GitHub unique-visitor count summed across non-archived CIRWEL repos. GitHub traffic API rolling 14-day window; not daily delta.",
+    unit="visitors",
+))
+register(Metric(
+    name="github.cirwel.traffic.clones.14d",
+    description="GitHub clone count summed across non-archived CIRWEL repos. GitHub traffic API rolling 14-day window; not daily delta.",
+    unit="clones",
+))
+register(Metric(
+    name="github.cirwel.traffic.clones.uniques.14d",
+    description="GitHub unique-cloner count summed across non-archived CIRWEL repos. GitHub traffic API rolling 14-day window; not daily delta.",
+    unit="cloners",
 ))
