@@ -135,6 +135,10 @@ class StateMixin:
         self,
         identity_id: int,
     ) -> Optional[AgentStateRecord]:
+        """Latest measured state for an identity. Bootstrap (synthetic) rows
+        are excluded by default per onboard-bootstrap-checkin §4.1; this is
+        the user-visible "what is this agent's current state" question, and
+        a synthetic anchor is not the answer."""
         from config.governance_config import GovernanceConfig
         async with self.acquire() as conn:
             row = await conn.fetchrow(
@@ -145,6 +149,7 @@ class StateMixin:
                 FROM core.agent_state s
                 JOIN core.identities i ON i.identity_id = s.identity_id
                 WHERE s.identity_id = $1 AND s.epoch = $2
+                  AND s.synthetic = false
                 ORDER BY s.recorded_at DESC
                 LIMIT 1
                 """,
@@ -177,7 +182,15 @@ class StateMixin:
             return [self._row_to_agent_state(r) for r in rows]
 
     async def get_all_latest_agent_states(self) -> list[AgentStateRecord]:
-        """Get latest state per identity, using matview with base-table fallback."""
+        """Get latest measured state per identity, using matview with base-table fallback.
+
+        The matview is measured-only by definition (migration 019 bakes
+        `WHERE synthetic = false` into the matview SELECT), so the matview
+        path needs no query-time filter. The base-table fallback queries
+        agent_state directly and adds the filter explicitly. Both paths
+        agree: bootstrap rows never appear here. Per onboard-bootstrap-
+        checkin §4.1.
+        """
         async with self.acquire() as conn:
             try:
                 rows = await conn.fetch(
@@ -189,7 +202,9 @@ class StateMixin:
                     """,
                 )
             except Exception:
-                # Matview may not exist yet — fall back to base table
+                # Matview may not exist yet — fall back to base table.
+                # Filter `synthetic = false` here because the base table
+                # contains both measured and synthetic rows.
                 from config.governance_config import GovernanceConfig
                 logger.debug("Matview unavailable, falling back to base table")
                 rows = await conn.fetch(
@@ -201,6 +216,7 @@ class StateMixin:
                     FROM core.agent_state s
                     JOIN core.identities i ON i.identity_id = s.identity_id
                     WHERE s.epoch = $1
+                      AND s.synthetic = false
                     ORDER BY s.identity_id, s.recorded_at DESC
                     """,
                     GovernanceConfig.CURRENT_EPOCH,
@@ -212,9 +228,12 @@ class StateMixin:
         exclude_identity_id: int,
         minutes: int = 60,
     ) -> list[dict]:
-        """Get recent activity from other agents, grouped by agent.
+        """Get recent measured activity from other agents, grouped by agent.
 
         Returns list of dicts with agent_id, recorded_at (most recent), count.
+        Bootstrap (synthetic) rows are excluded — the COUNT is "how many real
+        check-ins" and a session-start anchor is not activity. Per onboard-
+        bootstrap-checkin §4.1.
         """
         from config.governance_config import GovernanceConfig
         window = minutes or GovernanceConfig.TEMPORAL_CROSS_AGENT_MINUTES
@@ -229,6 +248,7 @@ class StateMixin:
                 WHERE s.identity_id != $1
                   AND s.recorded_at > now() - ($2 * interval '1 minute')
                   AND s.epoch = $3
+                  AND s.synthetic = false
                 GROUP BY i.agent_id
                 ORDER BY MAX(s.recorded_at) DESC
                 LIMIT 5

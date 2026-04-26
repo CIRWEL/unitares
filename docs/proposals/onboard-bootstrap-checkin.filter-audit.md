@@ -28,7 +28,7 @@ These are reads where a bootstrap row appearing as the most-recent measured stat
 | # | Site | File:line | Decision | Enforcing test |
 |---|------|-----------|----------|----------------|
 | 1 | `get_latest_agent_state` (DAO) | `src/db/mixins/state.py:134` | exclude `synthetic = true` | `test_get_latest_excludes_bootstrap` |
-| 2 | `get_all_latest_agent_states` (DAO, matview + base-table fallback) | `src/db/mixins/state.py:179` | exclude `synthetic = true` in **both** branches | `test_all_latest_excludes_bootstrap` (covers matview path AND fallback path) |
+| 2 | `get_all_latest_agent_states` (DAO, matview + base-table fallback) | `src/db/mixins/state.py:179` | **matview rebuilt as measured-only** (migration 019: `WHERE synthetic = false` in matview SELECT); base-table fallback adds query-time `WHERE s.synthetic = false`. Cleaner than query-time filtering over an unfiltered matview. | `test_all_latest_excludes_bootstrap` (covers matview path AND fallback path) + `test_matview_definition_excludes_synthetic` (matview rowset itself does not contain bootstrap rows) |
 | 3 | `get_recent_cross_agent_activity` (DAO) | `src/db/mixins/state.py:210` | exclude `synthetic = true` | `test_cross_agent_activity_excludes_bootstrap` |
 | 4 | `get_latest_eisv_by_agent_id` (DAO) | `src/db/mixins/tool_usage.py:106` | exclude `synthetic = true` | `test_outcome_correlation_excludes_bootstrap` |
 
@@ -45,7 +45,7 @@ These are reads where bootstrap leakage is **either subtle (post-genesis traject
 
 | # | Site | File:line | Decision | Enforcing test |
 |---|------|-----------|----------|----------------|
-| 5 | `get_agent_state_history` (DAO) | `src/db/mixins/state.py:157` | **include w/ flag preserved** (default), but expose an `exclude_synthetic: bool = False` parameter that callers MAY set to filter | `test_history_preserves_synthetic_by_default` + `test_history_with_exclude_synthetic_filters` |
+| 5 | `get_agent_state_history` (DAO) | `src/db/mixins/state.py:157` | **default include synthetic** — matches the audit/lineage rule and avoids silently hiding bootstrap rows from historical/debug reads. Add `exclude_synthetic: bool = False` parameter (visible in DAO signature + this audit doc); the choke point for "measured-only history" is the explicit parameter plus tests, not a hard DAO default. History is not one semantic thing — callers legitimately need both "full record" and "measured-only record." | `test_history_preserves_synthetic_by_default` + `test_history_with_exclude_synthetic_filters` |
 | 6 | `hydrate_from_db_if_fresh` (in-memory monitor seeding from DB) | `src/agent_monitor_state.py:236` | call site uses `get_agent_state_history(..., exclude_synthetic=True)` so the in-memory monitor is never seeded from a synthetic row — this is the dialectic-flagged "trajectory integrator's prior-read at update time" | `test_hydration_excludes_bootstrap` (hydrating an agent with bootstrap-only history yields update_count=0) |
 
 **Downstream paths covered by site #6 (refuse-with-explanation falls out structurally):**
@@ -94,6 +94,6 @@ These are paths that *appear* to be filter sites but are safe-by-construction. T
 
 ## Caveats
 
-- **The matview is rebuilt by Phase 1 (migration 018) to project the `synthetic` column** — Phase 3a doesn't need a migration, just a `WHERE synthetic = false` clause on the matview SELECT. The base-table fallback in `get_all_latest_agent_states` needs the same filter (the spec §4 contract is "exclude in both branches" — easy to miss because the fallback is in a `try/except` block).
-- **The default for `get_agent_state_history` stays "include synthetic"** because changing it would be a silent semantic change for every existing caller. The hydration call site at #6 is the only one that needs `exclude_synthetic=True`; everywhere else the synthetic flag travels as data (per spec §4 inclusion rule #2 "Identity audit / lineage queries").
+- **The matview is rebuilt by Phase 3a (migration 019) as measured-only.** Phase 1 (migration 018) projected the `synthetic` column for filterability; Phase 3a goes one step further and bakes `WHERE synthetic = false` into the matview definition itself, so the matview rowset never contains bootstrap rows. This is cleaner than relying on query-time filtering over a mixed-content matview — a reader who never expects synthetic rows in the matview can't accidentally introduce a bug by writing a SELECT that omits the filter. The base-table fallback in `get_all_latest_agent_states` still adds a query-time `WHERE s.synthetic = false` because it queries the base table directly.
+- **The default for `get_agent_state_history` stays "include synthetic"** because changing it would be a silent semantic change for every existing caller, and history-as-audit-record legitimately wants the full picture. The hydration call site at #6 is the only one that needs `exclude_synthetic=True`; everywhere else the synthetic flag travels as data (per spec §4 inclusion rule #2 "Identity audit / lineage queries").
 - **`get_agent_state_history` is the only DAO method whose default behavior intentionally INCLUDES synthetic rows.** This is documented inline in the DAO docstring after Phase 3b lands.
