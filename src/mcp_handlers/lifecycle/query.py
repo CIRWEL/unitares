@@ -23,6 +23,7 @@ from ..decorators import mcp_tool
 from ..support.coerce import safe_float, resolve_agent_uuid
 from src.logging_utils import get_logger
 from src.cache import get_metadata_cache
+from src.agent_monitor_state import ensure_hydrated
 
 from .helpers import _is_test_agent
 
@@ -332,6 +333,7 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                     cached_health = getattr(meta, 'health_status', None)
                     try:
                         monitor = mcp_server.get_or_create_monitor(agent_id)
+                        await ensure_hydrated(monitor, agent_id)
                         metrics_dict = monitor.get_metrics()
 
                         # Get health status
@@ -384,6 +386,7 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                     # No cached health status or it's "unknown" - calculate it
                     try:
                         monitor = mcp_server.get_or_create_monitor(agent_id)
+                        await ensure_hydrated(monitor, agent_id)
                         metrics_dict = monitor.get_metrics()
                         attention_score = metrics_dict.get('attention_score') or metrics_dict.get('risk_score', None)
                         coherence = metrics_dict.get('coherence', None)

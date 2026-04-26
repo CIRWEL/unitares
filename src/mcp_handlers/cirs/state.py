@@ -131,6 +131,8 @@ async def _handle_state_announce_emit(arguments: Dict[str, Any]) -> Sequence[Tex
 
     # Get current state
     monitor = mcp_server.get_or_create_monitor(agent_id)
+    from src.agent_monitor_state import ensure_hydrated
+    await ensure_hydrated(monitor, agent_id)
     metrics = monitor.get_metrics()
 
     # Build EISV dict

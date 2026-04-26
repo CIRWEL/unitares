@@ -322,6 +322,8 @@ async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[Tex
     meta.recovery_attempt_at = recovery_ts
 
     monitor = mcp_server.get_or_create_monitor(agent_uuid)
+    from src.agent_monitor_state import ensure_hydrated
+    await ensure_hydrated(monitor, agent_uuid)
     metrics = monitor.get_metrics()
 
     coherence = safe_float(monitor.state.coherence, 0.5)
@@ -511,6 +513,8 @@ async def handle_ping_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         responsive = False
         try:
             monitor = mcp_server.get_or_create_monitor(agent_id)
+            from src.agent_monitor_state import ensure_hydrated
+            await ensure_hydrated(monitor, agent_id)
             metrics = monitor.get_metrics()
             responsive = True  # If we can get metrics, agent is responsive
         except Exception as e:

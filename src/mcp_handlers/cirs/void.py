@@ -48,6 +48,8 @@ async def _handle_void_alert_emit(arguments: Dict[str, Any]) -> Sequence[TextCon
 
     # Get current state for auto-detection
     monitor = mcp_server.get_or_create_monitor(agent_id)
+    from src.agent_monitor_state import ensure_hydrated
+    await ensure_hydrated(monitor, agent_id)
     current_V = float(monitor.state.V)
     current_coherence = float(monitor.state.coherence)
 
