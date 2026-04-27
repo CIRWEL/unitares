@@ -1366,10 +1366,22 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         # force_new value.
         if existing_identity.get("resume_failed"):
             if existing_identity.get("error") == "session_resolve_miss":
+                # If the caller didn't declare lineage, default the spawn
+                # reason to a legible label so the captured-fresh
+                # persistence path's ensure_agent_persisted call (~L1494)
+                # writes core.agents with a non-NULL spawn_reason. Without
+                # this fallback, every dispatch-time onboard with no prior
+                # session row lands in the no-lineage ghost population —
+                # the metric S21-a was supposed to move (council follow-up
+                # on the H4/lineage-decl gap, 2026-04-27 post-deploy
+                # canary refuted by 0 dispatch_auto_mint rows in
+                # core.agents). Caller-provided values are preserved.
+                if not _spawn_reason:
+                    _spawn_reason = "auto_onboard_no_session"
                 logger.info(
                     "[ONBOARD] No existing session for session_key=%s... "
-                    "minting fresh in-memory identity",
-                    base_session_key[:20],
+                    "minting fresh in-memory identity (spawn_reason=%s)",
+                    base_session_key[:20], _spawn_reason,
                 )
                 # Mint via persist=False + force_new=True so the captured-
                 # fresh branch below handles persistence + error surfacing

@@ -296,3 +296,96 @@ class TestS21APath2FailClosed:
 
         assert result.get("created") is True
         assert result.get("agent_uuid")
+
+
+# ---------------------------------------------------------------------------
+# T5 — onboard session_resolve_miss must persist with non-NULL spawn_reason
+# (S21-a-followup, 2026-04-27 post-deploy canary)
+# ---------------------------------------------------------------------------
+
+class TestS21AFollowupSpawnReason:
+
+    @pytest.mark.asyncio
+    async def test_onboard_session_resolve_miss_persists_spawn_reason(self):
+        """T5: when onboard hits session_resolve_miss with no caller-provided
+        spawn_reason, the captured-fresh persistence path must write
+        core.agents with spawn_reason='auto_onboard_no_session'.
+
+        S21-a's load-bearing fix (mint_guard) prevents Redis ghost
+        ratification but did not move the no-lineage ghost-fork rate —
+        post-deploy canary on 2026-04-27 found 0 'dispatch_auto_mint' rows
+        in core.agents because the spawn_reason set on the resolve retry
+        was never plumbed to the eventual ensure_agent_persisted call.
+        Setting the OUTER `_spawn_reason` variable (consumed at
+        handlers.py:~L1497) is the actual fix.
+        """
+        from types import SimpleNamespace
+        from src.mcp_handlers.identity.handlers import handle_onboard_v2
+
+        # DB mocks: no prior session, no existing identity, then identity
+        # appears after upsert (mirrors the captured-fresh persistence flow).
+        db = AsyncMock()
+        db.init = AsyncMock()
+        db.get_session = AsyncMock(return_value=None)
+        db.find_agent_by_label = AsyncMock(return_value=None)
+        db.get_agent_label = AsyncMock(return_value=None)
+        db.update_session_activity = AsyncMock()
+        db.create_session = AsyncMock()
+        db.upsert_agent = AsyncMock()
+        db.upsert_identity = AsyncMock()
+        db.update_agent_fields = AsyncMock(return_value=True)
+        db.get_agent_thread_info = AsyncMock(return_value=None)
+        db.get_thread_nodes = AsyncMock(return_value=[])
+        db.create_or_get_thread = AsyncMock()
+        db.claim_thread_position = AsyncMock(return_value=0)
+        # ensure_agent_persisted: first lookup is None (not yet persisted),
+        # second lookup returns the upserted row.
+        db.get_identity = AsyncMock(side_effect=[
+            None,  # resolve_session_identity PG lookup
+            None,  # ensure_agent_persisted check
+            SimpleNamespace(identity_id=42, metadata={}),  # after upsert
+        ])
+        db.get_agent = AsyncMock(return_value=None)
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=None)
+        mock_redis.bind = AsyncMock()
+
+        async def _get_raw():
+            r = AsyncMock()
+            r.get = AsyncMock(return_value=None)
+            r.setex = AsyncMock()
+            r.expire = AsyncMock()
+            return r
+
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {}
+
+        with patch("src.mcp_handlers.identity.persistence._redis_cache", None), \
+             patch("src.cache.get_session_cache", return_value=mock_redis), \
+             patch("src.mcp_handlers.identity.handlers.get_db", return_value=db), \
+             patch("src.mcp_handlers.identity.resolution.get_db", return_value=db), \
+             patch("src.mcp_handlers.identity.persistence.get_db", return_value=db), \
+             patch("src.cache.redis_client.get_redis", new=_get_raw), \
+             patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_session_key", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
+             patch("src.mcp_handlers.context.update_context_agent_id"), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server):
+            # client_session_id is a proof signal so S13's force_new gate
+            # does NOT fire. resume=True default → PATH 2 fail-closes →
+            # session_resolve_miss branch → captured-fresh path.
+            await handle_onboard_v2({"client_session_id": "agent-no-prior"})
+
+        # Inspect the upsert_agent calls. With the fix, the spawn_reason
+        # must be non-NULL — defaulted to "auto_onboard_no_session" when
+        # the caller didn't declare one.
+        assert db.upsert_agent.called, "upsert_agent never called — captured-fresh path didn't run"
+        call_kwargs = db.upsert_agent.call_args.kwargs
+        spawn_reason = call_kwargs.get("spawn_reason")
+        assert spawn_reason == "auto_onboard_no_session", (
+            f"expected spawn_reason='auto_onboard_no_session', got {spawn_reason!r}; "
+            f"the S21-a-followup outer-variable fix did not land. Without it, "
+            f"every session_resolve_miss-driven onboard mint persists with NULL "
+            f"spawn_reason and the no-lineage ghost-fork rate doesn't move."
+        )
