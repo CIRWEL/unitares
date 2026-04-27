@@ -212,6 +212,33 @@ class TestDemotionLogDeduplication:
             f"expected exactly 1 demote log line on first render, got {len(log_calls)}"
         )
 
+    def test_day_rollover_resets_dedup_set(self):
+        """Without this, the dedup set grows unboundedly across days
+        (Watcher P002 #925bfbe9). Day rollover must clear yesterday's
+        entries so the bound is O(N_fingerprints_today), not
+        O(N_fingerprints × N_days_alive)."""
+        from agents.watcher import findings as findings_mod
+
+        findings_mod._DEMOTION_LOG_SEEN.clear()
+        findings_mod._DEMOTION_LOG_SEEN_DAY = None
+
+        # Day 1: two fingerprints emit
+        assert findings_mod._demotion_log_should_emit("aaaa0001", "2026-04-27") is True
+        assert findings_mod._demotion_log_should_emit("aaaa0002", "2026-04-27") is True
+        # Re-emit on same day: deduped
+        assert findings_mod._demotion_log_should_emit("aaaa0001", "2026-04-27") is False
+
+        assert len(findings_mod._DEMOTION_LOG_SEEN) == 2
+
+        # Day rollover: fresh fingerprint emits AND set gets reset
+        assert findings_mod._demotion_log_should_emit("bbbb0001", "2026-04-28") is True
+        # Set was cleared on rollover, then bbbb0001 added — yesterday's
+        # entries are gone, bounding memory to today's working set.
+        assert len(findings_mod._DEMOTION_LOG_SEEN) == 1
+        assert "aaaa0001" not in findings_mod._DEMOTION_LOG_SEEN
+        # Yesterday's fingerprint can re-emit today (correct: it's a new day)
+        assert findings_mod._demotion_log_should_emit("aaaa0001", "2026-04-28") is True
+
     def test_distinct_fingerprints_each_log_once(self):
         from agents.watcher import findings as findings_mod
         findings_mod._DEMOTION_LOG_SEEN.clear()

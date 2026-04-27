@@ -443,11 +443,34 @@ _SEVERITY_DEMOTION_LADDER = {
 # In-memory de-dup for the 'calibration: demoted' log line. Without this,
 # the surface hook (UserPromptSubmit, fires on every prompt) would emit one
 # line per demoted finding per render — a stable demoted pattern with 8
-# findings produces 8 lines per prompt forever. Keys are
-# (fingerprint, day) so a re-render the same day stays silent but a new
-# day re-emits the demotion fact (operator-visible signal that calibration
-# is still applied, without noise). Tests reset via ``.clear()``.
-_DEMOTION_LOG_SEEN: set[tuple[str, str]] = set()
+# findings produces 8 lines per prompt forever.
+#
+# Keyed on fingerprint only; the day component is enforced structurally by
+# ``_DEMOTION_LOG_SEEN_DAY`` — a different ``today`` resets the set. This
+# keeps the in-memory state bounded by O(N_fingerprints_today), which is
+# the operator's working-set size, not by O(N_fingerprints × N_days_alive)
+# which would be unbounded over a long-running process. Watcher itself
+# flagged the prior unbounded version as P002 (#925bfbe9).
+#
+# Tests reset via ``.clear()`` and may set ``_DEMOTION_LOG_SEEN_DAY`` to
+# pin a specific day.
+_DEMOTION_LOG_SEEN: set[str] = set()
+_DEMOTION_LOG_SEEN_DAY: str | None = None
+
+
+def _demotion_log_should_emit(fingerprint: str, today: str) -> bool:
+    """Return True if this (fingerprint, today) pair has not been logged
+    yet. Caller is responsible for calling exactly once per render so the
+    side effect (set add + day reset) only happens when emission proceeds.
+    """
+    global _DEMOTION_LOG_SEEN_DAY
+    if _DEMOTION_LOG_SEEN_DAY != today:
+        _DEMOTION_LOG_SEEN.clear()
+        _DEMOTION_LOG_SEEN_DAY = today
+    if fingerprint in _DEMOTION_LOG_SEEN:
+        return False
+    _DEMOTION_LOG_SEEN.add(fingerprint)
+    return True
 
 
 def _apply_floor_to_finding(
@@ -548,10 +571,8 @@ def _format_findings_block(
     for f in findings:
         if "calibration_demoted_from" not in f:
             continue
-        seen_key = (f.get("fingerprint", ""), today)
-        if seen_key in _DEMOTION_LOG_SEEN:
+        if not _demotion_log_should_emit(f.get("fingerprint", ""), today):
             continue  # already logged today; skip the spam
-        _DEMOTION_LOG_SEEN.add(seen_key)
         log(
             f"calibration: demoted {f.get('pattern','?')} on "
             f"{f.get('file','?')} from {f['calibration_demoted_from']} "
