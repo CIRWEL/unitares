@@ -12,6 +12,11 @@
 
 set -euo pipefail
 
+# Portable mtime in epoch seconds (macOS `stat -f` is not GNU `stat -c`)
+_cache_mtime() {
+  python3 -c 'import os, sys; print(int(os.path.getmtime(sys.argv[1])))' "$1"
+}
+
 CACHE_DIR=".test-cache"
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJECT_ROOT"
@@ -33,7 +38,7 @@ CACHE_FILE="$CACHE_DIR/$TREE_HASH"
 
 # --- cache hit (fast path, no lock) ---
 if [[ "$FRESH" == false && -f "$CACHE_FILE" ]]; then
-    AGE_SECS=$(( $(date +%s) - $(stat -f %m "$CACHE_FILE") ))
+    AGE_SECS=$(( $(date +%s) - $(_cache_mtime "$CACHE_FILE") ))
     AGE_MIN=$(( AGE_SECS / 60 ))
     echo "[test-cache] HIT — tree $TREE_HASH (cached ${AGE_MIN}m ago)"
     cat "$CACHE_FILE"
@@ -77,7 +82,7 @@ trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM
 # The holder ahead of us may have just populated the cache for this
 # tree hash; skip pytest if so.
 if [[ "$FRESH" == false && -f "$CACHE_FILE" ]]; then
-    AGE_SECS=$(( $(date +%s) - $(stat -f %m "$CACHE_FILE") ))
+    AGE_SECS=$(( $(date +%s) - $(_cache_mtime "$CACHE_FILE") ))
     AGE_MIN=$(( AGE_SECS / 60 ))
     echo "[test-cache] HIT (post-lock) — tree $TREE_HASH (cached ${AGE_MIN}m ago)"
     cat "$CACHE_FILE"
@@ -88,9 +93,12 @@ fi
 mkdir -p "$CACHE_DIR"
 echo "[test-cache] MISS — tree $TREE_HASH, running pytest..."
 
-# Use framework Python (has pytest + project deps installed)
-PYTHON="${UNITARES_PYTHON:-/Library/Frameworks/Python.framework/Versions/3.14/bin/python3}"
-PYTEST_CMD=("$PYTHON" -m pytest tests/ agents/ -q --tb=short -x ${PYTEST_EXTRA[@]+"${PYTEST_EXTRA[@]}"})
+# Prefer env override; otherwise `python3` on PATH (Linux CI + typical macOS).
+PYTHON="${UNITARES_PYTHON:-python3}"
+PYTEST_CMD=("$PYTHON" -m pytest tests/ agents/ -q --tb=short -x \
+	--cov=src --cov=agents/sdk/src/unitares_sdk --cov=agents \
+	--cov-report=term-missing --cov-fail-under=25 \
+	${PYTEST_EXTRA[@]+"${PYTEST_EXTRA[@]}"})
 TMPOUT=$(mktemp)
 set +e
 "${PYTEST_CMD[@]}" 2>&1 | tee "$TMPOUT"

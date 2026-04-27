@@ -17,7 +17,7 @@ Each check-in returns a verdict (`proceed` / `guide` / `pause` / `reject`) and g
 
 Circuit breakers and kill switches are still there — they're just the last line of defense, not the first.
 
-Running continuously in production since November 2025 with 6,200+ passing tests at 77% coverage. Long-run trajectories are stored in PostgreSQL + AGE; the state model is derived from what agents actually do (EMA-smoothed observations, not model predictions).
+Running continuously in production since November 2025 with 6,200+ passing tests; line coverage for the default `make test` / CI measurement (`src/`, `agents/sdk`, and `agents/`) is typically **~76%**. The project enforces a **25%** minimum (`--cov-fail-under=25`, passed by `make test`, `scripts/dev/test-cache.sh`, and CI — not by bare `pytest` defaults). Long-run trajectories are stored in PostgreSQL + AGE; the state model is derived from what agents actually do (EMA-smoothed observations, not model predictions).
 
 **Try it** (one command, no Postgres/AGE on the host required):
 
@@ -95,7 +95,7 @@ As of April 2026 (single-operator deployment — self-traffic, not external adop
 | Governance events processed | 94,000+ (≈51K in the last 7 days) |
 | Knowledge graph discoveries | 578 |
 | V operating range | Active agents often within [-0.1, 0.1] |
-| Tests | 6,200+ passing · 77% coverage |
+| Tests | 6,200+ passing · ~76% line coverage (25% min gate) |
 
 </details>
 

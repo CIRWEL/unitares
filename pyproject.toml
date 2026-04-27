@@ -50,16 +50,11 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 testpaths = ["tests", "agents"]
 pythonpath = [".", "agents/sdk/src"]
-addopts = [
-    "--cov=src",
-    "--cov=agents/sdk/src/unitares_sdk",
-    "--cov=agents",
-    "--cov-report=term-missing",
-    "--cov-fail-under=25",
-    "-v",
-]
-# HTML coverage: run manually with --cov-report=html when needed
-# (22MB per run was causing 2GB+ disk write storms during dev sessions)
+addopts = ["-v"]
+# Coverage is opt-in: `make test`, `scripts/dev/test-cache.sh`, and CI pass
+# `--cov=...` / `--cov-fail-under=25` explicitly. Enabling it in addopts caused
+# `pytest --collect-only` to measure ~14% and fail the gate (no tests run).
+# HTML: add `--cov-report=html` to a full run when needed (22MB+ per run).
 markers = [
     "smoke: Fast smoke tests for pre-push validation (target <60s)",
 ]
