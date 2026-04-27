@@ -125,6 +125,71 @@ class TestPoolRecovery:
         assert result._raw_pool is mock_pool
         assert backend._pool is result
 
+    @pytest.mark.asyncio
+    async def test_concurrent_failing_health_checks_log_destroy_once(self, caplog):
+        """N concurrent failing health checks must produce ONE destroy log,
+        not N. The log must fire inside the lock + after a pool-identity
+        re-check, otherwise log fan-in misrepresents the destroy count by
+        the concurrency factor (observed 2026-04-27 as 1158:23 ratio).
+        """
+        import logging
+        from src.db.postgres_backend import PostgresBackend
+
+        backend = PostgresBackend()
+
+        # Mock pool whose health-check acquire raises (the production trigger
+        # is asyncio.TimeoutError when all conns are checked out by slow handlers).
+        failing_pool = MagicMock()
+
+        class _FailingAcquire:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def __aenter__(self):
+                raise asyncio.TimeoutError()
+
+            async def __aexit__(self, *exc):
+                return False
+
+        failing_pool.acquire = MagicMock(side_effect=lambda **kw: _FailingAcquire())
+        failing_pool.close = AsyncMock()
+        failing_pool.get_size = MagicMock(return_value=5)
+        failing_pool.get_max_size = MagicMock(return_value=25)
+
+        backend._pool = failing_pool
+        # Force the health check to fire (last_pool_check older than 60s).
+        backend._last_pool_check = 0.0
+
+        # Mock asyncpg.create_pool so the slow path can recreate without a real DB.
+        new_raw_pool = AsyncMock()
+        with caplog.at_level(logging.WARNING, logger="src.db.postgres_backend"):
+            with patch("asyncpg.create_pool", new_callable=AsyncMock, return_value=new_raw_pool):
+                # Fire 8 concurrent health-check-failing _ensure_pool calls.
+                results = await asyncio.gather(
+                    *(backend._ensure_pool() for _ in range(8)),
+                    return_exceptions=True,
+                )
+
+        # All callers must have gotten the recreated pool back.
+        for r in results:
+            assert not isinstance(r, Exception), f"unexpected exception: {r!r}"
+
+        destroy_logs = [
+            rec for rec in caplog.records
+            if "Pool health check failed, destroying pool" in rec.message
+        ]
+        # Exactly one destroy event regardless of fan-in.
+        assert len(destroy_logs) == 1, (
+            f"expected exactly 1 destroy log, got {len(destroy_logs)}: "
+            f"{[r.message for r in destroy_logs]}"
+        )
+        # close() on the failing pool happened exactly once.
+        assert failing_pool.close.await_count == 1
+        # Backend now points at the freshly-created pool.
+        from src.db.executor_pool import ExecutorPool
+        assert isinstance(backend._pool, ExecutorPool)
+        assert backend._pool._raw_pool is new_raw_pool
+
 
 # ============================================================================
 # Orphaned Connection Tests
