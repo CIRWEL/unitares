@@ -110,12 +110,19 @@ class PostgresBackend(
                             f"Consider increasing DB_POSTGRES_MAX_CONN or checking for connection leaks."
                         )
                 except Exception as e:
-                    # Health check failed — acquire lock before destroying pool
-                    # to prevent race with concurrent _ensure_pool / init calls
-                    logger.warning(f"Pool health check failed, destroying pool (backend={id(self)}): {e}")
+                    # Health check failed — acquire lock, re-check pool identity,
+                    # then log+destroy. The log MUST be inside the lock + after
+                    # the identity re-check; otherwise N concurrent failing
+                    # health-check tasks all log "destroying pool" before
+                    # queueing on the lock, but only one actually destroys.
+                    # That fan-in inflates the apparent destroy count by the
+                    # concurrency factor and makes the recovery path look
+                    # deadlocked when it isn't.
+                    failed_pool = self._pool
                     async with self._init_lock:
                         # Only destroy if still the same pool (another task may have already replaced it)
-                        if self._pool is not None:
+                        if self._pool is not None and self._pool is failed_pool:
+                            logger.warning(f"Pool health check failed, destroying pool (backend={id(self)}): {e}")
                             try:
                                 await self._pool.close()
                             except Exception:
