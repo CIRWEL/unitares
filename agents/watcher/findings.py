@@ -24,6 +24,12 @@ from agents.watcher._util import (
     log,
     repo_relative_path,
 )
+from agents.watcher.calibration import (
+    classify_file,
+    probe_rate_for_n,
+    should_probe,
+)
+from agents.watcher.floor_state import FloorState, load_floor
 
 # ---------------------------------------------------------------------------
 # Paths & Config
@@ -40,6 +46,12 @@ FINDINGS_TTL_DAYS = 14
 
 VALID_FINDING_STATUSES = ("open", "surfaced", "confirmed", "dismissed", "aged_out")
 MIN_FINGERPRINT_PREFIX = 4  # users can type the first N chars instead of all 16
+
+# Allowed --reason values for --dismiss. Only 'fp' counts as a true
+# negative in precision math (see PRECISION_REASONS_TRUE_NEGATIVE in
+# calibration.py). The others document operator intent without claiming
+# the finding was wrong.
+DISMISSAL_REASONS = frozenset({"fp", "wont_fix", "out_of_scope", "dup", "unclear", "stale"})
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +313,19 @@ def update_finding_status(
         print(f"error: invalid status {new_status!r}; must be one of {VALID_FINDING_STATUSES}")
         return 2
 
+    # Soft taxonomy: a non-enum reason is persisted (operators often pass
+    # free-text rationale, and pre-2026-04-27 rows already do). Precision
+    # math in calibration.py excludes non-enum reasons from the TN count
+    # automatically, so the calibration loop is correct without rejecting
+    # the operator's input here.
+    if new_status == "dismissed" and reason is not None and reason not in DISMISSAL_REASONS:
+        log(
+            f"update_finding_status: non-enum reason {reason!r} accepted but "
+            f"will be excluded from precision math (use one of "
+            f"{sorted(DISMISSAL_REASONS)} for the bucket to count)",
+            "warning",
+        )
+
     findings = _iter_findings_raw()
     if not findings:
         print("error: findings.jsonl is empty or absent")
@@ -408,6 +433,94 @@ def sweep_stale_findings() -> int:
 # ---------------------------------------------------------------------------
 
 
+_SEVERITY_DEMOTION_LADDER = {
+    "critical": "high",
+    "high": "medium",
+    "medium": "low",
+    "low": "low",
+}
+
+# In-memory de-dup for the 'calibration: demoted' log line. Without this,
+# the surface hook (UserPromptSubmit, fires on every prompt) would emit one
+# line per demoted finding per render — a stable demoted pattern with 8
+# findings produces 8 lines per prompt forever.
+#
+# Keyed on fingerprint only; the day component is enforced structurally by
+# ``_DEMOTION_LOG_SEEN_DAY`` — a different ``today`` resets the set. This
+# keeps the in-memory state bounded by O(N_fingerprints_today), which is
+# the operator's working-set size, not by O(N_fingerprints × N_days_alive)
+# which would be unbounded over a long-running process. Watcher itself
+# flagged the prior unbounded version as P002 (#925bfbe9).
+#
+# Tests reset via ``.clear()`` and may set ``_DEMOTION_LOG_SEEN_DAY`` to
+# pin a specific day.
+_DEMOTION_LOG_SEEN: set[str] = set()
+_DEMOTION_LOG_SEEN_DAY: str | None = None
+
+
+def _demotion_log_should_emit(fingerprint: str, today: str) -> bool:
+    """Return True if this (fingerprint, today) pair has not been logged
+    yet. Caller is responsible for calling exactly once per render so the
+    side effect (set add + day reset) only happens when emission proceeds.
+    """
+    global _DEMOTION_LOG_SEEN_DAY
+    if _DEMOTION_LOG_SEEN_DAY != today:
+        _DEMOTION_LOG_SEEN.clear()
+        _DEMOTION_LOG_SEEN_DAY = today
+    if fingerprint in _DEMOTION_LOG_SEEN:
+        return False
+    _DEMOTION_LOG_SEEN.add(fingerprint)
+    return True
+
+
+def _apply_floor_to_finding(
+    finding: dict[str, Any],
+    *,
+    floor: FloorState,
+    today: str,
+) -> dict[str, Any]:
+    """Return a copy of ``finding`` with severity demoted if the
+    pattern's calibration floor has fallen below 0.3 and the finding
+    isn't selected for an ε-greedy exploration probe.
+
+    Adds two diagnostic fields when a decision fires:
+      ``calibration_demoted_from`` — original severity (set on demote)
+      ``calibration_probe`` — True (set when bucket below floor but probe carved out)
+
+    These exist for downstream audit / future dashboard panels; they
+    aren't rendered into the user-visible findings block.
+    """
+    pattern = finding.get("pattern", "")
+    file_path = finding.get("file", "")
+    severity = finding.get("severity", "low")
+
+    file_class = classify_file(file_path)
+    bucket = floor.get(pattern, file_class)
+    if bucket is None or bucket.ci_lower is None or bucket.ci_lower >= 0.3:
+        return finding
+
+    # Probe seed is the calibration unit — (pattern, file_class) — NOT the
+    # fingerprint. A bucket is the thing being calibrated; probes should
+    # apply at that granularity so the operator sees coherent batches
+    # ("today the P1/app bucket is on probe duty") rather than a
+    # stochastic mix of demoted-and-not within a single render.
+    # Council Q3 (dialectic).
+    rate = probe_rate_for_n(bucket.weighted_n)
+    probe_seed = f"{pattern}|{file_class}"
+    if should_probe(probe_seed, date_iso=today, probe_rate=rate):
+        out = dict(finding)
+        out["calibration_probe"] = True
+        return out
+
+    new_severity = _SEVERITY_DEMOTION_LADDER.get(severity, severity)
+    if new_severity == severity:
+        return finding
+    out = dict(finding)
+    out["severity"] = new_severity
+    out["calibration_demoted_from"] = severity
+    return out
+
+
 def _format_findings_block(
     findings: list[dict[str, Any]],
     *,
@@ -448,6 +561,24 @@ def _format_findings_block(
     """
     if not findings and not out_of_scope_groups:
         return None, []
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    floor = load_floor()
+    findings = [
+        _apply_floor_to_finding(f, floor=floor, today=today)
+        for f in findings
+    ]
+    for f in findings:
+        if "calibration_demoted_from" not in f:
+            continue
+        if not _demotion_log_should_emit(f.get("fingerprint", ""), today):
+            continue  # already logged today; skip the spam
+        log(
+            f"calibration: demoted {f.get('pattern','?')} on "
+            f"{f.get('file','?')} from {f['calibration_demoted_from']} "
+            f"to {f.get('severity','?')} (ci_lower below floor)",
+            "info",
+        )
 
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     findings = sorted(

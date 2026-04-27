@@ -29,7 +29,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -46,6 +46,7 @@ from unitares_sdk.utils import notify
 from agents.common.findings import post_finding, compute_fingerprint
 from agents.vigil.checks.registry import load_plugins
 from agents.vigil.checks.runner import run_health_checks
+from agents.watcher.floor_state import load_floor, recompute_floor
 
 # Paths
 ANIMA_PROJECT = Path(os.getenv("ANIMA_PROJECT", str(project_root.parent / "anima-mcp")))
@@ -65,6 +66,43 @@ CYCLE_TIMEOUT = int(os.getenv("HEARTBEAT_CYCLE_TIMEOUT", "120"))
 RETRIEVAL_EVAL_DIR = project_root / "tests" / "retrieval_eval"
 RETRIEVAL_EVAL_SCRIPT = project_root / "scripts" / "eval" / "retrieval_eval.py"
 NDCG_REGRESSION_THRESHOLD = 0.05  # absolute drop in nDCG@10 that flags regression
+
+# Watcher calibration: recompute the precision floor at most once per day.
+# Vigil cycles every 30min, so a 24h gate keeps us from recomputing 48× per day.
+WATCHER_FLOOR_MAX_AGE_HOURS = 24.0
+
+
+def _last_floor_recompute_iso() -> str | None:
+    """Read pattern_floor.json's updated_at field. Returns None if the
+    file is missing/unparseable so the caller falls through to a recompute."""
+    try:
+        return load_floor().updated_at
+    except Exception:
+        return None
+
+
+def maybe_recompute_watcher_floor(
+    *, max_age_hours: float = WATCHER_FLOOR_MAX_AGE_HOURS
+) -> bool:
+    """Trigger a watcher floor recompute if the last one is older than
+    ``max_age_hours``. Returns True if a recompute fired.
+
+    Called from Vigil's run_cycle. Atomic write means a concurrent
+    surface hook can never see a half-written file.
+    """
+    last_iso = _last_floor_recompute_iso()
+    if last_iso:
+        try:
+            last = datetime.strptime(last_iso, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc
+            )
+            age = datetime.now(timezone.utc) - last
+            if age < timedelta(hours=max_age_hours):
+                return False
+        except (TypeError, ValueError):
+            pass  # unparseable → recompute (safer to refresh than skip)
+    recompute_floor()
+    return True
 
 
 _interactive = sys.stdout.isatty()
@@ -680,6 +718,18 @@ class VigilAgent(GovernanceAgent):
                 findings.append(
                     f"stale_open: {item.get('id', '?')[:12]} \"{summary_short}\" age={age_days}d"
                 )
+
+        # --- 4.6. Watcher calibration floor (24h gated) ---
+        # Recompute pattern_floor.json from findings.jsonl so the surface
+        # hook's demotion logic stays current. The function is gated on
+        # 24h staleness internally, so calling it every cycle is cheap.
+        try:
+            loop = asyncio.get_running_loop()
+            recomputed = await loop.run_in_executor(None, maybe_recompute_watcher_floor)
+            if recomputed:
+                findings.append("watcher_floor: recomputed")
+        except Exception as e:
+            log(f"watcher_floor recompute skipped: {e}")
 
         # --- 4.7. KG hygiene v1: retrieval-eval step (optional) ---
         eval_result = await self._run_eval_step()

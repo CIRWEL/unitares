@@ -324,11 +324,20 @@ def compute_checkin_complexity(active_count: int) -> float:
 
 
 def compute_checkin_confidence(confirmed: int, dismissed: int) -> float:
-    """Confirmed / (confirmed + dismissed), with warmup default of 0.7."""
-    total = confirmed + dismissed
-    if total < 5:
-        return 0.7
-    return confirmed / total
+    """Posterior mean of Beta(0.5+confirmed, 0.5+dismissed).
+
+    Replaces the old 'return 0.7 if total<5 else confirmed/total' warmup,
+    which was overconfidence shipped to governance: a freshly deployed
+    Watcher with zero observations was claiming 0.7 confidence in its
+    own findings. With the Jeffreys prior (Beta(0.5, 0.5)), no
+    observations yields exactly 0.5 (true neutrality) and the value
+    tracks the data smoothly as it accumulates.
+    """
+    if confirmed < 0 or dismissed < 0:
+        return 0.5
+    alpha = 0.5 + confirmed
+    beta = 0.5 + dismissed
+    return alpha / (alpha + beta)
 
 
 def _build_checkin_summary() -> tuple[str, float, float]:
@@ -857,7 +866,7 @@ def _post_resolution_event(
 
     try:
         post_finding(
-            event_type="watcher_resolution",
+            event_type="watcher_resolution_finding",
             severity=finding.get("severity", "unknown"),
             message=message,
             agent_id=identity["agent_uuid"],
@@ -1548,7 +1557,10 @@ def main() -> int:
     parser.add_argument(
         "--reason",
         metavar="TEXT",
-        help="short rationale for --resolve/--dismiss; stored on the finding and included in the governance event",
+        help="short rationale for --resolve/--dismiss; stored on the finding "
+             "and included in the governance event. For --dismiss, must be one "
+             "of {fp, wont_fix, out_of_scope, dup, unclear, stale} — only 'fp' "
+             "counts as a true negative in precision math.",
     )
     parser.add_argument(
         "--compact",
@@ -1570,6 +1582,11 @@ def main() -> int:
         "--surface-pending",
         action="store_true",
         help="print open findings as a chime block and transition them to surfaced",
+    )
+    parser.add_argument(
+        "--recompute-floor",
+        action="store_true",
+        help="recompute pattern_floor.json from findings.jsonl and persist atomically",
     )
     args = parser.parse_args()
 
@@ -1600,6 +1617,15 @@ def main() -> int:
         return print_unresolved()
     if args.surface_pending:
         return surface_pending()
+    if args.recompute_floor:
+        from agents.watcher.floor_state import recompute_floor
+        state = recompute_floor()
+        log(
+            f"recompute_floor: {len(state.buckets)} bucket(s) "
+            f"updated_at={state.updated_at}"
+        )
+        print(f"ok: {len(state.buckets)} bucket(s) at {state.updated_at}")
+        return 0
     if not args.file:
         parser.print_help()
         return 1
