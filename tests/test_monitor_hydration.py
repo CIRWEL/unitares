@@ -34,13 +34,14 @@ from src.agent_monitor_state import (
 class _FakeStateRow:
     """Shape of AgentStateRecord returned by db.get_agent_state_history."""
 
-    def __init__(self, *, E, I, S, V, coherence, regime):
+    def __init__(self, *, E, I, S, V, coherence, regime, state_json=None):
         self.energy = E
         self.integrity = I
         self.entropy = S
         self.void = V
         self.coherence = coherence
         self.regime = regime
+        self.state_json = state_json or {}
 
 
 def _make_fresh_monitor(agent_id="test-agent"):
@@ -111,6 +112,106 @@ async def test_hydrate_from_db_if_fresh_returns_false_when_no_identity():
 
     assert applied is False
     assert monitor.state.update_count == 0
+
+
+@pytest.mark.asyncio
+async def test_hydrate_rebuilds_decision_history_from_state_json_action():
+    """state_json.action on each row → decision_history (chronological)."""
+    monitor = _make_fresh_monitor("hydrate-actions")
+    fake_identity = MagicMock(identity_id=7)
+    # Most-recent-first per DB DESC ordering.
+    fake_rows_desc = [
+        _FakeStateRow(
+            E=0.7, I=0.8, S=0.1, V=-0.05, coherence=0.55, regime="DIVERGENCE",
+            state_json={"action": "proceed", "verdict": "safe"},
+        ),
+        _FakeStateRow(
+            E=0.65, I=0.78, S=0.12, V=-0.03, coherence=0.52, regime="CONVERGENCE",
+            state_json={"action": "reflect", "verdict": "caution"},
+        ),
+        _FakeStateRow(
+            E=0.6, I=0.75, S=0.15, V=0.0, coherence=0.5, regime="EXPLORATION",
+            state_json={"action": "proceed", "verdict": "safe"},
+        ),
+    ]
+    fake_db = MagicMock()
+    fake_db.get_identity = AsyncMock(return_value=fake_identity)
+    fake_db.get_agent_state_history = AsyncMock(return_value=fake_rows_desc)
+
+    with patch("src.db.get_db", return_value=fake_db):
+        applied = await hydrate_from_db_if_fresh(monitor, "hydrate-actions")
+
+    assert applied is True
+    # Chronological (oldest → newest)
+    assert monitor.state.decision_history == ["proceed", "reflect", "proceed"]
+    # verdict_history hydrated from the same rows
+    assert monitor.state.verdict_history == ["safe", "caution", "safe"]
+
+
+@pytest.mark.asyncio
+async def test_hydrate_skips_legacy_rows_missing_action_key():
+    """Pre-action-write rows leave decision_history empty rather than crashing
+    or polluting with verdict-vocabulary strings (the {safe,caution,high-risk}
+    domain that pattern_analysis.py:204 doesn't bucket)."""
+    monitor = _make_fresh_monitor("hydrate-legacy")
+    fake_identity = MagicMock(identity_id=8)
+    fake_rows_desc = [
+        # Legacy rows: only verdict, no action — must not be promoted to actions.
+        _FakeStateRow(
+            E=0.7, I=0.8, S=0.1, V=-0.05, coherence=0.55, regime="DIVERGENCE",
+            state_json={"verdict": "safe"},
+        ),
+        _FakeStateRow(
+            E=0.65, I=0.78, S=0.12, V=-0.03, coherence=0.52, regime="CONVERGENCE",
+            state_json={"verdict": "caution"},
+        ),
+    ]
+    fake_db = MagicMock()
+    fake_db.get_identity = AsyncMock(return_value=fake_identity)
+    fake_db.get_agent_state_history = AsyncMock(return_value=fake_rows_desc)
+
+    with patch("src.db.get_db", return_value=fake_db):
+        applied = await hydrate_from_db_if_fresh(monitor, "hydrate-legacy")
+
+    assert applied is True
+    assert monitor.state.decision_history == []
+    # verdict_history DOES populate from legacy rows — the verdict key
+    # has been persisted since long before the action-write change, so
+    # observe summary still surfaces a non-empty verdict_distribution.
+    assert monitor.state.verdict_history == ["caution", "safe"]
+    # Histories that should populate still do
+    assert monitor.state.regime_history == ["CONVERGENCE", "DIVERGENCE"]
+
+
+@pytest.mark.asyncio
+async def test_hydrate_partial_action_coverage_keeps_only_present_rows():
+    """Mixed legacy + new rows: only the rows with action are replayed."""
+    monitor = _make_fresh_monitor("hydrate-partial")
+    fake_identity = MagicMock(identity_id=9)
+    fake_rows_desc = [
+        _FakeStateRow(
+            E=0.7, I=0.8, S=0.1, V=-0.05, coherence=0.55, regime="DIVERGENCE",
+            state_json={"action": "pause", "verdict": "high-risk"},
+        ),
+        _FakeStateRow(  # legacy
+            E=0.65, I=0.78, S=0.12, V=-0.03, coherence=0.52, regime="CONVERGENCE",
+            state_json={"verdict": "caution"},
+        ),
+        _FakeStateRow(
+            E=0.6, I=0.75, S=0.15, V=0.0, coherence=0.5, regime="EXPLORATION",
+            state_json={"action": "proceed"},
+        ),
+    ]
+    fake_db = MagicMock()
+    fake_db.get_identity = AsyncMock(return_value=fake_identity)
+    fake_db.get_agent_state_history = AsyncMock(return_value=fake_rows_desc)
+
+    with patch("src.db.get_db", return_value=fake_db):
+        applied = await hydrate_from_db_if_fresh(monitor, "hydrate-partial")
+
+    assert applied is True
+    # Chronological — legacy row in the middle is skipped.
+    assert monitor.state.decision_history == ["proceed", "pause"]
 
 
 @pytest.mark.asyncio
