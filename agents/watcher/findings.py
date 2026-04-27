@@ -24,6 +24,12 @@ from agents.watcher._util import (
     log,
     repo_relative_path,
 )
+from agents.watcher.calibration import (
+    classify_file,
+    probe_rate_for_n,
+    should_probe,
+)
+from agents.watcher.floor_state import FloorState, load_floor
 
 # ---------------------------------------------------------------------------
 # Paths & Config
@@ -408,6 +414,56 @@ def sweep_stale_findings() -> int:
 # ---------------------------------------------------------------------------
 
 
+_SEVERITY_DEMOTION_LADDER = {
+    "critical": "high",
+    "high": "medium",
+    "medium": "low",
+    "low": "low",
+}
+
+
+def _apply_floor_to_finding(
+    finding: dict[str, Any],
+    *,
+    floor: FloorState,
+    today: str,
+) -> dict[str, Any]:
+    """Return a copy of ``finding`` with severity demoted if the
+    pattern's calibration floor has fallen below 0.3 and the finding
+    isn't selected for an ε-greedy exploration probe.
+
+    Adds two diagnostic fields when a decision fires:
+      ``calibration_demoted_from`` — original severity (set on demote)
+      ``calibration_probe`` — True (set when bucket below floor but probe carved out)
+
+    These exist for downstream audit / future dashboard panels; they
+    aren't rendered into the user-visible findings block.
+    """
+    pattern = finding.get("pattern", "")
+    file_path = finding.get("file", "")
+    severity = finding.get("severity", "low")
+    fingerprint = finding.get("fingerprint", "")
+
+    file_class = classify_file(file_path)
+    bucket = floor.get(pattern, file_class)
+    if bucket is None or bucket.ci_lower is None or bucket.ci_lower >= 0.3:
+        return finding
+
+    rate = probe_rate_for_n(bucket.weighted_n)
+    if should_probe(fingerprint, date_iso=today, probe_rate=rate):
+        out = dict(finding)
+        out["calibration_probe"] = True
+        return out
+
+    new_severity = _SEVERITY_DEMOTION_LADDER.get(severity, severity)
+    if new_severity == severity:
+        return finding
+    out = dict(finding)
+    out["severity"] = new_severity
+    out["calibration_demoted_from"] = severity
+    return out
+
+
 def _format_findings_block(
     findings: list[dict[str, Any]],
     *,
@@ -448,6 +504,21 @@ def _format_findings_block(
     """
     if not findings and not out_of_scope_groups:
         return None, []
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    floor = load_floor()
+    findings = [
+        _apply_floor_to_finding(f, floor=floor, today=today)
+        for f in findings
+    ]
+    for f in findings:
+        if "calibration_demoted_from" in f:
+            log(
+                f"calibration: demoted {f.get('pattern','?')} on "
+                f"{f.get('file','?')} from {f['calibration_demoted_from']} "
+                f"to {f.get('severity','?')} (ci_lower below floor)",
+                "info",
+            )
 
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     findings = sorted(
