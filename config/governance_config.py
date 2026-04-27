@@ -675,7 +675,7 @@ class GovernanceConfig:
     # Most changes (bug fixes, new tools, docs) do NOT bump the epoch.
     # Only changes to EISV coupling, coherence formulas, or calibration
     # logic that make existing data wrong require a bump.
-    CURRENT_EPOCH = 2
+    CURRENT_EPOCH = 3
 
     # =================================================================
     # Temporal Narrator Configuration
