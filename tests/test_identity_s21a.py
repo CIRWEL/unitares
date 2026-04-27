@@ -1,0 +1,298 @@
+"""
+Regression tests for S21-a (session resolution bypass — stop the bleed).
+
+Incident 2026-04-27: explicit `client_session_id` was silently overwritten in
+Redis by every PATH 3 ghost-mint, producing a 95.1%/30d fleet-wide ghost-fork
+rate. See docs/ontology/s21-session-resolution-bypass-incident.md.
+
+Three regression assertions:
+  T1  PATH 3 mint must not overwrite an existing in-memory session binding
+      that maps to a different agent_uuid.
+  T2  PATH 3 mint must not overwrite an existing Redis session binding that
+      maps to a different agent_uuid (raw-redis path).
+  T3  PATH 2 must fail-closed when resume=True and core.sessions has no row,
+      returning resume_failed instead of silently minting via PATH 3.
+"""
+
+import json
+import sys
+from pathlib import Path
+from unittest.mock import patch, MagicMock, AsyncMock
+
+import pytest
+
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_db_no_session():
+    db = AsyncMock()
+    db.init = AsyncMock()
+    db.get_session = AsyncMock(return_value=None)
+    db.get_identity = AsyncMock(return_value=None)
+    db.get_agent = AsyncMock(return_value=None)
+    db.get_agent_label = AsyncMock(return_value=None)
+    db.find_agent_by_label = AsyncMock(return_value=None)
+    db.upsert_agent = AsyncMock()
+    db.upsert_identity = AsyncMock()
+    db.create_session = AsyncMock()
+    db.update_session_activity = AsyncMock()
+    return db
+
+
+# ---------------------------------------------------------------------------
+# T1 / T2 — _cache_session must not overwrite a different live binding
+# ---------------------------------------------------------------------------
+
+class TestS21AOverwriteProtection:
+
+    @pytest.mark.asyncio
+    async def test_path3_mint_does_not_overwrite_inmemory_binding(self):
+        """T1: PATH 3 mint must not overwrite a different in-memory binding.
+
+        Setup: _session_identities already has session_key X bound to legit
+        UUID A. A PATH 3 mint fires for the same session_key with fresh UUID
+        B (mint_guard=True). After the call, _session_identities[X] must
+        still bind to A.
+        """
+        from src.mcp_handlers.identity.persistence import _cache_session
+
+        legit_uuid = "11111111-1111-1111-1111-111111111111"
+        ghost_uuid = "22222222-2222-2222-2222-222222222222"
+        session_key = "agent-aaaaaaaaaaaa"
+
+        in_memory = {
+            session_key: {
+                "bound_agent_id": legit_uuid,
+                "agent_uuid": legit_uuid,
+                "public_agent_id": legit_uuid,
+                "agent_label": "legit-bot",
+                "bind_count": 1,
+            }
+        }
+
+        with patch("src.mcp_handlers.identity.persistence._redis_cache", False), \
+             patch("src.mcp_handlers.identity.shared._session_identities", in_memory):
+            await _cache_session(
+                session_key, ghost_uuid,
+                display_agent_id=ghost_uuid,
+                mint_guard=True,
+            )
+
+        # Legitimate binding survives
+        assert in_memory[session_key]["bound_agent_id"] == legit_uuid
+        assert in_memory[session_key]["agent_uuid"] == legit_uuid
+
+    @pytest.mark.asyncio
+    async def test_corrective_write_still_overwrites_inmemory_binding(self):
+        """Sanity: corrective writes (mint_guard=False) still overwrite.
+
+        PATH 2 / PATH 2.8 / set_agent_label callers don't pass mint_guard,
+        so they retain authoritative-overwrite behavior. Without this, the
+        guard would also block the recovery path that resolves a stale
+        Redis ghost via PostgreSQL fall-through.
+        """
+        from src.mcp_handlers.identity.persistence import _cache_session
+
+        ghost_uuid = "22222222-2222-2222-2222-222222222222"
+        legit_uuid = "11111111-1111-1111-1111-111111111111"
+        session_key = "agent-bbbbbbbbbbbb"
+
+        in_memory = {
+            session_key: {
+                "bound_agent_id": ghost_uuid,
+                "agent_uuid": ghost_uuid,
+                "public_agent_id": ghost_uuid,
+                "bind_count": 1,
+            }
+        }
+
+        with patch("src.mcp_handlers.identity.persistence._redis_cache", False), \
+             patch("src.mcp_handlers.identity.shared._session_identities", in_memory):
+            await _cache_session(session_key, legit_uuid)  # default mint_guard=False
+
+        # Authoritative correction overwrites
+        assert in_memory[session_key]["bound_agent_id"] == legit_uuid
+
+    @pytest.mark.asyncio
+    async def test_path3_mint_does_not_overwrite_redis_binding(self):
+        """T2: PATH 3 mint must not overwrite a different Redis binding.
+
+        Raw Redis returns an existing JSON binding for session_key X with
+        agent_id = legit UUID A. A PATH 3 mint fires with fresh UUID B and
+        mint_guard=True. The setex (overwrite) must not be called.
+        """
+        from src.mcp_handlers.identity.persistence import _cache_session
+
+        legit_uuid = "11111111-1111-1111-1111-111111111111"
+        ghost_uuid = "22222222-2222-2222-2222-222222222222"
+        session_key = "agent-cccccccccccc"
+
+        existing_payload = json.dumps({
+            "agent_id": legit_uuid,
+            "display_agent_id": legit_uuid,
+            "bound_at": "2026-04-27T03:00:00+00:00",
+            "trajectory_required": False,
+        })
+        raw_redis = AsyncMock()
+        raw_redis.get = AsyncMock(return_value=existing_payload)
+        raw_redis.setex = AsyncMock()
+
+        async def _get_raw():
+            return raw_redis
+
+        session_cache = AsyncMock()
+        session_cache.bind = AsyncMock()
+
+        in_memory = {}  # In-memory empty so the in-memory guard does not short-circuit.
+
+        with patch("src.mcp_handlers.identity.persistence._redis_cache", session_cache), \
+             patch("src.cache.redis_client.get_redis", new=_get_raw), \
+             patch("src.mcp_handlers.identity.shared._session_identities", in_memory):
+            await _cache_session(
+                session_key, ghost_uuid,
+                # display_agent_id != agent_uuid forces the raw-redis branch
+                display_agent_id="ghost-display-id",
+                mint_guard=True,
+            )
+
+        # The Redis slot is unchanged — no overwrite occurred.
+        raw_redis.setex.assert_not_called()
+        session_cache.bind.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# T3 — PATH 2 fail-closed when resume=True and PG has no row
+# ---------------------------------------------------------------------------
+
+class TestS21APath2FailClosed:
+
+    @pytest.mark.asyncio
+    async def test_resume_true_pg_miss_returns_resume_failed(self):
+        """T3: resume=True + Redis miss + PG miss → resume_failed (no mint).
+
+        Today this falls through to PATH 3 and silently mints a ghost,
+        producing the 95% ghost-fork rate. After S21-a, the caller gets a
+        resume_failed result and can decide whether to mint via force_new.
+        """
+        from src.mcp_handlers.identity.handlers import resolve_session_identity
+
+        db = _make_db_no_session()
+
+        with patch("src.mcp_handlers.identity.persistence._redis_cache", False), \
+             patch("src.mcp_handlers.identity.resolution.get_db", return_value=db), \
+             patch("src.mcp_handlers.identity.persistence.get_db", return_value=db), \
+             patch("src.mcp_handlers.identity.handlers.get_db", return_value=db):
+            result = await resolve_session_identity(
+                session_key="agent-no-row-test",
+                resume=True,
+            )
+
+        assert result.get("resume_failed") is True, (
+            f"expected resume_failed, got {result!r}"
+        )
+        assert result.get("error") == "session_resolve_miss", (
+            f"expected error=session_resolve_miss, got {result.get('error')!r}"
+        )
+        # No silent mint
+        assert result.get("created") is not True
+        assert not result.get("agent_uuid")
+
+    @pytest.mark.asyncio
+    async def test_resume_true_pg_exception_returns_resume_failed(self):
+        """T3b: resume=True + PG exception → resume_failed (no PATH 3 mint).
+
+        Anyio-asyncio deadlocks (CLAUDE.md) and other PG hiccups raise from
+        db.get_session(). The pre-S21-a logger.debug swallowed the failure
+        silently and PATH 3 minted. After S21-a the failure is logged at
+        warning level *and* the call returns resume_failed.
+        """
+        from src.mcp_handlers.identity.handlers import resolve_session_identity
+
+        db = AsyncMock()
+        db.init = AsyncMock()
+        db.get_session = AsyncMock(side_effect=Exception("simulated PG hiccup"))
+        db.find_agent_by_label = AsyncMock(return_value=None)
+
+        with patch("src.mcp_handlers.identity.persistence._redis_cache", False), \
+             patch("src.mcp_handlers.identity.resolution.get_db", return_value=db), \
+             patch("src.mcp_handlers.identity.persistence.get_db", return_value=db):
+            result = await resolve_session_identity(
+                session_key="agent-pg-blip",
+                resume=True,
+            )
+
+        assert result.get("resume_failed") is True
+        assert result.get("error") == "session_resolve_miss"
+        assert result.get("created") is not True
+
+    @pytest.mark.asyncio
+    async def test_dispatch_retry_declares_dispatch_auto_mint(self):
+        """T4: dispatch-time middleware retry on session_resolve_miss declares
+        spawn_reason='dispatch_auto_mint' so the fresh identity carries
+        lineage rather than swelling the no-lineage ghost rate.
+
+        Without this declaration S21-a stops the Redis-overwrite bleed but
+        leaves the lineage-declaration bleed open — the council
+        (conceptual reviewer, 2026-04-27) flagged this as the test that
+        would have caught the lineage gap.
+
+        Strategy: source-level assertion. The middleware imports
+        resolve_session_identity inside the function, so a runtime mock
+        of the resolution path requires reproducing the entire dispatch
+        entry. Instead we assert the contract directly: the retry
+        invocation in identity_step.py mentions spawn_reason=
+        "dispatch_auto_mint" alongside force_new=True. If a future
+        refactor drops or renames the kwarg, this test catches it before
+        the no-lineage bleed reopens.
+        """
+        from pathlib import Path
+        src_path = (Path(__file__).parent.parent
+                    / "src" / "mcp_handlers" / "middleware" / "identity_step.py")
+        source = src_path.read_text()
+
+        # The retry block must mint with force_new=True AND declare a
+        # spawn_reason so the audit log has lineage. Both kwargs must
+        # appear inside the same call near the session_resolve_miss check.
+        retry_idx = source.find("session_resolve_miss")
+        assert retry_idx != -1, "session_resolve_miss branch missing from middleware"
+        retry_window = source[retry_idx:retry_idx + 1500]
+        assert "force_new=True" in retry_window, (
+            "Dispatch retry must use force_new=True; otherwise the second "
+            "resolve hits the same fail-closed path and recurses."
+        )
+        assert 'spawn_reason="dispatch_auto_mint"' in retry_window, (
+            "Dispatch retry must declare spawn_reason='dispatch_auto_mint' "
+            "so middleware-minted identities carry lineage. Without this "
+            "S21-a stops the Redis-overwrite bleed but the no-lineage "
+            "ghost-fork rate stays high."
+        )
+
+    @pytest.mark.asyncio
+    async def test_resume_false_default_still_mints_on_miss(self):
+        """Sanity: resume=False (default) preserves mint-on-miss behavior.
+
+        Callers like handlers.py:424 and the onboard force_new path rely on
+        the default fall-through to PATH 3 minting. Only resume=True now
+        fail-closes on session-row miss.
+        """
+        from src.mcp_handlers.identity.handlers import resolve_session_identity
+
+        db = _make_db_no_session()
+
+        with patch("src.mcp_handlers.identity.persistence._redis_cache", False), \
+             patch("src.mcp_handlers.identity.resolution.get_db", return_value=db), \
+             patch("src.mcp_handlers.identity.persistence.get_db", return_value=db), \
+             patch("src.mcp_handlers.identity.handlers.get_db", return_value=db):
+            result = await resolve_session_identity(
+                session_key="agent-no-row-default",
+                model_type="claude-opus-4",
+                # resume defaults to False; force_new defaults to False
+            )
+
+        assert result.get("created") is True
+        assert result.get("agent_uuid")

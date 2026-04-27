@@ -7,6 +7,8 @@
 **Related plan rows:** S13 clause (d) — `derive_session_key` step 7 audit event; this incident is the pre-condition that makes that audit event *necessary*.
 **Synthesis context:** filed under Kenny's "lumen reboots but is the same, our identity system worked when we first started months ago and now is all over the place" pivot (2026-04-27 conversation). This is the empirical floor under that intuition.
 
+**Postscript — rate correction (2026-04-27, S21-a council pass):** the headline "95.1% fleet-wide ghost-fork rate" cited at lines 66 and 95 is the snapshot at incident-write time. After applying audit-window scoping (memory entry `feedback_audit-window-scoping.md`) the corrected rate is ~38%; live verification on 2026-04-27 (post-onboard restoration) shows ~20% on a 30-day window in `core.agents` (442 of 2210 fresh agents with `parent_agent_id IS NULL AND spawn_reason IS NULL`). The diagnosis still stands — the resolution path silently mints — but the magnitude was inflated by counting pre-audit-window entries that pre-dated the recording. The DoD threshold below ("drops below a threshold to be set after a calibration period") reads correctly either way; the calibration period is what determines the post-fix target.
+
 ---
 
 ## What happened
