@@ -31,11 +31,27 @@ _HARD_EXOGENOUS_DETAIL_KEYS = (
     ("tool_results", "tool_observations"),
 )
 
+# Hard-exogenous outcome types eligible for tactical calibration.
+# Must be binary pass/fail from real work — not graded scores, not retroactive.
+# Both this constant and the gate inside handle_outcome_event must stay in
+# sync; the classifier below is driven from _HARD_EXOGENOUS_TYPE_TO_CHANNEL,
+# and the handler gate uses HARD_EXOGENOUS_TYPES directly.
+HARD_EXOGENOUS_TYPES = frozenset({
+    "test_passed", "test_failed",
+    "task_completed", "task_failed",
+})
+
+_HARD_EXOGENOUS_TYPE_TO_CHANNEL = {
+    "test_passed": "tests", "test_failed": "tests",
+    "task_completed": "tasks", "task_failed": "tasks",
+}
+
 
 def _classify_hard_exogenous_signal(outcome_type: str, detail: Dict[str, Any]) -> str | None:
     """Return the hard exogenous signal source when this outcome is e-process eligible."""
-    if outcome_type in {"test_passed", "test_failed"}:
-        return "tests"
+    channel = _HARD_EXOGENOUS_TYPE_TO_CHANNEL.get(outcome_type)
+    if channel:
+        return channel
     for key, label in _HARD_EXOGENOUS_DETAIL_KEYS:
         if detail.get(key):
             return label
@@ -293,12 +309,16 @@ async def _record_outcome_event_inline(arguments: Dict[str, Any]) -> Dict[str, A
                 predicted_correct=(_confidence >= 0.5),
                 actual_correct=float(outcome_score),
             )
-            # Test outcomes are strong exogenous signals — record tactical too
-            if outcome_type in ('test_passed', 'test_failed'):
+            # Hard-exogenous outcomes (test_*, task_*) feed tactical calibration.
+            # signal_source routes the row to per-channel breakdown in
+            # CalibrationChecker.tactical_bin_stats_by_channel; aggregate
+            # remains populated for back-compat.
+            if outcome_type in HARD_EXOGENOUS_TYPES:
                 calibration_checker.record_tactical_decision(
                     confidence=_confidence,
                     decision='proceed',
                     immediate_outcome=not is_bad,
+                    signal_source=_HARD_EXOGENOUS_TYPE_TO_CHANNEL[outcome_type],
                 )
         except Exception as e_cal:
             logger.debug(f"Calibration from outcome_event skipped: {e_cal}")
