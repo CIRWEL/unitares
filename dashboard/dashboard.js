@@ -1221,7 +1221,22 @@ async function loadCalibration() {
                     ? 'var(--color-success, #22c55e)'
                     : 'var(--color-danger, #ef4444)';
                 var trajectoryPct = (th * 100).toFixed(0);
-                detailEl.textContent = samples + ' samples \u00b7 ' + trajectoryPct + '% trajectory';
+
+                // Per-channel chips render when the broadened truth channel
+                // has populated state. Falls back to the legacy detail line
+                // when per_channel_calibration is absent.
+                var perChannel = result.per_channel_calibration;
+                if (perChannel && Object.keys(perChannel).length > 0) {
+                    var chips = Object.keys(perChannel).map(function (name) {
+                        var c = perChannel[name];
+                        var icon = c.calibrated ? '\u2713' : '\u2715';
+                        return name + ': ' + icon;
+                    }).join(' \u00b7 ');
+                    detailEl.textContent = samples + ' samples \u00b7 ' + chips
+                        + ' \u00b7 ' + trajectoryPct + '% trajectory';
+                } else {
+                    detailEl.textContent = samples + ' samples \u00b7 ' + trajectoryPct + '% trajectory';
+                }
             }
         } else {
             valueEl.textContent = '-';
