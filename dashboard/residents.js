@@ -281,8 +281,20 @@
     }
 
     // ---------------------------------------------------------------------
-    // Click-to-scroll: pill → agent card in the Agents section below.
+    // Click-to-scroll: pill → resident's own panel/widget.
+    //
+    // Vigil/Sentinel/Watcher/Chronicler have dedicated section panels.
+    // Other residents (Steward, Lumen, …) surface as rows in the Resident
+    // Progress panel. Falls back to the agent card in the Agents section
+    // when no resident-specific surface is found.
     // ---------------------------------------------------------------------
+    var DEDICATED_PANELS = {
+        vigil: 'vigil-section',
+        sentinel: 'sentinel-section',
+        watcher: 'watcher-section',
+        chronicler: 'fleet-metrics-section',
+    };
+
     function bindPillClicks() {
         var grid = document.getElementById('residents-grid');
         if (!grid) return;
@@ -291,29 +303,49 @@
             if (!pill) return;
             var label = pill.getAttribute('data-agent');
             if (!label) return;
-            scrollToAgentCard(label);
+            scrollToResidentSurface(label);
         });
     }
 
-    function scrollToAgentCard(label) {
-        var container = document.getElementById('agents-container');
-        if (!container) return;
-        var items = container.querySelectorAll('.agent-item');
-        var target = null;
-        var needle = label.toLowerCase();
-        for (var i = 0; i < items.length; i++) {
-            var nameEl = items[i].querySelector('.agent-name');
-            if (nameEl && nameEl.textContent.toLowerCase().indexOf(needle) !== -1) {
-                target = items[i];
-                break;
-            }
-        }
+    function scrollToResidentSurface(label) {
+        var target = findDedicatedPanel(label) ||
+            findResidentProgressRow(label) ||
+            findAgentCard(label);
         if (!target) return;
         target.scrollIntoView({ behavior: 'smooth', block: 'center' });
         target.classList.add('resident-highlight');
         setTimeout(function () {
             target.classList.remove('resident-highlight');
         }, 1500);
+    }
+
+    function findDedicatedPanel(label) {
+        var id = DEDICATED_PANELS[(label || '').toLowerCase()];
+        if (!id) return null;
+        return document.getElementById(id);
+    }
+
+    function findResidentProgressRow(label) {
+        if (!label) return null;
+        var safe = label.replace(/"/g, '\\"');
+        var row = document.querySelector('.rp-row[data-label="' + safe + '"]');
+        if (row) return row;
+        // Fall back to the panel itself if the row hasn't rendered yet.
+        return document.getElementById('resident-progress-panel');
+    }
+
+    function findAgentCard(label) {
+        var container = document.getElementById('agents-container');
+        if (!container) return null;
+        var items = container.querySelectorAll('.agent-item');
+        var needle = label.toLowerCase();
+        for (var i = 0; i < items.length; i++) {
+            var nameEl = items[i].querySelector('.agent-name');
+            if (nameEl && nameEl.textContent.toLowerCase().indexOf(needle) !== -1) {
+                return items[i];
+            }
+        }
+        return null;
     }
 
     // ---------------------------------------------------------------------
