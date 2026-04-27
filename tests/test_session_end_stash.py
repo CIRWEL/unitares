@@ -26,8 +26,8 @@ import pytest
 
 @pytest.fixture(scope="module")
 def stash_module():
-    project_root = Path(__file__).resolve().parent.parent.parent
-    module_path = project_root / "hooks" / "session_end_stash.py"
+    project_root = Path(__file__).resolve().parent.parent
+    module_path = project_root / "scripts" / "dev" / "session_end_stash.py"
     spec = importlib.util.spec_from_file_location("session_end_stash", module_path)
     assert spec and spec.loader, f"could not load {module_path}"
     module = importlib.util.module_from_spec(spec)
