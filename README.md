@@ -9,6 +9,8 @@
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19647159.svg)](https://doi.org/10.5281/zenodo.19647159)
 
+Status: live. First public commit 2025-12-04. For architecture details, see [docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md).
+
 **UNITARES is a runtime governance layer for heterogeneous AI-agent fleets.** It tracks continuous agent state, calibrates by class, detects drift, and issues governance interventions with auditable provenance.
 
 Most AI agents fly blind: they can't tell when they're thrashing, drifting, or overconfident until a human notices. UNITARES is a runtime layer that lets agents **see their own state and regulate themselves** — slow down when disorder spikes, ask for review when integrity drops, hand off when they're running on fumes.
