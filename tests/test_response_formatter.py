@@ -861,9 +861,10 @@ class TestFormatCompactPreservesPredictionId:
         assert "prediction_id" not in result
 
 
-class TestFormatMinimalIntentionallyStrips:
+class TestFormatMinimalStripsPredictionIdButPreservesWarnings:
     def test_minimal_does_not_include_prediction_id(self):
-        # Spec §6: minimal mode is bandwidth-constrained; prediction_id stripped intentionally.
+        # Spec §6: minimal mode is bandwidth-constrained; prediction_id is a correlation
+        # handle with no correctness value, so it is stripped intentionally.
         from src.mcp_handlers.response_formatter import _format_minimal
         response_data = {
             "decision": {"action": "proceed"},
@@ -873,13 +874,24 @@ class TestFormatMinimalIntentionallyStrips:
         result = _format_minimal(response_data, using_default_mode=False, saved_trust_tier=None)
         assert "prediction_id" not in result
 
-    def test_minimal_does_not_include_warnings(self):
-        # Spec §6: minimal mode is bandwidth-constrained; warnings stripped intentionally.
+    def test_minimal_preserves_warnings(self):
+        # Warnings are correctness signals (e.g. "evidence record failed for tool=pytest").
+        # Dropping them in minimal mode silently hides pipeline failures from bandwidth-
+        # constrained clients — so warnings must survive regardless of verbosity mode.
         from src.mcp_handlers.response_formatter import _format_minimal
         response_data = {
             "decision": {"action": "proceed"},
             "metrics": {"E": 0.5, "I": 0.5, "S": 0.3, "V": 0.0, "phi": 0.7},
-            "warnings": ["some-warning"],
+            "warnings": ["evidence record failed for tool=pytest"],
+        }
+        result = _format_minimal(response_data, using_default_mode=False, saved_trust_tier=None)
+        assert result.get("warnings") == ["evidence record failed for tool=pytest"]
+
+    def test_minimal_no_warnings_key_when_absent(self):
+        from src.mcp_handlers.response_formatter import _format_minimal
+        response_data = {
+            "decision": {"action": "proceed"},
+            "metrics": {"E": 0.5, "I": 0.5, "S": 0.3, "V": 0.0, "phi": 0.7},
         }
         result = _format_minimal(response_data, using_default_mode=False, saved_trust_tier=None)
         assert "warnings" not in result
