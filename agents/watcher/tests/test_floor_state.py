@@ -90,6 +90,36 @@ class TestFloorRoundTrip:
         save_floor(FloorState(updated_at="t", buckets={}), state_dir=nested)
         assert (nested / FLOOR_FILE_NAME).exists()
 
+    def test_concurrent_writers_use_distinct_tmp_paths(self, tmp_path, monkeypatch):
+        """Two callers of save_floor (Vigil cycle vs --recompute-floor CLI)
+        must never write to the same tmp filename. Otherwise one writer
+        truncates the other's tmp file mid-stream and the rename promotes
+        a corrupted file. Council-flagged race condition (conf 92)."""
+        observed_tmp_paths = []
+
+        from agents.watcher import floor_state as fs_mod
+
+        original_open = fs_mod.Path.open
+
+        def tracking_open(self, *args, **kwargs):
+            if self.name.endswith(".tmp") or ".tmp." in self.name:
+                observed_tmp_paths.append(self.name)
+            return original_open(self, *args, **kwargs)
+
+        monkeypatch.setattr(fs_mod.Path, "open", tracking_open)
+
+        # Two saves in quick succession should produce two DIFFERENT tmp paths
+        save_floor(FloorState(updated_at="a", buckets={}), state_dir=tmp_path)
+        save_floor(FloorState(updated_at="b", buckets={}), state_dir=tmp_path)
+
+        assert len(observed_tmp_paths) == 2
+        assert observed_tmp_paths[0] != observed_tmp_paths[1], (
+            f"both saves used the same tmp path {observed_tmp_paths[0]!r} — "
+            "concurrent writers would collide"
+        )
+        # The canonical target file still ends up in place
+        assert (tmp_path / FLOOR_FILE_NAME).exists()
+
 
 class TestFloorBucketLookup:
     def test_get_returns_bucket(self):

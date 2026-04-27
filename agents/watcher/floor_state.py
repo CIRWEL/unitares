@@ -86,13 +86,19 @@ def _dict_to_bucket(pattern: str, file_class: str, payload: Mapping[str, object]
 def save_floor(state: FloorState, *, state_dir: Path | None = None) -> None:
     """Atomically persist ``state`` to ``pattern_floor.json``.
 
-    Writes to a sibling ``.tmp`` file and renames over the target — a
-    crash mid-write leaves the previous file intact.
+    Writes to a unique sibling tmp file (suffixed with PID + monotonic
+    nanoseconds) and renames over the target — a crash mid-write leaves
+    the previous file intact, AND two concurrent writers (Vigil cycle vs
+    ``--recompute-floor`` CLI, or two overlapping Vigil cycles) never
+    collide on the same tmp filename. Council-flagged race condition.
     """
+    import os
+    import time
+
     target_dir = state_dir or DEFAULT_STATE_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / FLOOR_FILE_NAME
-    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp = target.with_suffix(f"{target.suffix}.tmp.{os.getpid()}.{time.monotonic_ns()}")
 
     payload = {
         "updated_at": state.updated_at,
