@@ -6,20 +6,6 @@
 
 ---
 
-## Scheduled re-reads
-
-Trigger dates for date-gated work. The plan.md ledger is the persistence mechanism — no external scheduler. Any process-instance reading this file at or after a trigger date should execute the listed action and remove the entry on completion.
-
-| Trigger date | Action | Owner row |
-|---|---|---|
-| 2026-05-02 | Query S8a Phase-1 distribution: count active agents tagged `ephemeral` vs `resident_persistent` vs untagged; compute lifetime histogram for `ephemeral` cohort. If the `ephemeral` pool has ≥30 agents with ≥1 week of lifetime data, draft Phase-2 promotion rule (`ephemeral → session_like` based on N observations over D days) and post as next operator-decision row. Also verify S8c (`spawn_reason` write-path) status — if still 0/N, flag as the highest-leverage next ship. | S8a, S8c |
-| 2026-05-25 (~4 weeks post S1-a ship) | Inspect S1-a deprecation telemetry: count `continuity_token_deprecated_accept` audit events by caller, confirm grace-period exit threshold met. If clean, open S1-c row (cross-process-instance reject). If non-zero, extend grace and document discoverable consumers. | S1, S14 |
-| Substrate-earned class accumulates ≥10 agents | Re-evaluate Option C feasibility per S14 trigger condition. | S14 |
-
-The first row is intentionally a date, not a routine. Re-reading the plan and acting on its triggers is the durable mechanism; cron daemons and cloud routines are infrastructure that wants to be avoided when the ledger already serves.
-
----
-
 ## Ledger
 
 Every item from `identity.md` that requires work, what "resolved" means for it, and what it depends on.
