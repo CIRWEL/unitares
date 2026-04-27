@@ -20,6 +20,7 @@ import sys
 from typing import Dict, List
 
 from src.sequential_calibration import sequential_calibration_tracker
+from src.calibration import calibration_checker
 from src.mcp_handlers.observability.outcome_events import (
     HARD_EXOGENOUS_TYPES,
     _HARD_EXOGENOUS_TYPE_TO_CHANNEL,
@@ -31,21 +32,37 @@ BACKFILL_TYPES = ("task_completed", "task_failed")
 
 
 async def fetch_eligible_rows(days: int) -> List[Dict]:
-    """Read task_* rows from the current-epoch partition with reconstructable confidence."""
+    """Read task_* rows with reconstructable confidence within the look-back window.
+
+    No epoch filter: task outcome correctness (did the task succeed?) is
+    epoch-invariant for calibration purposes. Scoping by `MAX(epoch)` after
+    the 2→3 bump returned zero rows because all historical task_* data lives
+    at epoch 2; the truth signal is still valid for calibration regardless of
+    which governance epoch it was stamped under.
+    """
     from src.db import get_db
     db = get_db()
+    # Two confidence keys exist in production: `reported_confidence` (newer code
+    # path, ~639 rows) and `confidence` (older / input passthrough, ~951 rows).
+    # COALESCE both to maximize backfill coverage; either is the same semantic
+    # signal (agent's stated confidence at decision time).
     sql = """
         SELECT
             ts,
             outcome_type,
             agent_id,
             is_bad,
-            (detail->>'reported_confidence')::float AS confidence
+            COALESCE(
+                (detail->>'reported_confidence')::float,
+                (detail->>'confidence')::float
+            ) AS confidence
         FROM audit.outcome_events
         WHERE outcome_type = ANY($1)
-          AND epoch = (SELECT MAX(epoch) FROM core.epochs)
           AND ts > NOW() - ($2 || ' days')::interval
-          AND detail->>'reported_confidence' IS NOT NULL
+          AND (
+              detail->>'reported_confidence' IS NOT NULL
+              OR detail->>'confidence' IS NOT NULL
+          )
         ORDER BY ts ASC
     """
     async with db.acquire() as conn:
@@ -105,11 +122,44 @@ async def backfill(days: int, dry_run: bool) -> Dict[str, int]:
                 outcome_type=row["outcome_type"],
                 persist=False,  # critical: no per-row writes
             )
+            # Also feed the bin-level CalibrationChecker so per_channel_calibration
+            # populates. The runtime handler at outcome_events.py:282 calls both;
+            # the backfill must too, or `tactical_bin_stats_by_channel` stays empty
+            # and the dashboard's per-channel chips never render.
+            calibration_checker.record_tactical_decision(
+                confidence=float(confidence),
+                decision='proceed',
+                immediate_outcome=not bool(row["is_bad"]),
+                signal_source=channel,
+            )
             summary["replayed"] += 1
 
     if not dry_run and summary["replayed"] > 0:
-        # Single atomic save after the loop completes.
+        # Single atomic save for the SequentialCalibrationTracker (json file).
         sequential_calibration_tracker.save_state()
+
+        # CalibrationChecker writes to postgres via fire-and-forget _run_async.
+        # In a short-lived script those tasks get cancelled when asyncio.run
+        # exits, so the per-channel bin stats never persist. Force a synchronous
+        # flush by awaiting the postgres write directly.
+        try:
+            from src.db import get_db
+            from collections import defaultdict
+            db = get_db()
+            state_data = {
+                'bins': {k: dict(v) for k, v in calibration_checker.bin_stats.items()},
+                'complexity_bins': {k: dict(v) for k, v in calibration_checker.complexity_stats.items()},
+                'tactical_bins': {k: dict(v) for k, v in calibration_checker.tactical_bin_stats.items()},
+                'tactical_bins_by_channel': {
+                    channel: {k: dict(v) for k, v in bins.items()}
+                    for channel, bins in calibration_checker.tactical_bin_stats_by_channel.items()
+                },
+            }
+            await db.update_calibration(state_data)
+        except Exception as e:
+            print(f"Warning: failed to flush CalibrationChecker to postgres: {e}", file=sys.stderr)
+            print("  SequentialCalibrationTracker state was saved successfully.", file=sys.stderr)
+            print("  per_channel_calibration may be empty until the running mcp organically populates it.", file=sys.stderr)
 
     return summary
 
