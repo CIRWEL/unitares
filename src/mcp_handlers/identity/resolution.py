@@ -577,6 +577,38 @@ async def resolve_session_identity(
 
             session = await db.get_session(session_key)
 
+            # PATH 2 fail-closed (S21-a, 2026-04-27): when caller asked to
+            # resume but PG has no session row, return MISS instead of
+            # falling through to PATH 3 and silently minting a ghost. Per
+            # identity.md design principle (KG 2026-04-06T02:34:27.323998):
+            # "resolve to existing identity or fail explicitly, never
+            # silently create a fork." Without this guard, every explicit-
+            # client_session_id resume on a fresh process minted a ghost
+            # AND ratified it into Redis, producing the chronic fleet-wide
+            # ghost-fork rate documented in S21.
+            #
+            # Carve-out: when the caller passed a continuity_token, defer
+            # to PATH 2.8's token-rebind / substrate-anchored gate below.
+            # Failing closed here would short-circuit substrate UDS-only
+            # rejection and the legitimate token-rebind recovery path.
+            if resume and not (session and session.agent_id) and not token_agent_uuid:
+                logger.info(
+                    "[PATH2_RESUME_MISS] session_key=%s... no PG session "
+                    "row, refusing silent PATH 3 fall-through (S21-a)",
+                    session_key[:20],
+                )
+                return {
+                    "resume_failed": True,
+                    "error": "session_resolve_miss",
+                    "session_key": session_key,
+                    "message": (
+                        f"No active session binding for "
+                        f"session_key={session_key[:20]}.... Pass "
+                        f"force_new=true to mint a fresh identity, or "
+                        f"onboard with declared parent_agent_id."
+                    ),
+                }
+
             if session and session.agent_id and resume:
 
                 stored_id = session.agent_id
@@ -660,7 +692,28 @@ async def resolve_session_identity(
 
         except Exception as e:
 
-            logger.debug(f"PostgreSQL session lookup failed: {e}")
+            # S21-a: promoted from logger.debug — silent fall-throughs were
+            # hiding anyio-asyncio deadlocks and other PG hiccups, after
+            # which PATH 3 would mint a ghost. Make the failure legible.
+            logger.warning(f"[PATH2_DB_FAIL] PostgreSQL session lookup failed: {e}")
+
+            # PATH 2 fail-closed on exception too — same reasoning as the
+            # no-row branch above. If we couldn't read the session table,
+            # we can't claim resume succeeded; mint requires explicit
+            # force_new=True from the caller. Same token-bearing carve-out
+            # as the no-row branch — let PATH 2.8 try the rebind.
+            if resume and not token_agent_uuid:
+                return {
+                    "resume_failed": True,
+                    "error": "session_resolve_miss",
+                    "session_key": session_key,
+                    "reason": "pg_lookup_exception",
+                    "message": (
+                        f"PostgreSQL session lookup failed for "
+                        f"session_key={session_key[:20]}.... Pass "
+                        f"force_new=true to mint a fresh identity."
+                    ),
+                }
 
 
 
@@ -857,8 +910,13 @@ async def resolve_session_identity(
                     client_info={"agent_uuid": agent_uuid, "agent_id": agent_id}
                 )
 
-            # Cache in Redis (session -> UUID + display agent_id)
-            await _cache_session(session_key, agent_uuid, display_agent_id=agent_id)
+            # Cache in Redis (session -> UUID + display agent_id).
+            # mint_guard=True: PATH 3 must not silently overwrite an
+            # existing live binding for the same session_key (S21-a).
+            await _cache_session(
+                session_key, agent_uuid, display_agent_id=agent_id,
+                mint_guard=True,
+            )
 
             logger.info(f"Created new agent: {agent_id} (uuid: {agent_uuid[:8]}...)")
 
@@ -878,9 +936,13 @@ async def resolve_session_identity(
             logger.warning(f"Failed to persist new agent: {e}")
             # Fall through to memory-only path
 
-    # Lazy creation: just cache in Redis, don't write to PostgreSQL
-    # Cache UUID + display agent_id + auto-label for retrieval on next call
-    await _cache_session(session_key, agent_uuid, display_agent_id=agent_id, label=label)
+    # Lazy creation: just cache in Redis, don't write to PostgreSQL.
+    # mint_guard=True: PATH 3 lazy mint must not silently overwrite an
+    # existing live binding for the same session_key (S21-a).
+    await _cache_session(
+        session_key, agent_uuid, display_agent_id=agent_id, label=label,
+        mint_guard=True,
+    )
     logger.debug(f"Created new agent (lazy): {agent_id} (uuid: {agent_uuid[:8]}...) label={label}")
 
     result = {

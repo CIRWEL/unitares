@@ -31,7 +31,12 @@ _redis_cache = None
 # and leave the in-memory session cache as the source of truth rather than
 # hanging the request. Matches `_REDIS_RECOVERY_TIMEOUT` in
 # src/mcp_handlers/middleware/identity_step.py.
-_REDIS_WRITE_TIMEOUT = 0.5
+#
+# S21-a (2026-04-27): bumped from 0.5s -> 1.0s to cover two serial awaits
+# (mint_guard `redis.get` + `redis.setex`) instead of one. Sized so each
+# leg has the same headroom as before; under Redis pressure the guard
+# read times out cleanly rather than silently no-opping the write.
+_REDIS_WRITE_TIMEOUT = 1.0
 
 
 def _metadata_public_agent_id(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -66,6 +71,8 @@ async def _cache_session(
     display_agent_id: str = None,
     trajectory_required: bool = False,
     label: str = None,
+    *,
+    mint_guard: bool = False,
 ) -> None:
     """Cache session->UUID mapping in Redis, with optional display agent_id.
 
@@ -74,28 +81,58 @@ async def _cache_session(
             trajectory genesis. Lets PATH 1 skip the get_trajectory_status()
             call on subsequent hits (optimization hint).
         label: Auto-generated or user-set label to store alongside the binding.
+        mint_guard: Set True at PATH 3 mint sites only. When True, this
+            function refuses to overwrite an existing in-memory or Redis
+            binding for the same session_key whose agent_uuid differs from
+            the one being written (S21-a, 2026-04-27 — see
+            docs/ontology/s21-session-resolution-bypass-incident.md).
+            PATH 2 / PATH 2.8 / set_agent_label callers leave it False —
+            they are corrective writes from authoritative sources and may
+            overwrite a stale Redis ghost.
     """
+    in_memory_blocked = False
     try:
         from .shared import _session_identities
 
         binding = _session_identities.get(session_key) or {}
-        bind_count = binding.get("bind_count", 0)
-        new_binding = {
-            "bound_agent_id": agent_uuid,
-            "agent_uuid": agent_uuid,
-            "public_agent_id": display_agent_id or agent_uuid,
-            "display_agent_id": display_agent_id,
-            "agent_label": label or binding.get("agent_label"),
-            "created_at": binding.get("created_at") or datetime.now(timezone.utc).isoformat(),
-            "bound_at": datetime.now(timezone.utc).isoformat(),
-            "bind_count": bind_count,
-            "trajectory_required": trajectory_required,
-        }
-        if label:
-            new_binding["label"] = label
-        _session_identities[session_key] = new_binding
+
+        # S21-a in-memory guard: refuse to ratify a different UUID over an
+        # existing live binding when the caller is a PATH 3 mint site. This
+        # is the load-bearing fix — PATH 3 ghost-mints used to silently
+        # ratify themselves into _session_identities (and via the redis
+        # write below, into the Redis slot), producing the 95% fleet-wide
+        # ghost-fork rate documented in the S21 incident report.
+        existing_uuid = binding.get("bound_agent_id") or binding.get("agent_uuid")
+        if mint_guard and existing_uuid and existing_uuid != agent_uuid:
+            logger.warning(
+                "[S21A_OVERWRITE_BLOCKED] in-memory session_key=%s... "
+                "existing=%s... attempted=%s... — refusing PATH 3 overwrite",
+                session_key[:20], str(existing_uuid)[:8], agent_uuid[:8],
+            )
+            in_memory_blocked = True
+        else:
+            bind_count = binding.get("bind_count", 0)
+            new_binding = {
+                "bound_agent_id": agent_uuid,
+                "agent_uuid": agent_uuid,
+                "public_agent_id": display_agent_id or agent_uuid,
+                "display_agent_id": display_agent_id,
+                "agent_label": label or binding.get("agent_label"),
+                "created_at": binding.get("created_at") or datetime.now(timezone.utc).isoformat(),
+                "bound_at": datetime.now(timezone.utc).isoformat(),
+                "bind_count": bind_count,
+                "trajectory_required": trajectory_required,
+            }
+            if label:
+                new_binding["label"] = label
+            _session_identities[session_key] = new_binding
     except Exception as e:
         logger.debug(f"In-memory session cache update failed for {session_key[:20]}...: {e}")
+
+    # If the in-memory guard fired, skip the Redis write too — the slot for
+    # this session_key already maps to a different live UUID.
+    if in_memory_blocked:
+        return
 
     # Capture binding-time fingerprint for PATH 1 cross-check.
     # Council follow-up to identity-honesty (KG 2026-04-20T00:57:45): session
@@ -136,6 +173,7 @@ async def _cache_session(
                     trajectory_required,
                     label,
                     bind_ip_ua,
+                    mint_guard=mint_guard,
                 ),
                 timeout=_REDIS_WRITE_TIMEOUT,
             )
@@ -162,11 +200,18 @@ async def _cache_session_redis_write(
     trajectory_required: bool,
     label: Optional[str],
     bind_ip_ua: Optional[str],
+    *,
+    mint_guard: bool = False,
 ) -> None:
     """Inner: Redis writes for _cache_session, wrapped by asyncio.wait_for.
 
     Separated so the caller can bound execution time with a tight timeout
     to avoid hanging MCP handlers when the anyio-asyncio deadlock triggers.
+
+    When ``mint_guard`` is True (set by PATH 3 mint sites), this function
+    refuses to overwrite an existing Redis slot for the same session_key
+    whose agent_id differs from the one being written. See S21-a for the
+    incident this guards against.
     """
     # Store both UUID and display agent_id if provided
     if display_agent_id and display_agent_id != agent_uuid:
@@ -174,6 +219,12 @@ async def _cache_session_redis_write(
         from src.cache.redis_client import get_redis
         redis = await get_redis()
         if redis:
+            key = f"session:{session_key}"
+
+            # S21-a guard: refuse to overwrite a different live binding.
+            if mint_guard and await _redis_slot_blocks_overwrite(redis, key, agent_uuid):
+                return
+
             data = {
                 "agent_id": agent_uuid,
                 "display_agent_id": display_agent_id,
@@ -184,7 +235,6 @@ async def _cache_session_redis_write(
                 data["label"] = label
             if bind_ip_ua:
                 data["bind_ip_ua"] = bind_ip_ua
-            key = f"session:{session_key}"
             await redis.setex(key, GovernanceConfig.SESSION_TTL_SECONDS, json.dumps(data))
             # Keep SessionCache's in-memory fallback coherent with the richer
             # raw Redis payload so subsequent lookups see the same binding
@@ -196,6 +246,8 @@ async def _cache_session_redis_write(
                 pass
         else:
             # Raw Redis unavailable but degraded-local cache is still usable.
+            if mint_guard and await _session_cache_blocks_overwrite(session_cache, session_key, agent_uuid):
+                return
             await session_cache.bind(session_key, agent_uuid)
             try:
                 from src.cache import session_cache as _session_cache_mod
@@ -213,7 +265,68 @@ async def _cache_session_redis_write(
             except Exception:
                 pass
     else:
+        if mint_guard and await _session_cache_blocks_overwrite(session_cache, session_key, agent_uuid):
+            return
         await session_cache.bind(session_key, agent_uuid)
+
+
+async def _redis_slot_blocks_overwrite(redis, key: str, agent_uuid: str) -> bool:
+    """Return True iff the raw-Redis slot for `key` already binds a *different*
+    agent_uuid. Used by the S21-a guard inside _cache_session_redis_write —
+    PATH 3 mint sites must not silently ratify a fresh ghost over a legitimate
+    session binding. Errors are treated as "no block" (fail-open) so a
+    transient Redis hiccup doesn't break minting on truly empty slots.
+    """
+    try:
+        existing_raw = await redis.get(key)
+        if not existing_raw:
+            return False
+        if isinstance(existing_raw, bytes):
+            try:
+                existing_raw = existing_raw.decode()
+            except Exception:
+                return False
+        if isinstance(existing_raw, dict):
+            existing_data = existing_raw
+        else:
+            try:
+                existing_data = json.loads(existing_raw)
+            except (json.JSONDecodeError, TypeError):
+                return False
+        existing_id = existing_data.get("agent_id") if isinstance(existing_data, dict) else None
+        if existing_id and existing_id != agent_uuid:
+            existing_prefix = existing_id[:8] if isinstance(existing_id, str) else "?"
+            logger.warning(
+                "[S21A_OVERWRITE_BLOCKED] redis key=%s existing=%s... attempted=%s... "
+                "— refusing PATH 3 overwrite",
+                key, existing_prefix, agent_uuid[:8],
+            )
+            return True
+    except Exception as e:
+        logger.debug(f"S21-a redis guard read failed for {key}: {e}")
+    return False
+
+
+async def _session_cache_blocks_overwrite(session_cache, session_key: str, agent_uuid: str) -> bool:
+    """Return True iff the SessionCache view of `session_key` binds a different
+    agent_uuid. Used by the S21-a guard for the bare-bind path (raw Redis
+    unavailable, falling back through session_cache.bind).
+    """
+    try:
+        existing = await session_cache.get(session_key)
+        if isinstance(existing, dict):
+            existing_id = existing.get("agent_id")
+            if existing_id and existing_id != agent_uuid:
+                existing_prefix = existing_id[:8] if isinstance(existing_id, str) else "?"
+                logger.warning(
+                    "[S21A_OVERWRITE_BLOCKED] session_cache session_key=%s... "
+                    "existing=%s... attempted=%s... — refusing PATH 3 overwrite",
+                    session_key[:20], existing_prefix, agent_uuid[:8],
+                )
+                return True
+    except Exception as e:
+        logger.debug(f"S21-a session_cache guard read failed: {e}")
+    return False
 
 # =============================================================================
 # DB HELPERS
