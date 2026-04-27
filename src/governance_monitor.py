@@ -1093,8 +1093,17 @@ class UNITARESMonitor:
         return _lookup_prediction(self._open_predictions, prediction_id)
 
     def consume_prediction(self, prediction_id: str) -> Optional[Dict[str, Any]]:
-        """Mark a prediction as consumed and return its record."""
-        return _consume_prediction(self._open_predictions, prediction_id)
+        """Mark a prediction as consumed and return its record.
+
+        Forwards the live TTL config (self._prediction_ttl_seconds) so any
+        per-agent override is honored. Without this forwarding the v2
+        per-agent-class TTL would silently fall back to the module default.
+        """
+        return _consume_prediction(
+            self._open_predictions,
+            prediction_id,
+            ttl_seconds=self._prediction_ttl_seconds,
+        )
 
     def expire_old_predictions(self, ttl_seconds: Optional[float] = None) -> int:
         """Drop prediction records older than ttl_seconds. Returns count removed."""

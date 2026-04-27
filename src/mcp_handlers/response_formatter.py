@@ -13,10 +13,14 @@ logger = get_logger(__name__)
 
 
 def _copy_passthrough_fields(response_data: dict, result: dict, fields: tuple) -> None:
-    """Copy named fields from response_data to result if present and truthy."""
+    """Copy named fields from response_data to result if present (not None).
+
+    Empty containers (e.g., empty warnings list) are forwarded so callers
+    can distinguish 'no warnings recorded' from 'warnings field absent.'
+    """
     for field in fields:
         value = response_data.get(field)
-        if value:
+        if value is not None:
             result[field] = value
 
 def format_response(
