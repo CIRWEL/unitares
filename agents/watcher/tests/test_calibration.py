@@ -298,3 +298,60 @@ def test_precision_reasons_constant_shape():
     """Document the canonical taxonomy. Precision math counts as TN ONLY
     the reasons that mean 'this finding was a false positive'."""
     assert PRECISION_REASONS_TRUE_NEGATIVE == frozenset({"fp"})
+
+
+from agents.watcher.calibration import probe_rate_for_n, should_probe
+
+
+class TestProbeRateForN:
+    """Adaptive probe rate. Smaller buckets need higher exploration so
+    they can acquire signal; larger buckets settle into exploit mode.
+
+    Schedule:
+      - n < 10: probe rate = 1.0 (no demotion at all — handled at callsite)
+      - 10 ≤ n < 30: probe rate = 1/3
+      - 30 ≤ n < 100: probe rate = 1/5
+      - n ≥ 100: probe rate = 1/10
+    """
+
+    def test_below_min_n_full_probe(self):
+        assert probe_rate_for_n(0) == 1.0
+        assert probe_rate_for_n(9) == 1.0
+
+    def test_low_n_high_probe(self):
+        assert probe_rate_for_n(10) == pytest.approx(1.0 / 3.0)
+        assert probe_rate_for_n(29) == pytest.approx(1.0 / 3.0)
+
+    def test_mid_n_moderate_probe(self):
+        assert probe_rate_for_n(30) == pytest.approx(1.0 / 5.0)
+        assert probe_rate_for_n(99) == pytest.approx(1.0 / 5.0)
+
+    def test_high_n_low_probe(self):
+        assert probe_rate_for_n(100) == pytest.approx(1.0 / 10.0)
+        assert probe_rate_for_n(1000) == pytest.approx(1.0 / 10.0)
+
+
+class TestShouldProbe:
+    """Deterministic probe selection: hash of (fingerprint, today) →
+    bool. Same finding probes consistently within a day; over many days
+    the probe rate converges to ``probe_rate_for_n``."""
+
+    def test_deterministic_within_day(self):
+        a = should_probe("abc123", date_iso="2026-04-27", probe_rate=0.5)
+        b = should_probe("abc123", date_iso="2026-04-27", probe_rate=0.5)
+        assert a == b
+
+    def test_different_fingerprints_distribute(self):
+        rate = 0.2
+        results = [
+            should_probe(f"fp{i:04d}", date_iso="2026-04-27", probe_rate=rate)
+            for i in range(2000)
+        ]
+        observed = sum(results) / len(results)
+        assert abs(observed - rate) < 0.05
+
+    def test_zero_rate_never_probes(self):
+        assert should_probe("abc", date_iso="2026-04-27", probe_rate=0.0) is False
+
+    def test_one_rate_always_probes(self):
+        assert should_probe("abc", date_iso="2026-04-27", probe_rate=1.0) is True

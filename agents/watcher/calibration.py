@@ -390,3 +390,50 @@ def precision_by_pattern_and_class(
             latest_observation=latest_value if isinstance(latest_value, str) else None,
         )
     return out
+
+
+# ---------------------------------------------------------------------------
+# ε-greedy probe selection
+# ---------------------------------------------------------------------------
+
+
+def probe_rate_for_n(weighted_n: float) -> float:
+    """Adaptive ε for the demotion exploration policy.
+
+    Below the min-N gate (``< 10``) we don't demote at all — return 1.0
+    for completeness (no demotion → all surface). Above min-N, the rate
+    steps down with bucket maturity. Stepped (not continuous) so the
+    behavior is easy to reason about and tweak.
+    """
+    if weighted_n < 10.0:
+        return 1.0
+    if weighted_n < 30.0:
+        return 1.0 / 3.0
+    if weighted_n < 100.0:
+        return 1.0 / 5.0
+    return 1.0 / 10.0
+
+
+def should_probe(fingerprint: str, *, date_iso: str, probe_rate: float) -> bool:
+    """Deterministic per-(fingerprint, day) probe decision.
+
+    Hashing on ``(fingerprint, day)`` means a given finding is either
+    probed for the whole day or not — no flicker as the surface hook
+    fires repeatedly within a session. Across days the choice
+    re-randomizes, so a demoted bucket has a path back to visibility.
+
+    The hash is sha256 over the joined string; we take the first 8 hex
+    chars as an unsigned int and divide by 2**32. Cryptographic strength
+    isn't required, but using sha256 means we don't need to import
+    Python's per-process randomized hash() and the test suite is
+    reproducible across runs.
+    """
+    if probe_rate >= 1.0:
+        return True
+    if probe_rate <= 0.0:
+        return False
+    import hashlib
+
+    digest = hashlib.sha256(f"{fingerprint}|{date_iso}".encode()).hexdigest()
+    bucket = int(digest[:8], 16) / float(0x1_00000000)
+    return bucket < probe_rate
