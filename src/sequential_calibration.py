@@ -63,6 +63,8 @@ import math
 import sys
 from datetime import datetime, UTC
 
+from config.governance_config import GovernanceConfig
+
 
 def _empty_state() -> Dict[str, Any]:
     return {
@@ -107,6 +109,7 @@ class SequentialCalibrationTracker:
             "agents": {agent_id: dict(state) for agent_id, state in self.agent_states.items()},
             "prior_success": self.prior_success,
             "prior_failure": self.prior_failure,
+            "epoch": GovernanceConfig.CURRENT_EPOCH,
         }
 
     def save_state(self) -> None:
@@ -138,6 +141,26 @@ class SequentialCalibrationTracker:
                 return
             with open(self.state_file, "r") as f:
                 data = json.load(f)
+
+            # Epoch migration: when the truth-channel definition changes (or any
+            # other governance epoch bump), historical state is no longer
+            # comparable. Archive and reset rather than silently reinterpret.
+            file_epoch = int(data.get("epoch", 1))
+            if file_epoch != GovernanceConfig.CURRENT_EPOCH:
+                archive_path = self.state_file.with_suffix(f".bak.epoch{file_epoch}")
+                try:
+                    self.state_file.rename(archive_path)
+                except FileNotFoundError:
+                    # Concurrent process already migrated; safe to no-op.
+                    pass
+                print(
+                    f"Calibration epoch changed ({file_epoch} → {GovernanceConfig.CURRENT_EPOCH}); "
+                    f"archived prior state to {archive_path}",
+                    file=sys.stderr,
+                )
+                self.reset()
+                self._loaded_mtime = 0.0
+                return
 
             self.global_state = _empty_state()
             self.global_state.update(data.get("global", {}))
