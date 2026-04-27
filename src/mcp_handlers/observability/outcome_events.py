@@ -279,13 +279,15 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
                 actual_correct=float(outcome_score),
             )
             # Hard-exogenous outcomes (test_*, task_*) feed tactical calibration.
-            # signal_source wiring is added in Task 3 once record_tactical_decision
-            # accepts the kwarg.
+            # signal_source routes the row to per-channel breakdown in
+            # CalibrationChecker.tactical_bin_stats_by_channel; aggregate
+            # remains populated for back-compat.
             if outcome_type in HARD_EXOGENOUS_TYPES:
                 calibration_checker.record_tactical_decision(
                     confidence=_confidence,
                     decision='proceed',
                     immediate_outcome=not is_bad,
+                    signal_source=_HARD_EXOGENOUS_TYPE_TO_CHANNEL[outcome_type],
                 )
         except Exception as e_cal:
             logger.debug(f"Calibration from outcome_event skipped: {e_cal}")
