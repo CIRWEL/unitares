@@ -5573,3 +5573,30 @@ main {
     overflow: hidden;
     text-overflow: ellipsis;
 }
+
+/* Resident Progress panel (Phase 1 telemetry) */
+.rp-rows { display: flex; flex-direction: column; gap: 4px; padding: 8px; }
+.rp-row {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr 1fr 0.5fr 0.8fr;
+    gap: 8px;
+    align-items: center;
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    font-size: 0.9em;
+}
+.rp-row.rp-dim { opacity: 0.55; }
+.rp-label { font-weight: 500; }
+.rp-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.75em;
+    text-align: center;
+}
+.rp-status-ok       { background: rgba(80,180,90,0.18);  color: #7fdc8f; }
+.rp-status-flat     { background: rgba(220,170,40,0.20); color: #f1c860; }
+.rp-status-silent   { background: rgba(140,140,150,0.20); color: #a8a8b4; }
+.rp-status-error    { background: rgba(220,80,80,0.20);  color: #f08080; }
+.rp-status-unresolved { background: rgba(120,120,140,0.15); color: #909098; }
+.rp-status-init     { background: rgba(120,120,140,0.10); color: #909098; }
