@@ -191,7 +191,10 @@ fi
 # ---------------------------------------------------------------------------
 # Ping governance server
 # ---------------------------------------------------------------------------
-HEALTH_STATUS=$(curl -s --max-time 3 "${SERVER_URL}/health" 2>/dev/null || echo "")
+HEALTH_LOG="${UNITARES_SESSION_START_LOG:-/tmp/unitares-session-start.log}"
+HEALTH_EXIT=0
+HEALTH_STATUS=$(curl -sS --max-time 3 "${SERVER_URL}/health" 2>>"${HEALTH_LOG}") || HEALTH_EXIT=$?
+printf '[%s] curl exit=%d len=%d url=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${HEALTH_EXIT}" "${#HEALTH_STATUS}" "${SERVER_URL}/health" >> "${HEALTH_LOG}" 2>/dev/null || true
 
 if [[ -z "${HEALTH_STATUS}" ]]; then
   # -------------------------------------------------------------------------
