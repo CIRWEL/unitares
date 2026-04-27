@@ -180,13 +180,15 @@ class ProcessAgentUpdateParams(AgentIdentityMixin):
 
 class OutcomeEventParams(AgentIdentityMixin):
     """Parameters for outcome_event"""
-    outcome_type: Literal["drawing_completed", "drawing_abandoned", "test_passed", "test_failed", "tool_rejected", "task_completed", "task_failed"] = Field(..., description="Type of outcome event")
+    outcome_type: Literal["drawing_completed", "drawing_abandoned", "test_passed", "test_failed", "tool_rejected", "task_completed", "task_failed", "trajectory_validated"] = Field(..., description="Type of outcome event")
     outcome_score: Optional[float] = Field(None, description="Quality score 0.0 (worst) to 1.0 (best). Inferred from type if omitted.")
     is_bad: Optional[bool] = Field(None, description="Whether this is a negative outcome. Inferred from type if omitted.")
     detail: Optional[Dict[str, Any]] = Field(None, description="Type-specific metadata (e.g., mark_count, test_name, error_message)")
     confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="Agent confidence at outcome time (0-1). Looked up from last check-in if omitted.")
     prediction_id: Optional[str] = Field(None, description="Tactical prediction id from a prior process_agent_update response. When provided, the registered confidence for that id is used instead of the temporal proxy fallback.")
     agent_id: Optional[str] = Field(None, description="Agent ID. Falls back to session-bound agent_id if omitted.")
+    decision_action: Optional[str] = Field(None, description="The decision the agent took (e.g. 'proceed', 'pause'). Used by sequential calibration tracking; for test_passed/test_failed defaults to 'proceed'.")
+    session_id: Optional[str] = Field(None, description="Optional session id; falls back to client_session_id and then to context.")
 
 
 class CirsProtocolParams(AgentIdentityMixin):

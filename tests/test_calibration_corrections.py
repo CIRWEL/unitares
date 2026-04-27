@@ -163,6 +163,66 @@ class TestApplyConfidenceCorrection:
         assert 0.0 <= corrected <= 1.0
 
 
+class TestStaleSignalHonestAbsence:
+    """Stale tactical signal -> identity correction with calibration_skipped reason.
+
+    The signal channel can starve (no outcome_event for days) while bins
+    keep their last-recorded values. Scaling against frozen bins amplifies
+    survivorship bias from whichever sample arrived last; honest absence
+    is the safer default.
+    """
+
+    def test_stale_signal_returns_identity_with_reason(self, checker, monkeypatch):
+        # Bin has plenty of samples that would normally trigger correction.
+        checker.tactical_bin_stats["0.8-0.9"] = {
+            "count": 20, "actual_correct": 10, "predicted_correct": 20,
+            "confidence_sum": 17.0,
+        }
+        monkeypatch.setattr(checker, "_tactical_signal_age_days", lambda: 12.5)
+
+        corrected, info = checker.apply_confidence_correction(
+            0.85, min_samples=5, max_staleness_days=7.0
+        )
+
+        assert corrected == 0.85
+        assert info is not None
+        assert "calibration_skipped" in info
+        assert "stale" in info
+
+    def test_fresh_signal_still_corrects(self, checker, monkeypatch):
+        # Same setup, but signal is fresh -> correction proceeds.
+        checker.tactical_bin_stats["0.8-0.9"] = {
+            "count": 20, "actual_correct": 10, "predicted_correct": 20,
+            "confidence_sum": 17.0,
+        }
+        monkeypatch.setattr(checker, "_tactical_signal_age_days", lambda: 0.5)
+
+        corrected, info = checker.apply_confidence_correction(
+            0.85, min_samples=5, max_staleness_days=7.0
+        )
+
+        assert corrected < 0.85
+        assert info is not None
+        assert "calibration_adjusted" in info
+
+    def test_unknown_age_does_not_skip(self, checker, monkeypatch):
+        # If we can't tell the signal's age, behave as before -- absence
+        # of evidence about staleness is not evidence of staleness.
+        checker.tactical_bin_stats["0.8-0.9"] = {
+            "count": 20, "actual_correct": 10, "predicted_correct": 20,
+            "confidence_sum": 17.0,
+        }
+        monkeypatch.setattr(checker, "_tactical_signal_age_days", lambda: None)
+
+        corrected, info = checker.apply_confidence_correction(
+            0.85, min_samples=5, max_staleness_days=7.0
+        )
+
+        assert corrected < 0.85
+        assert info is not None
+        assert "calibration_adjusted" in info
+
+
 # ============================================================================
 # update_ground_truth
 # ============================================================================
