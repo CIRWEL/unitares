@@ -989,6 +989,15 @@ class UNITARESMonitor:
         self.state.decision_history.append(decision.get('sub_action', decision['action']))
         if len(self.state.decision_history) > config.HISTORY_WINDOW:
             self.state.decision_history = self.state.decision_history[-config.HISTORY_WINDOW:]
+
+        # Track verdict tier history (safe/caution/high-risk) — separate vocabulary
+        # from decision_history's actions; both surface in observe summary so users
+        # see governance verdicts even on agents whose only persisted history is
+        # core.agent_state (DB-hydrated post PR #200).
+        if isinstance(unitares_verdict, str) and unitares_verdict:
+            self.state.verdict_history.append(unitares_verdict)
+            if len(self.state.verdict_history) > config.HISTORY_WINDOW:
+                self.state.verdict_history = self.state.verdict_history[-config.HISTORY_WINDOW:]
         
         # Determine overall status using health thresholds (aligned with health_checker)
         # Use same thresholds as health_checker for consistency: risk_healthy_max=0.35, risk_moderate_max=0.60

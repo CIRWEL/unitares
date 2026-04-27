@@ -41,7 +41,6 @@ Use `--agent-id` when resolving or dismissing so the audit trail stays attribute
 
 ### What Codex should NOT reference
 
-- `hooks/` — Claude plugin manifest; has no meaning in Codex.
 - `.claude/CLAUDE.md` — Claude-only machine-local overlay.
 - `~/.claude/projects/.../memory/MEMORY.md` — Claude's memory system; Codex uses `.unitares/session.json` instead.
 

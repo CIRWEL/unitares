@@ -1018,25 +1018,70 @@ class CalibrationChecker:
             "bins": bin_characterizations,
         }
 
+    def _tactical_signal_age_days(self) -> Optional[float]:
+        """Days since the last tactical signal landed in the e-process tracker.
+
+        Returned as a positive float; None if the tracker is unavailable or
+        has no recorded signal yet. The sequential tracker shares its write
+        path with `record_tactical_decision` (both fire from outcome_event
+        on test_passed/test_failed), so its `last_updated` is a faithful
+        proxy for "is the tactical bin pipeline alive."
+        """
+        try:
+            from src.sequential_calibration import get_sequential_calibration_tracker
+            from datetime import datetime, timezone
+            metrics = get_sequential_calibration_tracker().compute_metrics()
+            last_updated = metrics.get("last_updated")
+            if not last_updated:
+                return None
+            if isinstance(last_updated, str):
+                last_dt = datetime.fromisoformat(last_updated.replace("Z", "+00:00"))
+            else:
+                last_dt = last_updated
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=timezone.utc)
+            return max(0.0, (datetime.now(timezone.utc) - last_dt).total_seconds() / 86400.0)
+        except Exception:
+            return None
+
     def apply_confidence_correction(self, reported_confidence: float,
-                                    min_samples: int = 5) -> Tuple[float, Optional[str]]:
+                                    min_samples: int = 5,
+                                    max_staleness_days: float = 7.0) -> Tuple[float, Optional[str]]:
         """
         Apply calibration correction to a reported confidence value.
 
         AUTO-CALIBRATION LOOP: This closes the learning loop by automatically
         adjusting confidence based on historical accuracy.
 
+        Honest absence: when the tactical signal pipeline is starved (no
+        outcome_event for `max_staleness_days`), bins are frozen in time and
+        scaling against them is worse than not correcting at all — they
+        carry survivorship bias from whichever sample arrived last. Return
+        identity with a `calibration_skipped` reason so callers can surface
+        the absence instead of silently using stale bins.
+
         Args:
             reported_confidence: The confidence value reported by the agent [0, 1]
             min_samples: Minimum samples needed to apply correction
+            max_staleness_days: If the tactical signal hasn't refreshed in
+                this many days, return identity. Default 7.
 
         Returns:
             Tuple of (corrected_confidence, correction_info)
             - corrected_confidence: Calibrated confidence value [0, 1]
-            - correction_info: String describing correction applied, or None
+            - correction_info: String describing correction applied or skipped,
+              or None when the call is a quiet no-op
         """
         # Clamp input to valid range
         reported_confidence = max(0.0, min(1.0, reported_confidence))
+
+        # Honest absence on stale signal — see docstring.
+        age_days = self._tactical_signal_age_days()
+        if age_days is not None and age_days > max_staleness_days:
+            return reported_confidence, (
+                f"calibration_skipped: tactical signal stale "
+                f"{age_days:.1f}d (>{max_staleness_days}d threshold)"
+            )
 
         # Find the bin for this confidence
         bin_key = None

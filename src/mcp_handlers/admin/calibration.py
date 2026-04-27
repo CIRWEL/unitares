@@ -100,8 +100,45 @@ async def handle_check_calibration(arguments: Dict[str, Any]) -> Sequence[TextCo
             "agents end up healthy?), not a measurement of decision correctness."
         )
 
+    # Compute tactical-signal staleness so the dashboard can distinguish
+    # "miscalibrated" from "starved." A bin-error verdict against a frozen
+    # signal channel is a different operational story than against a live one.
+    tactical_staleness_days: Optional[float] = None
+    last_updated_raw = tactical_metrics.get("last_updated") if tactical_metrics else None
+    if last_updated_raw:
+        try:
+            from datetime import datetime, timezone
+            if isinstance(last_updated_raw, str):
+                _last_dt = datetime.fromisoformat(last_updated_raw.replace("Z", "+00:00"))
+            else:
+                _last_dt = last_updated_raw
+            if _last_dt.tzinfo is None:
+                _last_dt = _last_dt.replace(tzinfo=timezone.utc)
+            tactical_staleness_days = max(
+                0.0,
+                (datetime.now(timezone.utc) - _last_dt).total_seconds() / 86400.0,
+            )
+        except Exception:
+            tactical_staleness_days = None
+
+    # `calibration_status` is the operator-facing one-liner. The boolean
+    # `calibrated` is preserved for back-compat, but it conflates "we
+    # measured miscalibration" with "we have no signal to measure" —
+    # status splits those.
+    STALENESS_THRESHOLD_DAYS = 7.0
+    if total_samples == 0:
+        calibration_status = "no_data"
+    elif tactical_staleness_days is not None and tactical_staleness_days > STALENESS_THRESHOLD_DAYS:
+        calibration_status = "signal_stale"
+    elif is_calibrated:
+        calibration_status = "calibrated"
+    else:
+        calibration_status = "miscalibrated"
+
     response = {
         "calibrated": is_calibrated,
+        "calibration_status": calibration_status,
+        "tactical_staleness_days": tactical_staleness_days,
         "issues": metrics.get('issues', []),
         "accuracy": accuracy_value,
         "trajectory_health": overall_trajectory_health,
@@ -116,6 +153,7 @@ async def handle_check_calibration(arguments: Dict[str, Any]) -> Sequence[TextCo
     if tactical_metrics:
         response["tactical_evidence"] = {
             **tactical_metrics,
+            "staleness_days": tactical_staleness_days,
             "note": (
                 "Sequential evidence is tracked only for hard exogenous tactical outcomes "
                 "(tests, commands, files, lint, tool-result evidence)."

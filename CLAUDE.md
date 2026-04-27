@@ -6,13 +6,11 @@ The installable Codex/Claude adapter bundle is canonical in the companion `unita
 
 ## Claude-specific wiring
 
-Claude Code runs through a plugin-style harness. The hook lifecycle is:
+Claude Code runs through a plugin-style harness. The hook lifecycle is owned by the **`unitares-governance-plugin`** repo (canonical for the adapter bundle). This repo does not vendor or wire its own hook chain. The plugin's `hooks/session-start` and `hooks/post-edit` are what fire on Claude lifecycle events — when CLAUDE.md or AGENTS.md describes hook behavior, the source of truth is the plugin.
 
-- `hooks/hooks.json` — plugin manifest; declares `SessionStart` and `PostToolUse` (`Edit|Write`) matchers under `${CLAUDE_PLUGIN_ROOT}`
-- `hooks/session-start` — runs once per session; performs governance onboarding/resume
-- `hooks/post-edit` — runs async after every `Edit`/`Write`; invokes the Watcher
+User-level `~/.claude/hooks/` adds a third layer (auto-test, watcher-hook, watcher-chime, stop-checkin, etc.) wired directly in `~/.claude/settings.json`. Watcher findings that appear at session start or as a chime block originate from that user-level chain, not from the plugin's `post-edit`.
 
-Watcher findings **surface automatically** here. `hooks/post-edit` calls `agents/watcher/watcher-hook.sh`, which scans the just-edited region and emits unresolved findings as a chime block on your next turn. To close a finding:
+To close a Watcher finding (the agent itself lives in this repo):
 
 ```bash
 python3 agents/watcher/agent.py --resolve <fingerprint>   # confirmed bug, fixed
@@ -20,6 +18,14 @@ python3 agents/watcher/agent.py --dismiss <fingerprint>   # false positive
 ```
 
 Reference fingerprints in the commit message — Watcher's audit trail lives in commits, not in tracked files (`data/watcher/` is gitignored).
+
+### Session-end auto-stash
+
+`scripts/dev/session_end_stash.py` is a standalone utility that captures uncommitted work into a branch-labeled `git stash` so intent survives session boundaries. It is **not** auto-fired from this repo (no hook chain wires it). Run manually, or wire from `~/.claude/hooks/` if desired:
+
+```bash
+python3 scripts/dev/session_end_stash.py
+```
 
 ### Machine-local overlay
 

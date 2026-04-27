@@ -1206,8 +1206,16 @@ async function loadCalibration() {
                 valueEl.textContent = '—';
                 valueEl.style.color = '';
                 detailEl.textContent = 'No samples \u00b7 Fleet-wide';
+            } else if ((result.calibration_status || (result.calibrated ? 'calibrated' : 'miscalibrated')) === 'signal_stale') {
+                var staleness = result.tactical_staleness_days;
+                valueEl.textContent = 'Stale';
+                valueEl.style.color = 'var(--color-warning, #eab308)';
+                var staleStr = (staleness != null) ? staleness.toFixed(0) + 'd' : '?';
+                detailEl.textContent = 'Tactical signal ' + staleStr + ' old · ' + samples + ' samples';
             } else {
-                var calibrated = result.calibrated === true;
+                var calibrated = (result.calibration_status
+                    ? result.calibration_status === 'calibrated'
+                    : result.calibrated === true);
                 valueEl.textContent = calibrated ? 'Yes' : 'No';
                 valueEl.style.color = calibrated
                     ? 'var(--color-success, #22c55e)'
@@ -2185,9 +2193,20 @@ if (calibrationCard) {
             const dist = r?.confidence_distribution || {};
             const samples = r?.total_samples ?? 0;
             const issues = r?.issues || [];
+            const status = r?.calibration_status
+                || (samples === 0 ? 'no_data' : (r?.calibrated ? 'calibrated' : 'miscalibrated'));
+            const staleness = r?.tactical_staleness_days;
+            const statusLabels = {
+                calibrated: 'Yes',
+                miscalibrated: 'No',
+                signal_stale: 'Unknown (signal stale)',
+                no_data: 'Unknown (no samples yet)',
+            };
             var calHtml = '<div class="detail-section">' +
-                '<div><strong>Calibrated:</strong> ' + (r?.calibrated ? 'Yes' : 'No') +
-                (samples === 0 ? ' <span style="opacity:0.6">(no samples yet)</span>' : '') + '</div>' +
+                '<div><strong>Calibrated:</strong> ' + (statusLabels[status] || status) + '</div>' +
+                (staleness != null
+                    ? '<div><strong>Tactical signal age:</strong> ' + staleness.toFixed(1) + ' days</div>'
+                    : '') +
                 '<div><strong>Trajectory health:</strong> ' + (th * 100).toFixed(1) + '%</div>' +
                 '<div><strong>Samples:</strong> ' + samples + '</div>' +
                 (dist.mean != null ? '<div><strong>Confidence mean:</strong> ' + (dist.mean * 100).toFixed(1) + '%</div>' : '');

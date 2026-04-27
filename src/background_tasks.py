@@ -384,6 +384,112 @@ async def deep_health_probe_task(interval_seconds: float | None = None):
 
 
 # ---------------------------------------------------------------------------
+# Resident-progress flat probe
+# ---------------------------------------------------------------------------
+
+async def progress_flat_probe_task(interval_seconds: float | None = None):
+    """Resident-progress telemetry probe. See plan Task 9 + spec.
+
+    Runs in the main event loop alongside other background tasks.
+    Builds the full dependency graph (sources, heartbeat, writer, audit
+    emitter) at startup then loops calling probe.tick() every
+    UNITARES_PROGRESS_FLAT_PROBE_INTERVAL_SECONDS seconds (default 300s).
+    """
+    import os
+
+    if interval_seconds is None:
+        override = os.getenv("UNITARES_PROGRESS_FLAT_PROBE_INTERVAL_SECONDS")
+        interval_seconds = float(override) if override else 300.0
+
+    # Let the DB pool warm up before the first probe (mirror deep_health_probe pattern).
+    await asyncio.sleep(5.0)
+
+    # Lazy imports to avoid circular import at module load.
+    from src.db import get_db
+    from src.resident_progress.heartbeat import HeartbeatEvaluator
+    from src.resident_progress.probe_task import ProgressFlatProbe
+    from src.resident_progress.sentinel_source import SentinelPulseSource
+    from src.resident_progress.snapshot_writer import SnapshotWriter
+    from src.resident_progress.sources import (
+        EISVSyncSource,
+        KnowledgeDiscoverySource,
+        MetricsSeriesSource,
+        WatcherFindingSource,
+    )
+
+    db = get_db()
+
+    class _AuditEmitter:
+        async def emit(self, *, event_type, severity, payload):
+            # audit_logger has specific named methods — no generic log_event().
+            # Use _write_entry with a synthetic AuditEntry to stay consistent
+            # with the existing pattern without adding a new public method.
+            try:
+                from src.audit_log import audit_logger, AuditEntry
+                from datetime import datetime
+                entry = AuditEntry(
+                    timestamp=datetime.now().isoformat(),
+                    agent_id="progress_flat_probe",
+                    event_type=event_type,
+                    confidence=1.0,
+                    details={"severity": severity, **payload},
+                )
+                audit_logger._write_entry(entry)
+            except Exception as e:
+                logger.warning("[PROGRESS_FLAT] audit emit failed: %s", e)
+
+    class _MetadataStore:
+        async def get(self, agent_uuid: str):
+            # Use get_agent from agent_storage — that's the canonical async
+            # identity/metadata fetch.  AgentRecord.last_activity_at maps to
+            # last_update; expected_cadence_s lives in metadata.
+            try:
+                from src.agent_storage import get_agent
+                record = await get_agent(agent_uuid)
+                if record is None:
+                    return None
+                return {
+                    "last_update": record.last_activity_at,
+                    "expected_cadence_s": (
+                        record.metadata.get("expected_cadence_s")
+                        or record.metadata.get("cadence_s")
+                        or 60
+                    ),
+                }
+            except Exception:
+                return None
+
+    sources = {
+        "kg_writes":        KnowledgeDiscoverySource(db),
+        "watcher_findings": WatcherFindingSource(db),
+        "eisv_sync_rows":   EISVSyncSource(db),
+        "metrics_series":   MetricsSeriesSource(db),
+        "sentinel_pulse":   SentinelPulseSource(db),
+    }
+    probe = ProgressFlatProbe(
+        sources_by_name=sources,
+        heartbeat_evaluator=HeartbeatEvaluator(_MetadataStore()),
+        writer=SnapshotWriter(db),
+        audit_emitter=_AuditEmitter(),
+    )
+    logger.info(
+        "[PROGRESS_FLAT] probe started; interval=%ss", interval_seconds,
+    )
+    while True:
+        try:
+            await probe.tick()
+        except asyncio.CancelledError:
+            logger.info("[PROGRESS_FLAT] task cancelled")
+            break
+        except Exception as e:
+            logger.warning("[PROGRESS_FLAT] tick failed: %s", e, exc_info=True)
+        try:
+            await asyncio.sleep(interval_seconds)
+        except asyncio.CancelledError:
+            break
+
+
+# ---------------------------------------------------------------------------
 # Session cleanup
 # ---------------------------------------------------------------------------
 
@@ -1098,6 +1204,9 @@ def start_all_background_tasks(connection_tracker, set_ready):
     _supervised_create_task(server_warmup_task(set_ready), name="server_warmup")
     _supervised_create_task(deep_health_probe_task(), name="deep_health_probe")
     logger.info("[HEALTH_PROBE] Deep health probe started (cached snapshots for health_check handler)")
+
+    _supervised_create_task(progress_flat_probe_task(), name="progress_flat_probe")
+    logger.info("[PROGRESS_FLAT] Resident-progress flat probe started")
 
     _supervised_create_task(session_cleanup_task(interval_hours=6.0), name="session_cleanup")
     logger.info("[SESSION_CLEANUP] Started periodic expired session cleanup (every 6h)")

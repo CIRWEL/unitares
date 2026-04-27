@@ -1865,6 +1865,45 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
     logger.info(f"[ONBOARD] Agent {agent_uuid[:8]}... onboarded (is_new={is_new}, label={agent_label})")
 
+    # Identity-resolution observation event. One per successful onboard, used
+    # later to answer "is the 30-min sliding pin TTL bleeding into
+    # continuity-token-only resumes?" Pin shadow fields are populated when
+    # the IP/UA pin path didn't win but a fingerprint signal was present.
+    # See docs/ontology/s1-continuity-token-retirement.md and the audit-log
+    # schema in src/audit_log.py:log_identity_resolution_observed.
+    try:
+        import time as _ires_time
+        from src.audit_log import audit_logger as _ires_audit
+        from ..context import (
+            get_session_resolution_source,
+            get_pin_match_scope,
+            get_shadow_pin_observation,
+        )
+        _ires_token = arguments.get("continuity_token")
+        _ires_iat: Optional[int] = None
+        _ires_exp: Optional[int] = None
+        _ires_age: Optional[int] = None
+        if _ires_token:
+            _ires_iat = extract_token_iat(str(_ires_token))
+            from .session import extract_token_exp as _extract_exp
+            _ires_exp = _extract_exp(str(_ires_token))
+            if _ires_iat is not None:
+                _ires_age = max(0, int(_ires_time.time()) - int(_ires_iat))
+        _ires_shadow = get_shadow_pin_observation()
+        _ires_audit.log_identity_resolution_observed(
+            agent_uuid=agent_uuid,
+            resolution_source=get_session_resolution_source(),
+            pin_match_scope=get_pin_match_scope(),
+            pin_entry_present=_ires_shadow["pin_entry_present"],
+            pin_fingerprint_match=_ires_shadow["pin_fingerprint_match"],
+            pin_entry_age_seconds=_ires_shadow["pin_entry_age_seconds"],
+            token_iat=_ires_iat,
+            token_exp=_ires_exp,
+            token_age_seconds=_ires_age,
+        )
+    except Exception as _ires_err:  # pragma: no cover — defensive
+        logger.debug(f"[IRES] identity_resolution_observed write failed (non-fatal): {_ires_err}")
+
     # Identity Honesty Part C: onboard-triggered orphan sweep REMOVED.
     # It was the driver of 'agent archived almost immediately' — catching
     # siblings of fresh onboards via the 2h zero_update_hours heuristic.

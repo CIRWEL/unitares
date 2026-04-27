@@ -20,6 +20,11 @@ from src.mcp_handlers.identity.handlers import (
     create_continuity_token,
     resolve_continuity_token,
 )
+from src.mcp_handlers.identity.session import (
+    extract_token_iat,
+    extract_token_exp,
+    _decode_token_payload,
+)
 
 
 # ============================================================================
@@ -225,3 +230,91 @@ class TestContinuityToken:
                 client_hint="claude_desktop",
             )
             assert resolve_continuity_token(token, model_type="gpt-5-codex") is None
+
+
+class TestTokenPayloadAccessors:
+    """`_decode_token_payload`, `extract_token_iat`, `extract_token_exp` share a single
+    HMAC verification — these tests pin both the shared shape and the per-claim accessors.
+    """
+
+    AGENT_UUID = "11111111-2222-3333-4444-555555555555"
+    SESSION_ID = "agent-decode-test:claude"
+
+    def _make_token(self):
+        return create_continuity_token(
+            self.AGENT_UUID,
+            self.SESSION_ID,
+            model_type="claude-opus-4-5",
+            client_hint="claude_desktop",
+        )
+
+    def test_decode_payload_returns_full_dict(self):
+        with patch.dict("os.environ", {"UNITARES_CONTINUITY_TOKEN_SECRET": "test-secret"}, clear=False):
+            token = self._make_token()
+            payload = _decode_token_payload(token)
+            assert isinstance(payload, dict)
+            assert payload["aid"] == self.AGENT_UUID
+            assert payload["sid"] == self.SESSION_ID
+            assert isinstance(payload["iat"], int)
+            assert isinstance(payload["exp"], int)
+            assert payload["exp"] > payload["iat"]
+
+    def test_decode_payload_rejects_bad_signature(self):
+        with patch.dict("os.environ", {"UNITARES_CONTINUITY_TOKEN_SECRET": "test-secret"}, clear=False):
+            token = self._make_token()
+            assert token is not None
+            tampered = token[:-4] + ("AAAA" if not token.endswith("AAAA") else "BBBB")
+            assert _decode_token_payload(tampered) is None
+
+    def test_decode_payload_rejects_wrong_version(self):
+        with patch.dict("os.environ", {"UNITARES_CONTINUITY_TOKEN_SECRET": "test-secret"}, clear=False):
+            token = self._make_token()
+            assert token is not None
+            _, payload_b64, sig_b64 = token.split(".", 2)
+            forged = f"v9.{payload_b64}.{sig_b64}"
+            assert _decode_token_payload(forged) is None
+
+    def test_decode_payload_returns_none_without_secret(self):
+        with patch.dict("os.environ", {}, clear=True):
+            assert _decode_token_payload("v1.aaa.bbb") is None
+
+    def test_extract_iat_matches_decode(self):
+        with patch.dict("os.environ", {"UNITARES_CONTINUITY_TOKEN_SECRET": "test-secret"}, clear=False):
+            token = self._make_token()
+            payload = _decode_token_payload(token)
+            assert extract_token_iat(token) == payload["iat"]
+
+    def test_extract_exp_matches_decode(self):
+        with patch.dict("os.environ", {"UNITARES_CONTINUITY_TOKEN_SECRET": "test-secret"}, clear=False):
+            token = self._make_token()
+            payload = _decode_token_payload(token)
+            assert extract_token_exp(token) == payload["exp"]
+
+    def test_extract_exp_does_not_check_expiry(self):
+        """Symmetric with extract_token_iat: returns exp claim even on expired tokens
+        so callers can compute lifetime/observed-staleness telemetry."""
+        with patch.dict("os.environ", {"UNITARES_CONTINUITY_TOKEN_SECRET": "test-secret"}, clear=False):
+            token = create_continuity_token(
+                self.AGENT_UUID,
+                self.SESSION_ID,
+                model_type="claude-opus-4-5",
+                ttl_seconds=60,
+            )
+            assert resolve_continuity_token(token, model_type="claude-opus-4-5") == self.SESSION_ID
+            # Past the exp boundary, resolve_continuity_token rejects but exp accessor still reports.
+            import time
+            with patch("src.mcp_handlers.identity.session.time.time", return_value=time.time() + 3600):
+                assert resolve_continuity_token(token, model_type="claude-opus-4-5") is None
+                assert extract_token_exp(token) is not None
+
+    def test_extract_iat_returns_none_for_garbage(self):
+        with patch.dict("os.environ", {"UNITARES_CONTINUITY_TOKEN_SECRET": "test-secret"}, clear=False):
+            assert extract_token_iat("not-a-token") is None
+            assert extract_token_iat("") is None
+            assert extract_token_iat(None) is None  # type: ignore[arg-type]
+
+    def test_extract_exp_returns_none_for_garbage(self):
+        with patch.dict("os.environ", {"UNITARES_CONTINUITY_TOKEN_SECRET": "test-secret"}, clear=False):
+            assert extract_token_exp("not-a-token") is None
+            assert extract_token_exp("") is None
+            assert extract_token_exp(None) is None  # type: ignore[arg-type]

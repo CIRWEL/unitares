@@ -360,6 +360,336 @@ class TestUnifiedDeriveSessionKey:
         assert result == "agent-scoped123"
 
     @pytest.mark.asyncio
+    async def test_pin_scope_recorded_client_model(self):
+        """When the most-specific (client+model) candidate matches, scope is `client_model`."""
+        from src.mcp_handlers.identity.handlers import derive_session_key
+        from src.mcp_handlers.context import SessionSignals, get_pin_match_scope, set_pin_match_scope
+
+        set_pin_match_scope(None)
+        signals = SessionSignals(
+            ip_ua_fingerprint="1.2.3.4:abc123",
+            client_hint="chatgpt",
+            user_agent="Codex/CLI",
+        )
+
+        async def lookup_side_effect(key, refresh_ttl=True):
+            return "agent-cm123" if key == "ua:abc123|chatgpt|gpt" else None
+
+        with patch(
+            "src.mcp_handlers.identity.session.lookup_onboard_pin",
+            new_callable=AsyncMock,
+            side_effect=lookup_side_effect,
+        ):
+            await derive_session_key(signals, {"model_type": "gpt-5-codex"})
+
+        assert get_pin_match_scope() == "client_model"
+
+    @pytest.mark.asyncio
+    async def test_pin_scope_recorded_client_only(self):
+        """When the client-only candidate matches (model fallback), scope is `client`."""
+        from src.mcp_handlers.identity.handlers import derive_session_key
+        from src.mcp_handlers.context import SessionSignals, get_pin_match_scope, set_pin_match_scope
+
+        set_pin_match_scope(None)
+        signals = SessionSignals(
+            ip_ua_fingerprint="1.2.3.4:abc123",
+            client_hint="chatgpt",
+            user_agent="Codex/CLI",
+        )
+
+        async def lookup_side_effect(key, refresh_ttl=True):
+            return "agent-c123" if key == "ua:abc123|chatgpt" else None
+
+        with patch(
+            "src.mcp_handlers.identity.session.lookup_onboard_pin",
+            new_callable=AsyncMock,
+            side_effect=lookup_side_effect,
+        ):
+            await derive_session_key(signals, {"model_type": "gpt-5-codex"})
+
+        assert get_pin_match_scope() == "client"
+
+    @pytest.mark.asyncio
+    async def test_pin_scope_recorded_unscoped(self):
+        """Unscoped fallback match (no hint, no model) records `unscoped`."""
+        from src.mcp_handlers.identity.handlers import derive_session_key
+        from src.mcp_handlers.context import SessionSignals, get_pin_match_scope, set_pin_match_scope
+
+        set_pin_match_scope(None)
+        signals = SessionSignals(ip_ua_fingerprint="1.2.3.4:abc123")
+
+        async def lookup_side_effect(key, refresh_ttl=True):
+            return "agent-u123" if key == "ua:abc123" else None
+
+        with patch(
+            "src.mcp_handlers.identity.session.lookup_onboard_pin",
+            new_callable=AsyncMock,
+            side_effect=lookup_side_effect,
+        ):
+            await derive_session_key(signals, {})
+
+        assert get_pin_match_scope() == "unscoped"
+
+    @pytest.mark.asyncio
+    async def test_pin_scope_unset_when_pin_misses(self):
+        """When no pin matches, the scope contextvar is left at its default (None)."""
+        from src.mcp_handlers.identity.handlers import derive_session_key
+        from src.mcp_handlers.context import SessionSignals, get_pin_match_scope, set_pin_match_scope
+
+        set_pin_match_scope(None)
+        signals = SessionSignals(ip_ua_fingerprint="1.2.3.4:abc123")
+
+        with patch(
+            "src.mcp_handlers.identity.session.lookup_onboard_pin",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            await derive_session_key(signals, {})
+
+        assert get_pin_match_scope() is None
+
+    @pytest.mark.asyncio
+    async def test_shadow_lookup_runs_when_continuity_token_wins(self):
+        """When continuity_token wins but a fingerprint signal exists, the shadow
+        lookup runs and reports whether a pin would have been viable."""
+        from src.mcp_handlers.identity.handlers import derive_session_key, create_continuity_token
+        from src.mcp_handlers.context import (
+            SessionSignals,
+            get_shadow_pin_observation,
+            set_shadow_pin_observation,
+        )
+
+        set_shadow_pin_observation(present=None, match=None, age_seconds=None)
+
+        with patch.dict("os.environ", {"UNITARES_CONTINUITY_TOKEN_SECRET": "test-secret"}, clear=False):
+            token = create_continuity_token(
+                "11111111-2222-3333-4444-555555555555",
+                "agent-shadow-test:claude",
+                model_type="claude-opus-4-7",
+            )
+            signals = SessionSignals(
+                ip_ua_fingerprint="1.2.3.4:abc123",
+                user_agent="claude-cli/1",
+            )
+
+            mock_redis_client = AsyncMock()
+            mock_redis_client.get = AsyncMock(return_value='{"client_session_id": "agent-shadow-test:claude"}')
+            mock_redis_client.ttl = AsyncMock(return_value=1500)
+
+            with patch(
+                "src.cache.redis_client.get_redis",
+                new_callable=AsyncMock,
+                return_value=mock_redis_client,
+            ):
+                result = await derive_session_key(
+                    signals,
+                    {"continuity_token": token, "model_type": "claude-opus-4-7"},
+                )
+
+        assert result == "agent-shadow-test:claude"
+        obs = get_shadow_pin_observation()
+        assert obs["pin_entry_present"] is True
+        assert obs["pin_fingerprint_match"] is True
+        # _PIN_TTL is 1800; ttl_remaining 1500 → age 300
+        assert obs["pin_entry_age_seconds"] == 300
+
+    @pytest.mark.asyncio
+    async def test_shadow_lookup_records_mismatch(self):
+        """A pin that exists but points to a different identity records match=False."""
+        from src.mcp_handlers.identity.handlers import derive_session_key, create_continuity_token
+        from src.mcp_handlers.context import (
+            SessionSignals,
+            get_shadow_pin_observation,
+            set_shadow_pin_observation,
+        )
+
+        set_shadow_pin_observation(present=None, match=None, age_seconds=None)
+
+        with patch.dict("os.environ", {"UNITARES_CONTINUITY_TOKEN_SECRET": "test-secret"}, clear=False):
+            token = create_continuity_token(
+                "11111111-2222-3333-4444-555555555555",
+                "agent-A:claude",
+                model_type="claude-opus-4-7",
+            )
+            signals = SessionSignals(ip_ua_fingerprint="1.2.3.4:abc123", user_agent="claude-cli/1")
+
+            mock_redis_client = AsyncMock()
+            mock_redis_client.get = AsyncMock(return_value='{"client_session_id": "agent-B:codex"}')
+            mock_redis_client.ttl = AsyncMock(return_value=900)
+
+            with patch(
+                "src.cache.redis_client.get_redis",
+                new_callable=AsyncMock,
+                return_value=mock_redis_client,
+            ):
+                await derive_session_key(
+                    signals,
+                    {"continuity_token": token, "model_type": "claude-opus-4-7"},
+                )
+
+        obs = get_shadow_pin_observation()
+        assert obs["pin_entry_present"] is True
+        assert obs["pin_fingerprint_match"] is False
+        assert obs["pin_entry_age_seconds"] == 900  # 1800 - 900
+
+    @pytest.mark.asyncio
+    async def test_shadow_lookup_records_absent(self):
+        """When no pin exists, present=False / match=False / age=None."""
+        from src.mcp_handlers.identity.handlers import derive_session_key, create_continuity_token
+        from src.mcp_handlers.context import (
+            SessionSignals,
+            get_shadow_pin_observation,
+            set_shadow_pin_observation,
+        )
+
+        set_shadow_pin_observation(present=None, match=None, age_seconds=None)
+
+        with patch.dict("os.environ", {"UNITARES_CONTINUITY_TOKEN_SECRET": "test-secret"}, clear=False):
+            token = create_continuity_token(
+                "11111111-2222-3333-4444-555555555555",
+                "agent-A:claude",
+                model_type="claude-opus-4-7",
+            )
+            signals = SessionSignals(ip_ua_fingerprint="1.2.3.4:abc123", user_agent="claude-cli/1")
+
+            mock_redis_client = AsyncMock()
+            mock_redis_client.get = AsyncMock(return_value=None)
+
+            with patch(
+                "src.cache.redis_client.get_redis",
+                new_callable=AsyncMock,
+                return_value=mock_redis_client,
+            ):
+                await derive_session_key(
+                    signals,
+                    {"continuity_token": token, "model_type": "claude-opus-4-7"},
+                )
+
+        obs = get_shadow_pin_observation()
+        assert obs["pin_entry_present"] is False
+        assert obs["pin_fingerprint_match"] is False
+        assert obs["pin_entry_age_seconds"] is None
+
+    @pytest.mark.asyncio
+    async def test_shadow_lookup_skipped_when_pin_won(self):
+        """If PATH 7 already won, the shadow lookup must NOT run — we already know the answer."""
+        from src.mcp_handlers.identity.handlers import derive_session_key
+        from src.mcp_handlers.context import SessionSignals, set_shadow_pin_observation, get_shadow_pin_observation
+
+        set_shadow_pin_observation(present=None, match=None, age_seconds=None)
+
+        signals = SessionSignals(ip_ua_fingerprint="1.2.3.4:abc123")
+        get_redis_mock = AsyncMock()  # would observe a call if shadow ran
+
+        with patch(
+            "src.mcp_handlers.identity.session.lookup_onboard_pin",
+            new_callable=AsyncMock,
+            return_value="agent-pin-won",
+        ), patch(
+            "src.cache.redis_client.get_redis",
+            new=get_redis_mock,
+        ):
+            result = await derive_session_key(signals, {})
+
+        assert result == "agent-pin-won"
+        get_redis_mock.assert_not_called()
+        obs = get_shadow_pin_observation()
+        # Shadow contextvars stay at the explicit None we set above.
+        assert obs == {"pin_entry_present": None, "pin_fingerprint_match": None, "pin_entry_age_seconds": None}
+
+    @pytest.mark.asyncio
+    async def test_shadow_lookup_skipped_when_pin_already_missed(self):
+        """If PATH 7 ran and missed (source=ip_ua_fingerprint), don't re-probe Redis."""
+        from src.mcp_handlers.identity.handlers import derive_session_key
+        from src.mcp_handlers.context import SessionSignals, set_shadow_pin_observation, get_shadow_pin_observation
+
+        set_shadow_pin_observation(present=None, match=None, age_seconds=None)
+
+        signals = SessionSignals(ip_ua_fingerprint="1.2.3.4:abc123")
+        get_redis_mock = AsyncMock()
+
+        with patch(
+            "src.mcp_handlers.identity.session.lookup_onboard_pin",
+            new_callable=AsyncMock,
+            return_value=None,
+        ), patch(
+            "src.cache.redis_client.get_redis",
+            new=get_redis_mock,
+        ):
+            await derive_session_key(signals, {})
+
+        get_redis_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_shadow_lookup_skipped_without_fingerprint(self):
+        """No IP/UA fingerprint signal → no shadow lookup."""
+        from src.mcp_handlers.identity.handlers import derive_session_key
+        from src.mcp_handlers.context import SessionSignals, set_shadow_pin_observation, get_shadow_pin_observation
+
+        set_shadow_pin_observation(present=None, match=None, age_seconds=None)
+
+        signals = SessionSignals(mcp_session_id="mcp-stable-1")
+        get_redis_mock = AsyncMock()
+
+        with patch("src.cache.redis_client.get_redis", new=get_redis_mock):
+            await derive_session_key(signals, {})
+
+        get_redis_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_shadow_lookup_failure_is_non_fatal(self):
+        """Redis exception inside shadow must not break resolution."""
+        from src.mcp_handlers.identity.handlers import derive_session_key, create_continuity_token
+        from src.mcp_handlers.context import SessionSignals
+
+        with patch.dict("os.environ", {"UNITARES_CONTINUITY_TOKEN_SECRET": "test-secret"}, clear=False):
+            token = create_continuity_token(
+                "11111111-2222-3333-4444-555555555555",
+                "agent-A:claude",
+                model_type="claude-opus-4-7",
+            )
+            signals = SessionSignals(ip_ua_fingerprint="1.2.3.4:abc123", user_agent="claude-cli/1")
+
+            failing = AsyncMock(side_effect=RuntimeError("redis exploded"))
+
+            with patch(
+                "src.cache.redis_client.get_redis",
+                new=failing,
+            ):
+                result = await derive_session_key(
+                    signals,
+                    {"continuity_token": token, "model_type": "claude-opus-4-7"},
+                )
+
+        assert result == "agent-A:claude"
+
+    @pytest.mark.asyncio
+    async def test_pin_match_does_not_split_resolution_source(self):
+        """Splitting `pinned_onboard_session` into prefixed forms would silently
+        bypass the gate at handlers.py:128. Pin scope is a side-channel ONLY;
+        the resolution source string stays exact-match."""
+        from src.mcp_handlers.identity.handlers import derive_session_key
+        from src.mcp_handlers.context import SessionSignals, get_session_resolution_source
+
+        signals = SessionSignals(
+            ip_ua_fingerprint="1.2.3.4:abc123",
+            client_hint="chatgpt",
+            user_agent="Codex/CLI",
+        )
+
+        async def lookup_side_effect(key, refresh_ttl=True):
+            return "agent-x" if key == "ua:abc123|chatgpt|gpt" else None
+
+        with patch(
+            "src.mcp_handlers.identity.session.lookup_onboard_pin",
+            new_callable=AsyncMock,
+            side_effect=lookup_side_effect,
+        ):
+            await derive_session_key(signals, {"model_type": "gpt-5-codex"})
+
+        assert get_session_resolution_source() == "pinned_onboard_session"
+
+    @pytest.mark.asyncio
     async def test_priority_6_scoped_pin_does_not_fallback_to_unscoped(self):
         """When scoped signals exist, unscoped pin fallback is intentionally skipped."""
         from src.mcp_handlers.identity.handlers import derive_session_key

@@ -510,9 +510,17 @@ async def record_agent_state(
     risk_score: Optional[float] = None,
     phi: Optional[float] = None,
     verdict: Optional[str] = None,
+    action: Optional[str] = None,
 ) -> int:
     """
     Record agent EISV state to PostgreSQL.
+
+    `action` is the governance decision sub_action / action vocabulary
+    ('proceed' | 'pause' | 'approve' | 'reflect' | 'revise' | 'reject') —
+    distinct from `verdict` ('safe' | 'caution' | 'high-risk') which is the
+    EISV verdict tier. Both are persisted into state_json; hydrate_from_db
+    uses `action` to reconstruct decision_history so observe summary's
+    decision_distribution survives a JSON-snapshot loss.
 
     Returns the state_id of the created record.
     """
@@ -542,6 +550,8 @@ async def record_agent_state(
         state_json["phi"] = phi
     if verdict is not None:
         state_json["verdict"] = verdict
+    if action is not None:
+        state_json["action"] = action
 
     state_id = await db.record_agent_state(
         identity_id=identity.identity_id,

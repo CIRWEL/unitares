@@ -857,7 +857,7 @@ async def http_dashboard_static(request):
         "visualizations.js", "agents.js", "discoveries.js",
         "dialectic.js", "eisv-charts.js", "timeline.js",
         "residents.js", "fleet-metrics.js", "watcher.js", "sentinel.js",
-        "vigil.js",
+        "vigil.js", "resident-progress.js",
         "styles.css", "dashboard.js",
         "phase.js",
     ]
@@ -1211,6 +1211,79 @@ async def http_get_metrics_catalog(request):
             for m in metrics
         ],
     })
+
+
+async def http_get_progress_flat_recent(request):
+    """GET /v1/progress_flat/recent?hours=24 — latest snapshot per
+    configured resident plus the probe-self row.
+    """
+    import json as _json
+    from src.db import get_db
+    from src.resident_progress.registry import RESIDENT_PROGRESS_REGISTRY
+    from src.resident_progress.status import resolve_status
+
+    http_api_token = os.getenv("UNITARES_HTTP_API_TOKEN")
+    if not _check_http_auth(request, http_api_token=http_api_token):
+        return _http_unauthorized()
+
+    try:
+        hours = int(request.query_params.get("hours", "24"))
+    except (TypeError, ValueError):
+        hours = 24
+    hours = max(1, min(hours, 168))  # clamp to [1, 168]
+
+    db = get_db()
+    async with db.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT ON (resident_label)
+                   resident_label, resident_uuid::text AS resident_uuid,
+                   ticked_at, source, metric_value, window_seconds,
+                   threshold, metric_below_threshold, heartbeat_alive,
+                   candidate, suppressed_reason, error_details,
+                   liveness_inputs, loop_detector_state
+            FROM progress_flat_snapshots
+            WHERE ticked_at > now() - make_interval(hours => $1)
+            ORDER BY resident_label, ticked_at DESC
+            """,
+            hours,
+        )
+
+    by_label: dict[str, dict] = {}
+    for r in rows:
+        d = dict(r)
+        # Coerce types for JSON
+        if d.get("ticked_at") is not None:
+            d["ticked_at"] = d["ticked_at"].isoformat()
+        # error_details / liveness_inputs / loop_detector_state may arrive
+        # as JSON-serialized strings (asyncpg jsonb default) or dicts
+        # depending on connection-pool init. Normalize to dict-or-None.
+        for jk in ("error_details", "liveness_inputs", "loop_detector_state"):
+            v = d.get(jk)
+            if isinstance(v, str):
+                try:
+                    d[jk] = _json.loads(v)
+                except Exception:
+                    pass
+        by_label[r["resident_label"]] = d
+
+    out = []
+    for label in list(RESIDENT_PROGRESS_REGISTRY) + ["progress_flat_probe"]:
+        r = by_label.get(label)
+        if r is None:
+            out.append({
+                "resident_label": label,
+                "status": "unresolved",
+                "metric_value": None,
+                "threshold": None,
+                "window_seconds": None,
+                "ticked_at": None,
+            })
+            continue
+        r["status"] = resolve_status(r)
+        out.append(r)
+
+    return JSONResponse({"success": True, "rows": out})
 
 
 _WATCHER_FINDINGS_PATH = (
@@ -2428,6 +2501,7 @@ def register_http_routes(
     app.routes.append(Route("/v1/metrics", http_post_metric, methods=["POST"]))
     app.routes.append(Route("/v1/metrics/series", http_get_metrics, methods=["GET"]))
     app.routes.append(Route("/v1/metrics/catalog", http_get_metrics_catalog, methods=["GET"]))
+    app.routes.append(Route("/v1/progress_flat/recent", http_get_progress_flat_recent, methods=["GET"]))
     app.routes.append(Route("/v1/watcher/summary", http_watcher_summary, methods=["GET"]))
     app.routes.append(Route("/v1/bootstrap/silent", http_bootstrap_silent, methods=["GET"]))
     app.routes.append(Route("/v1/sentinel/summary", http_sentinel_summary, methods=["GET"]))
