@@ -2580,12 +2580,24 @@ class TestWatcherCheckin:
         assert watcher_module.compute_checkin_complexity(20) == pytest.approx(0.6)  # capped
 
     def test_confidence_from_resolution_ratio(self, watcher_module):
-        """confidence = confirmed / (confirmed + dismissed), default 0.7 during warmup."""
-        assert watcher_module.compute_checkin_confidence(0, 0) == pytest.approx(0.7)  # warmup
-        assert watcher_module.compute_checkin_confidence(3, 1) == pytest.approx(0.7)  # < 5 total
-        assert watcher_module.compute_checkin_confidence(4, 1) == pytest.approx(0.8)  # 5 total
-        assert watcher_module.compute_checkin_confidence(0, 5) == pytest.approx(0.0)  # all dismissed
-        assert watcher_module.compute_checkin_confidence(5, 0) == pytest.approx(1.0)  # all confirmed
+        """confidence = posterior mean of Beta(0.5+confirmed, 0.5+dismissed).
+
+        Replaces the previous hardcoded 0.7 warmup, which was overconfidence
+        shipped to governance. Beta(0.5, 0.5) at N=0 has mean 0.5 (true
+        neutrality), and the value tracks the data smoothly thereafter.
+        """
+        # No data → exactly 0.5 (Beta(0.5, 0.5) mean)
+        assert watcher_module.compute_checkin_confidence(0, 0) == pytest.approx(0.5)
+        # 3 confirmed, 1 dismissed → Beta(3.5, 1.5) mean = 3.5/5.0 = 0.7
+        assert watcher_module.compute_checkin_confidence(3, 1) == pytest.approx(0.7)
+        # 4 confirmed, 1 dismissed → Beta(4.5, 1.5) mean = 4.5/6.0 = 0.75
+        assert watcher_module.compute_checkin_confidence(4, 1) == pytest.approx(0.75)
+        # 0 confirmed, 5 dismissed → Beta(0.5, 5.5) mean = 0.5/6.0 ≈ 0.083
+        assert watcher_module.compute_checkin_confidence(0, 5) == pytest.approx(0.5 / 6.0)
+        # 5 confirmed, 0 dismissed → Beta(5.5, 0.5) mean = 5.5/6.0 ≈ 0.917
+        assert watcher_module.compute_checkin_confidence(5, 0) == pytest.approx(5.5 / 6.0)
+        # Negative input clamps to neutral
+        assert watcher_module.compute_checkin_confidence(-1, 0) == pytest.approx(0.5)
 
     def test_surface_pending_checks_in_even_with_no_open_findings(
         self, watcher_module, monkeypatch

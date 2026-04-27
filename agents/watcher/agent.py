@@ -324,11 +324,20 @@ def compute_checkin_complexity(active_count: int) -> float:
 
 
 def compute_checkin_confidence(confirmed: int, dismissed: int) -> float:
-    """Confirmed / (confirmed + dismissed), with warmup default of 0.7."""
-    total = confirmed + dismissed
-    if total < 5:
-        return 0.7
-    return confirmed / total
+    """Posterior mean of Beta(0.5+confirmed, 0.5+dismissed).
+
+    Replaces the old 'return 0.7 if total<5 else confirmed/total' warmup,
+    which was overconfidence shipped to governance: a freshly deployed
+    Watcher with zero observations was claiming 0.7 confidence in its
+    own findings. With the Jeffreys prior (Beta(0.5, 0.5)), no
+    observations yields exactly 0.5 (true neutrality) and the value
+    tracks the data smoothly as it accumulates.
+    """
+    if confirmed < 0 or dismissed < 0:
+        return 0.5
+    alpha = 0.5 + confirmed
+    beta = 0.5 + dismissed
+    return alpha / (alpha + beta)
 
 
 def _build_checkin_summary() -> tuple[str, float, float]:
