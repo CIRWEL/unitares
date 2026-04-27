@@ -267,6 +267,10 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
     detail["eprocess_eligible"] = eprocess_eligible
     detail["prediction_id"] = prediction_id
     detail["prediction_source"] = prediction_source
+    # Pydantic validation (params_step.py) fills defaults before the handler
+    # runs, so the schema default ("agent_reported_tool_result") is already
+    # present in `arguments`. No fallback string needed here.
+    detail["verification_source"] = arguments.get("verification_source")
 
     # Insert
     outcome_id = await db.record_outcome_event(

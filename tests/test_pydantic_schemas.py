@@ -133,3 +133,28 @@ class TestPydanticSchemas:
         }
         missing = dispatcher_actions - schema_actions
         assert not missing, f"Schema missing dispatcher actions: {missing}"
+
+
+class TestVerificationSource:
+    def test_default_is_agent_reported_tool_result(self):
+        from src.mcp_handlers.schemas.core import OutcomeEventParams
+        params = OutcomeEventParams(outcome_type="test_passed")
+        assert params.verification_source == "agent_reported_tool_result"
+
+    def test_accepts_server_observation(self):
+        from src.mcp_handlers.schemas.core import OutcomeEventParams
+        params = OutcomeEventParams(
+            outcome_type="test_passed",
+            verification_source="server_observation",
+        )
+        assert params.verification_source == "server_observation"
+
+    def test_rejects_unknown_value(self):
+        import pytest
+        from pydantic import ValidationError
+        from src.mcp_handlers.schemas.core import OutcomeEventParams
+        with pytest.raises(ValidationError):
+            OutcomeEventParams(
+                outcome_type="test_passed",
+                verification_source="random_made_up_string",
+            )

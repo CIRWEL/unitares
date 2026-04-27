@@ -980,3 +980,80 @@ class TestPredictionBindingConcurrencyCanary:
             "Concurrency race made both calls resolve to registry — "
             "the lock fix deferred in v1 is no longer optional"
         )
+
+
+# ============================================================================
+# Task 3: verification_source round-trip
+# ============================================================================
+
+class TestVerificationSourceRoundTrip:
+    """Confirm verification_source lands in detail JSONB for both default and
+    explicit values. Uses the same mock-DB pattern as the rest of this module
+    (no live DB required); inspects record_outcome_event call_args directly."""
+
+    def _make_mock_db(self, outcome_id="oe-vs-1"):
+        mock_db = MagicMock()
+        mock_db.record_outcome_event = AsyncMock(return_value=outcome_id)
+        mock_db.get_latest_eisv_by_agent_id = AsyncMock(return_value={
+            'E': 0.7, 'I': 0.75, 'S': 0.15, 'V': -0.03,
+            'phi': 0.1, 'verdict': 'safe', 'coherence': 0.48, 'regime': 'CONVERGENCE',
+        })
+        return mock_db
+
+    @pytest.mark.asyncio
+    async def test_default_recorded_in_detail(self):
+        """Omitting verification_source stores 'agent_reported_tool_result' in detail.
+
+        In production, params_step.py runs Pydantic validation before the handler,
+        so the schema default is already present in `arguments` when the handler
+        runs. This test mirrors that by including the default explicitly — the
+        handler no longer has a fallback string (schema is the single source of truth).
+        """
+        mock_db = self._make_mock_db("oe-vs-default")
+
+        with patch('src.db.get_db', return_value=mock_db), \
+             patch('src.mcp_handlers.observability.outcome_events.mcp_server') as mock_server, \
+             patch('src.mcp_handlers.context.get_context_agent_id', return_value='agent-vs-1'), \
+             patch('src.mcp_handlers.context.get_context_client_session_id', return_value='sess-vs-1'):
+
+            mock_server.monitors = {}
+
+            from src.mcp_handlers.observability.outcome_events import handle_outcome_event
+            # Simulate post-Pydantic arguments dict: params_step fills schema defaults
+            # before calling the handler, so verification_source is always present.
+            result = await handle_outcome_event({
+                'outcome_type': 'test_passed',
+                'confidence': 0.7,
+                'verification_source': 'agent_reported_tool_result',
+            })
+
+        parsed = parse_result(result)
+        assert parsed.get('outcome_id') == 'oe-vs-default'
+
+        _, kwargs = mock_db.record_outcome_event.call_args
+        assert kwargs['detail']['verification_source'] == 'agent_reported_tool_result'
+
+    @pytest.mark.asyncio
+    async def test_server_observation_recorded_when_set(self):
+        """Explicit verification_source='server_observation' is stored in detail."""
+        mock_db = self._make_mock_db("oe-vs-server")
+
+        with patch('src.db.get_db', return_value=mock_db), \
+             patch('src.mcp_handlers.observability.outcome_events.mcp_server') as mock_server, \
+             patch('src.mcp_handlers.context.get_context_agent_id', return_value='agent-vs-2'), \
+             patch('src.mcp_handlers.context.get_context_client_session_id', return_value='sess-vs-2'):
+
+            mock_server.monitors = {}
+
+            from src.mcp_handlers.observability.outcome_events import handle_outcome_event
+            result = await handle_outcome_event({
+                'outcome_type': 'test_passed',
+                'confidence': 0.7,
+                'verification_source': 'server_observation',
+            })
+
+        parsed = parse_result(result)
+        assert parsed.get('outcome_id') == 'oe-vs-server'
+
+        _, kwargs = mock_db.record_outcome_event.call_args
+        assert kwargs['detail']['verification_source'] == 'server_observation'

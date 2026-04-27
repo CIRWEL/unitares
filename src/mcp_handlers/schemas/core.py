@@ -187,6 +187,18 @@ class OutcomeEventParams(AgentIdentityMixin):
     confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="Agent confidence at outcome time (0-1). Looked up from last check-in if omitted.")
     prediction_id: Optional[str] = Field(None, description="Tactical prediction id from a prior process_agent_update response. When provided, the registered confidence for that id is used instead of the temporal proxy fallback.")
     agent_id: Optional[str] = Field(None, description="Agent ID. Falls back to session-bound agent_id if omitted.")
+    verification_source: Literal[
+        "agent_reported_tool_result",
+        "server_observation",
+        "external_signal",
+    ] = Field(
+        "agent_reported_tool_result",
+        description=(
+            "Provenance of this outcome. v1 default is agent_reported_tool_result. "
+            "server_observation reserved for v2 server-verified primitive (KG writes, "
+            "dialectic verdicts, state transitions). external_signal for CI webhooks etc."
+        ),
+    )
 
 
 class CirsProtocolParams(AgentIdentityMixin):
