@@ -232,3 +232,77 @@ async def test_pool_pass_through_attributes():
         assert wrapped.get_max_size() == 20
     finally:
         await wrapped.close()
+
+
+@pytest.mark.asyncio
+async def test_await_acquire_then_release_pattern():
+    """
+    asyncpg's PoolAcquireContext is BOTH awaitable AND an async context manager.
+    `PostgresBackend.acquire()` (postgres_backend.py:189) uses the await
+    form: `conn = await pool.acquire(timeout=N)` then `await pool.release(conn)`.
+    The wrapper must support this pattern or PostgresBackend.acquire() breaks.
+    """
+    caller_tid = threading.get_ident()
+    release_tid = []
+
+    async def fetchval_impl(*a, **k): return 7
+
+    mock_conn = MagicMock()
+    mock_conn.fetchval = fetchval_impl
+
+    raw_pool = MagicMock()
+
+    async def mock_acquire(*args, timeout=None):
+        # Mimic asyncpg: `await pool.acquire()` returns a Connection directly.
+        return mock_conn
+
+    async def mock_release(conn):
+        release_tid.append(threading.get_ident())
+
+    raw_pool.acquire = mock_acquire
+    raw_pool.release = mock_release
+    raw_pool.close = AsyncMock()
+
+    wrapped = ExecutorPool(raw_pool)
+    try:
+        conn = await wrapped.acquire(timeout=5)
+        assert await conn.fetchval("SELECT 1") == 7
+        await wrapped.release(conn)
+    finally:
+        await wrapped.close()
+
+    assert release_tid == [release_tid[0]] and release_tid[0] != caller_tid, (
+        "release ran on caller thread — must run on executor loop"
+    )
+
+
+@pytest.mark.asyncio
+async def test_acquire_timeout_passes_through_in_context_form():
+    """`async with pool.acquire(timeout=5)` (used at postgres_backend.py:99
+    in the health check). Timeout must reach the raw asyncpg pool."""
+    captured = {}
+
+    async def fake_aenter():
+        return MagicMock()
+    async def fake_aexit(*a):
+        return None
+
+    def make_acquire_ctx(*args, timeout=None):
+        captured['timeout'] = timeout
+        ctx = MagicMock()
+        ctx.__aenter__ = MagicMock(side_effect=fake_aenter)
+        ctx.__aexit__ = MagicMock(side_effect=fake_aexit)
+        return ctx
+
+    raw_pool = MagicMock()
+    raw_pool.acquire = make_acquire_ctx
+    raw_pool.close = AsyncMock()
+
+    wrapped = ExecutorPool(raw_pool)
+    try:
+        async with wrapped.acquire(timeout=5):
+            pass
+    finally:
+        await wrapped.close()
+
+    assert captured.get('timeout') == 5, f"timeout not forwarded: {captured}"

@@ -61,7 +61,11 @@ class TestInitGuard:
         with patch("asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
             await backend.init()
 
-        assert backend._pool is mock_pool
+        # _create_pool() now wraps the asyncpg pool in ExecutorPool — handlers
+        # see the wrapper, but the underlying asyncpg pool is preserved.
+        from src.db.executor_pool import ExecutorPool
+        assert isinstance(backend._pool, ExecutorPool)
+        assert backend._pool._raw_pool is mock_pool
 
     @pytest.mark.asyncio
     async def test_init_idempotent_across_calls(self):
@@ -115,8 +119,11 @@ class TestPoolRecovery:
         with patch("asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
             result = await backend._ensure_pool()
 
-        assert result is mock_pool
-        assert backend._pool is mock_pool
+        # Wrapped in ExecutorPool — see _create_pool() and src/db/executor_pool.py
+        from src.db.executor_pool import ExecutorPool
+        assert isinstance(result, ExecutorPool)
+        assert result._raw_pool is mock_pool
+        assert backend._pool is result
 
 
 # ============================================================================

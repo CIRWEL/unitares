@@ -20,8 +20,31 @@ import threading
 from typing import Any
 
 
-async def _await_on_loop(coro: Any, loop: asyncio.AbstractEventLoop) -> Any:
-    """Schedule a coroutine on `loop` (a different thread's loop) and await its result."""
+async def _await_on_loop(target: Any, loop: asyncio.AbstractEventLoop) -> Any:
+    """Schedule on `loop` (a different thread's loop) and await the result.
+
+    Accepts either:
+    - A **callable** returning a coroutine/awaitable — called *inside* the
+      executor loop so any Futures it creates are loop-bound correctly.
+      **Use this form for asyncpg ops** (asyncpg internals capture the
+      running loop when creating Futures).
+    - A coroutine — passed straight to ``run_coroutine_threadsafe``.
+      Safe only for plain coroutines that don't internally create Futures
+      bound to the calling loop.
+    """
+    if callable(target):
+        async def _call_on_executor():
+            result = target()
+            if asyncio.iscoroutine(result) or hasattr(result, "__await__"):
+                return await result
+            return result
+        coro = _call_on_executor()
+    elif asyncio.iscoroutine(target):
+        coro = target
+    else:
+        async def _wrap():
+            return await target
+        coro = _wrap()
     future = asyncio.run_coroutine_threadsafe(coro, loop)
     return await asyncio.wrap_future(future)
 
@@ -38,11 +61,11 @@ class _Transaction:
         self._loop = loop
 
     async def __aenter__(self) -> Any:
-        return await _await_on_loop(self._raw.__aenter__(), self._loop)
+        return await _await_on_loop(lambda: self._raw.__aenter__(), self._loop)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> Any:
         return await _await_on_loop(
-            self._raw.__aexit__(exc_type, exc_val, exc_tb), self._loop
+            lambda: self._raw.__aexit__(exc_type, exc_val, exc_tb), self._loop
         )
 
 
@@ -54,19 +77,19 @@ class _Connection:
         self._loop = loop
 
     async def fetchval(self, *args: Any, **kwargs: Any) -> Any:
-        return await _await_on_loop(self._raw.fetchval(*args, **kwargs), self._loop)
+        return await _await_on_loop(lambda: self._raw.fetchval(*args, **kwargs), self._loop)
 
     async def fetch(self, *args: Any, **kwargs: Any) -> Any:
-        return await _await_on_loop(self._raw.fetch(*args, **kwargs), self._loop)
+        return await _await_on_loop(lambda: self._raw.fetch(*args, **kwargs), self._loop)
 
     async def fetchrow(self, *args: Any, **kwargs: Any) -> Any:
-        return await _await_on_loop(self._raw.fetchrow(*args, **kwargs), self._loop)
+        return await _await_on_loop(lambda: self._raw.fetchrow(*args, **kwargs), self._loop)
 
     async def execute(self, *args: Any, **kwargs: Any) -> Any:
-        return await _await_on_loop(self._raw.execute(*args, **kwargs), self._loop)
+        return await _await_on_loop(lambda: self._raw.execute(*args, **kwargs), self._loop)
 
     async def executemany(self, *args: Any, **kwargs: Any) -> Any:
-        return await _await_on_loop(self._raw.executemany(*args, **kwargs), self._loop)
+        return await _await_on_loop(lambda: self._raw.executemany(*args, **kwargs), self._loop)
 
     def transaction(self, *args: Any, **kwargs: Any) -> _Transaction:
         # transaction() is a sync method on asyncpg.Connection that returns
@@ -75,35 +98,50 @@ class _Connection:
         return _Transaction(self._raw.transaction(*args, **kwargs), self._loop)
 
     async def close(self) -> None:
-        return await _await_on_loop(self._raw.close(), self._loop)
+        return await _await_on_loop(lambda: self._raw.close(), self._loop)
 
 
 class _AcquireContext:
-    """Async context manager that acquires a connection on the executor loop."""
+    """
+    Mirrors asyncpg's PoolAcquireContext: BOTH awaitable AND an async context
+    manager. `async with pool.acquire(): ...` auto-releases. `await pool.acquire()`
+    returns the connection directly — caller must `pool.release(conn)` later.
+    """
 
-    def __init__(self, raw_pool: Any, loop: asyncio.AbstractEventLoop):
+    def __init__(self, raw_pool: Any, loop: asyncio.AbstractEventLoop, timeout: Any = None):
         self._raw_pool = raw_pool
         self._loop = loop
+        self._timeout = timeout
         self._raw_acquire_ctx: Any = None
         self._raw_conn: Any = None
 
-    async def __aenter__(self) -> _Connection:
-        # Run the asyncpg acquire on the executor loop, not the caller's loop.
-        async def _enter():
-            ctx = self._raw_pool.acquire()
-            self._raw_acquire_ctx = ctx
-            return await ctx.__aenter__()
+    def __await__(self):
+        async def _direct_acquire():
+            def _factory():
+                kwargs = {} if self._timeout is None else {"timeout": self._timeout}
+                return self._raw_pool.acquire(**kwargs)
+            return await _await_on_loop(_factory, self._loop)
 
-        future = asyncio.run_coroutine_threadsafe(_enter(), self._loop)
-        self._raw_conn = await asyncio.wrap_future(future)
+        raw_conn = yield from _direct_acquire().__await__()
+        return _Connection(raw_conn, self._loop)
+
+    async def __aenter__(self) -> _Connection:
+        # The PoolAcquireContext is created on the executor loop AND its
+        # __aenter__ is awaited there, so the connection comes back loop-bound
+        # to the executor loop. Storing the ctx so __aexit__ can reuse it.
+        def _enter_factory():
+            kwargs = {} if self._timeout is None else {"timeout": self._timeout}
+            self._raw_acquire_ctx = self._raw_pool.acquire(**kwargs)
+            return self._raw_acquire_ctx.__aenter__()
+
+        self._raw_conn = await _await_on_loop(_enter_factory, self._loop)
         return _Connection(self._raw_conn, self._loop)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> Any:
-        async def _exit():
-            return await self._raw_acquire_ctx.__aexit__(exc_type, exc_val, exc_tb)
-
-        future = asyncio.run_coroutine_threadsafe(_exit(), self._loop)
-        return await asyncio.wrap_future(future)
+        return await _await_on_loop(
+            lambda: self._raw_acquire_ctx.__aexit__(exc_type, exc_val, exc_tb),
+            self._loop,
+        )
 
 
 class ExecutorPool:
@@ -113,6 +151,10 @@ class ExecutorPool:
     """
 
     def __init__(self, raw_pool: Any):
+        # Direct constructor: caller has already-created pool (mocks, tests).
+        # Production code should use `await ExecutorPool.create(coro_factory)`
+        # so the asyncpg pool is created on the executor loop — asyncpg
+        # connections are loop-bound (architect's per-thread pinning).
         self._raw_pool = raw_pool
         self._loop = asyncio.new_event_loop()
         self._loop_ready = threading.Event()
@@ -124,13 +166,42 @@ class ExecutorPool:
         self._thread.start()
         self._loop_ready.wait(timeout=5.0)
 
+    @classmethod
+    async def create(cls, create_pool_factory: Any) -> "ExecutorPool":
+        """Create the asyncpg pool ON the executor loop.
+
+        ``create_pool_factory`` is a callable returning the awaitable from
+        ``asyncpg.create_pool(...)`` — calling it inside the executor loop
+        means the pool and all its connections are bound to that loop.
+        """
+        instance = cls.__new__(cls)
+        instance._loop = asyncio.new_event_loop()
+        instance._loop_ready = threading.Event()
+        instance._thread = threading.Thread(
+            target=instance._run_loop,
+            name="ExecutorPool-loop",
+            daemon=True,
+        )
+        instance._thread.start()
+        instance._loop_ready.wait(timeout=5.0)
+        # Pass the factory (not the result) so it's called *inside* the
+        # executor loop — asyncpg.create_pool's Futures must be loop-bound
+        # to the executor loop.
+        instance._raw_pool = await _await_on_loop(create_pool_factory, instance._loop)
+        return instance
+
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
         self._loop_ready.set()
         self._loop.run_forever()
 
-    def acquire(self) -> _AcquireContext:
-        return _AcquireContext(self._raw_pool, self._loop)
+    def acquire(self, timeout: Any = None) -> _AcquireContext:
+        return _AcquireContext(self._raw_pool, self._loop, timeout=timeout)
+
+    async def release(self, conn: _Connection) -> Any:
+        # Pair to `await pool.acquire()`. Forwards to raw pool with the
+        # underlying asyncpg connection (postgres_backend.py:206).
+        return await _await_on_loop(lambda: self._raw_pool.release(conn._raw), self._loop)
 
     @property
     def _closed(self) -> Any:
@@ -152,7 +223,7 @@ class ExecutorPool:
         # executor loop (asyncpg connections are loop-bound), THEN stop
         # the loop, THEN join the thread.
         try:
-            await _await_on_loop(self._raw_pool.close(), self._loop)
+            await _await_on_loop(lambda: self._raw_pool.close(), self._loop)
         finally:
             self._loop.call_soon_threadsafe(self._loop.stop)
             await asyncio.get_event_loop().run_in_executor(
