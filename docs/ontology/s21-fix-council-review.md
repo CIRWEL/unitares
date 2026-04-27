@@ -152,7 +152,7 @@ Post-S21-a, `identity()` returns the right UUID for resumed sessions, but `requi
 ## MEDIUM — discovered post-merge
 
 ### M6. SessionCache TTL refresh on read may extend ghost lifetime
-If `SessionCache.get()` touches TTL on hit (common pattern), every PATH 1 read against a ghosted slot resets the 24h drain clock. H3's "24h TTL drains pollution" assumption fails. **Verify** in `src/mcp_handlers/identity/session_cache.py` — does the get-path call `EXPIRE` or only `GET`?
+If `SessionCache.get()` touches TTL on hit (common pattern), every PATH 1 read against a ghosted slot resets the 24h drain clock. H3's "24h TTL drains pollution" assumption fails. **Verify** in `src/cache/session_cache.py` — does the get-path call `EXPIRE` or only `GET`?
 
 ### M7. Audit event absent on PATH 2 fail-closed return
 `resolution.py:595–610` logs `[PATH2_RESUME_MISS]` at INFO but emits no structured `concurrent_session_binding_observed` event. The fail-closed path is precisely the moment that event is most useful. Cheap addition; pure additive change.
