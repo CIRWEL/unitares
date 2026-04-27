@@ -106,6 +106,7 @@ async def ensure_test_database_schema() -> None:
         await _execute_sql_file(conn, "db/postgres/migrations/018_bootstrap_synthetic_state.sql")
         await _execute_sql_file(conn, "db/postgres/migrations/019_matview_measured_only.sql")
         await _execute_sql_file(conn, "db/postgres/migrations/020_progress_flat_telemetry.sql")
+        await _execute_sql_file(conn, "db/postgres/migrations/021_seed_epoch_3.sql")
 
         # Ensure partitioned audit tables can accept inserts for current month.
         await _execute_sql_file(conn, "db/postgres/partitions.sql")
