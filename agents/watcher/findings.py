@@ -47,6 +47,12 @@ FINDINGS_TTL_DAYS = 14
 VALID_FINDING_STATUSES = ("open", "surfaced", "confirmed", "dismissed", "aged_out")
 MIN_FINGERPRINT_PREFIX = 4  # users can type the first N chars instead of all 16
 
+# Allowed --reason values for --dismiss. Only 'fp' counts as a true
+# negative in precision math (see PRECISION_REASONS_TRUE_NEGATIVE in
+# calibration.py). The others document operator intent without claiming
+# the finding was wrong.
+DISMISSAL_REASONS = frozenset({"fp", "wont_fix", "out_of_scope", "dup", "unclear", "stale"})
+
 
 # ---------------------------------------------------------------------------
 # Data types
@@ -306,6 +312,19 @@ def update_finding_status(
         log(f"update_finding_status: invalid status {new_status!r}", "error")
         print(f"error: invalid status {new_status!r}; must be one of {VALID_FINDING_STATUSES}")
         return 2
+
+    # Soft taxonomy: a non-enum reason is persisted (operators often pass
+    # free-text rationale, and pre-2026-04-27 rows already do). Precision
+    # math in calibration.py excludes non-enum reasons from the TN count
+    # automatically, so the calibration loop is correct without rejecting
+    # the operator's input here.
+    if new_status == "dismissed" and reason is not None and reason not in DISMISSAL_REASONS:
+        log(
+            f"update_finding_status: non-enum reason {reason!r} accepted but "
+            f"will be excluded from precision math (use one of "
+            f"{sorted(DISMISSAL_REASONS)} for the bucket to count)",
+            "warning",
+        )
 
     findings = _iter_findings_raw()
     if not findings:

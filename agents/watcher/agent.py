@@ -1548,7 +1548,10 @@ def main() -> int:
     parser.add_argument(
         "--reason",
         metavar="TEXT",
-        help="short rationale for --resolve/--dismiss; stored on the finding and included in the governance event",
+        help="short rationale for --resolve/--dismiss; stored on the finding "
+             "and included in the governance event. For --dismiss, must be one "
+             "of {fp, wont_fix, out_of_scope, dup, unclear, stale} — only 'fp' "
+             "counts as a true negative in precision math.",
     )
     parser.add_argument(
         "--compact",
