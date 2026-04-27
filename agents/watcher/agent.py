@@ -1571,6 +1571,11 @@ def main() -> int:
         action="store_true",
         help="print open findings as a chime block and transition them to surfaced",
     )
+    parser.add_argument(
+        "--recompute-floor",
+        action="store_true",
+        help="recompute pattern_floor.json from findings.jsonl and persist atomically",
+    )
     args = parser.parse_args()
 
     # --- Identity resolution (best-effort) ---
@@ -1600,6 +1605,15 @@ def main() -> int:
         return print_unresolved()
     if args.surface_pending:
         return surface_pending()
+    if args.recompute_floor:
+        from agents.watcher.floor_state import recompute_floor
+        state = recompute_floor()
+        log(
+            f"recompute_floor: {len(state.buckets)} bucket(s) "
+            f"updated_at={state.updated_at}"
+        )
+        print(f"ok: {len(state.buckets)} bucket(s) at {state.updated_at}")
+        return 0
     if not args.file:
         parser.print_help()
         return 1

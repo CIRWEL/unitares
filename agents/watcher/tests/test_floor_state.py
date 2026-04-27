@@ -104,3 +104,57 @@ class TestFloorBucketLookup:
     def test_get_returns_none_for_unknown(self):
         state = FloorState(updated_at="t", buckets={})
         assert state.get("P1", "app") is None
+
+
+from agents.watcher.floor_state import recompute_floor
+
+
+class TestRecomputeFloor:
+    def test_recompute_aggregates_findings_into_state(self, tmp_path):
+        findings_file = tmp_path / "findings.jsonl"
+        rows = []
+        for i in range(15):
+            rows.append({
+                "pattern": "P1",
+                "file": "/repo/src/x.py",
+                "line": 1,
+                "hint": "h",
+                "severity": "medium",
+                "status": "confirmed",
+                "detected_at": "2026-04-20T00:00:00Z",
+                "confirmed_at": "2026-04-21T00:00:00Z",
+                "fingerprint": f"abcd{i:04d}",
+                "violation_class": "BEH",
+            })
+        for i in range(12):
+            rows.append({
+                "pattern": "P2",
+                "file": "/repo/tests/test_x.py",
+                "line": 1,
+                "hint": "h",
+                "severity": "medium",
+                "status": "dismissed",
+                "detected_at": "2026-04-20T00:00:00Z",
+                "dismissed_at": "2026-04-21T00:00:00Z",
+                "resolution_reason": "fp",
+                "fingerprint": f"efgh{i:04d}",
+                "violation_class": "BEH",
+            })
+
+        with findings_file.open("w") as fh:
+            for r in rows:
+                fh.write(json.dumps(r) + "\n")
+
+        state = recompute_floor(findings_file=findings_file, state_dir=tmp_path)
+        b1 = state.get("P1", "app")
+        assert b1 is not None
+        assert b1.ci_lower is not None
+        assert b1.ci_lower > 0.7
+        b2 = state.get("P2", "test")
+        assert b2 is not None
+        assert b2.ci_lower is not None
+        assert b2.ci_lower < 0.3
+
+        reloaded = load_floor(state_dir=tmp_path)
+        assert ("P1", "app") in reloaded.buckets
+        assert ("P2", "test") in reloaded.buckets

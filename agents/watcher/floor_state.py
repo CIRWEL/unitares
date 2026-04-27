@@ -139,3 +139,50 @@ def load_floor(*, state_dir: Path | None = None) -> FloorState:
 
 def _epoch_iso() -> str:
     return datetime(1970, 1, 1, tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def recompute_floor(
+    *,
+    findings_file: Path | None = None,
+    state_dir: Path | None = None,
+    half_life_days: float = 30.0,
+    min_weighted_n: float = 10.0,
+    now: datetime | None = None,
+) -> FloorState:
+    """Read findings.jsonl, aggregate per-(pattern, file_class), persist.
+
+    Returns the new FloorState. Designed to be called nightly (cron) or
+    from the ``--recompute-floor`` CLI for ad-hoc rebuilds.
+    """
+    from agents.watcher.calibration import precision_by_pattern_and_class
+    from agents.watcher.findings import _iter_findings_raw
+
+    if findings_file is None:
+        rows = _iter_findings_raw()
+    else:
+        rows = []
+        if findings_file.exists():
+            with findings_file.open() as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rows.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+
+    reference = now or datetime.now(timezone.utc)
+    buckets = precision_by_pattern_and_class(
+        rows,
+        now=reference,
+        half_life_days=half_life_days,
+        min_weighted_n=min_weighted_n,
+    )
+
+    state = FloorState(
+        updated_at=reference.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        buckets=buckets,
+    )
+    save_floor(state, state_dir=state_dir)
+    return state
