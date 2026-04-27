@@ -269,3 +269,124 @@ def decay_weight(detected_at: datetime, now: datetime, half_life_days: float) ->
         return 1.0
     age_days = age_seconds / 86400.0
     return 0.5 ** (age_days / half_life_days)
+
+
+# ---------------------------------------------------------------------------
+# Per-(pattern × file_class) aggregation
+# ---------------------------------------------------------------------------
+
+
+from dataclasses import dataclass
+from typing import Iterable, Mapping
+
+
+# Reasons that count as a true negative (i.e. "the finding was wrong").
+# wont_fix / out_of_scope / dup / unclear / stale are excluded — they
+# represent operator decisions that are not statements about the finding's
+# correctness. Legacy free-text reasons are also excluded (they predate the
+# enum and have no consistent meaning).
+PRECISION_REASONS_TRUE_NEGATIVE = frozenset({"fp"})
+
+
+@dataclass(frozen=True)
+class BucketStats:
+    """Per-(pattern, file_class) precision summary.
+
+    ``ci_lower`` is None when ``weighted_n < min_weighted_n`` — callers
+    must distinguish 'unmeasured' from 'measured-as-zero' to avoid the
+    cold-trap the council flagged. Demotion logic should never fire on
+    a None ci_lower.
+    """
+
+    pattern: str
+    file_class: str
+    weighted_confirmed: float
+    weighted_dismissed: float
+    weighted_n: float
+    ci_lower: float | None
+    latest_observation: str | None
+
+
+def precision_by_pattern_and_class(
+    findings: Iterable[Mapping[str, object]],
+    *,
+    now: datetime | None = None,
+    half_life_days: float = 30.0,
+    min_weighted_n: float = 10.0,
+    true_negative_reasons: Iterable[str] = PRECISION_REASONS_TRUE_NEGATIVE,
+) -> dict[tuple[str, str], BucketStats]:
+    """Aggregate findings into per-(pattern, file_class) precision stats.
+
+    Only ``confirmed`` and qualifying ``dismissed`` rows contribute. A
+    dismissed row qualifies when its ``resolution_reason`` is in
+    ``true_negative_reasons`` (default: just ``{'fp'}``). Legacy rows
+    with free-text reasons or no reason are excluded from the dismissed
+    count — they don't represent a precision-relevant signal.
+
+    Returns ``{(pattern, file_class): BucketStats}``. Buckets with
+    ``weighted_n < min_weighted_n`` carry ``ci_lower=None`` so callers
+    can distinguish 'unmeasured' from 'measured-as-zero'.
+    """
+    reference = now or datetime.now(timezone.utc)
+    tn_reasons = frozenset(true_negative_reasons)
+
+    aggregates: dict[tuple[str, str], dict] = {}
+
+    for row in findings:
+        status = row.get("status")
+        if status not in ("confirmed", "dismissed"):
+            continue
+        pattern = row.get("pattern")
+        file_path = row.get("file")
+        if not isinstance(pattern, str) or not isinstance(file_path, str):
+            continue
+
+        # Decay clock anchors on the most relevant timestamp:
+        # confirmed_at / dismissed_at when present (resolution time is
+        # what we're calibrating), falling back to detected_at.
+        resolved_at = row.get("confirmed_at") if status == "confirmed" else row.get("dismissed_at")
+        ts_raw = resolved_at if isinstance(resolved_at, str) else row.get("detected_at")
+        if not isinstance(ts_raw, str):
+            continue
+        ts = parse_iso_z(ts_raw)
+        if ts is None:
+            continue
+
+        if status == "dismissed":
+            reason = row.get("resolution_reason")
+            if not isinstance(reason, str) or reason not in tn_reasons:
+                continue
+
+        file_class = classify_file(file_path)
+        key = (pattern, file_class)
+        weight = decay_weight(ts, reference, half_life_days)
+        bucket = aggregates.setdefault(
+            key,
+            {"confirmed": 0.0, "dismissed": 0.0, "latest": None},
+        )
+        if status == "confirmed":
+            bucket["confirmed"] = float(bucket["confirmed"]) + weight
+        else:
+            bucket["dismissed"] = float(bucket["dismissed"]) + weight
+
+        latest = bucket["latest"]
+        if latest is None or (isinstance(latest, str) and ts_raw > latest):
+            bucket["latest"] = ts_raw
+
+    out: dict[tuple[str, str], BucketStats] = {}
+    for (pattern, file_class), agg in aggregates.items():
+        wc = float(agg["confirmed"])
+        wd = float(agg["dismissed"])
+        wn = wc + wd
+        ci = jeffreys_lower_bound(wc, wd) if wn >= min_weighted_n else None
+        latest_value = agg["latest"]
+        out[(pattern, file_class)] = BucketStats(
+            pattern=pattern,
+            file_class=file_class,
+            weighted_confirmed=wc,
+            weighted_dismissed=wd,
+            weighted_n=wn,
+            ci_lower=ci,
+            latest_observation=latest_value if isinstance(latest_value, str) else None,
+        )
+    return out

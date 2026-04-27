@@ -151,3 +151,150 @@ class TestParseIsoZ:
         assert parse_iso_z("not a date") is None
         assert parse_iso_z("") is None
         assert parse_iso_z(None) is None  # type: ignore[arg-type]
+
+
+from agents.watcher.calibration import (
+    PRECISION_REASONS_TRUE_NEGATIVE,
+    BucketStats,
+    precision_by_pattern_and_class,
+)
+
+
+def _row(*, pattern, file, status, ts, reason=None, confirmed_at=None, dismissed_at=None):
+    """Helper: build a findings.jsonl-shaped dict."""
+    r = {
+        "pattern": pattern,
+        "file": file,
+        "line": 1,
+        "hint": "h",
+        "severity": "medium",
+        "status": status,
+        "detected_at": ts,
+        "fingerprint": "abcd1234",
+        "violation_class": "BEH",
+    }
+    if confirmed_at:
+        r["confirmed_at"] = confirmed_at
+    if dismissed_at:
+        r["dismissed_at"] = dismissed_at
+    if reason is not None:
+        r["resolution_reason"] = reason
+    return r
+
+
+class TestPrecisionByPatternAndClass:
+    """The aggregator combines decay-weighting and the reason filter to
+    produce per-bucket {weighted_confirmed, weighted_dismissed, ci_lower}.
+
+    Critical behaviors:
+      - Only confirmed/dismissed rows count (open/surfaced/aged_out skipped)
+      - 'wont_fix', 'out_of_scope', 'unclear' dismissals are EXCLUDED from
+        precision math (precision means 'TP / (TP + FP)', and these aren't
+        false positives)
+      - Legacy free-text reasons are excluded too (no taxonomy alignment)
+      - Buckets with weighted_n < min_weighted_n return ci_lower=None
+        (the demotion callsite gates on this)
+    """
+
+    NOW = datetime(2026, 4, 27, tzinfo=timezone.utc)
+    YESTERDAY = "2026-04-26T12:00:00Z"
+
+    def test_empty_findings_empty_dict(self):
+        result = precision_by_pattern_and_class([], now=self.NOW)
+        assert result == {}
+
+    def test_only_confirmed_dismissed_count(self):
+        rows = [
+            _row(pattern="P1", file="/a/src/x.py", status="open", ts=self.YESTERDAY),
+            _row(pattern="P1", file="/a/src/x.py", status="surfaced", ts=self.YESTERDAY),
+            _row(pattern="P1", file="/a/src/x.py", status="aged_out", ts=self.YESTERDAY),
+            _row(pattern="P1", file="/a/src/x.py", status="confirmed", ts=self.YESTERDAY),
+            _row(pattern="P1", file="/a/src/x.py", status="dismissed", reason="fp", ts=self.YESTERDAY),
+        ]
+        result = precision_by_pattern_and_class(rows, now=self.NOW, min_weighted_n=0.5)
+        bucket = result[("P1", "app")]
+        assert bucket.weighted_confirmed == pytest.approx(1.0, rel=0.05)
+        assert bucket.weighted_dismissed == pytest.approx(1.0, rel=0.05)
+
+    def test_wont_fix_excluded_from_dismissed(self):
+        rows = [
+            _row(pattern="P1", file="/a/src/x.py", status="confirmed", ts=self.YESTERDAY),
+            _row(pattern="P1", file="/a/src/x.py", status="dismissed", reason="wont_fix", ts=self.YESTERDAY),
+            _row(pattern="P1", file="/a/src/x.py", status="dismissed", reason="dup", ts=self.YESTERDAY),
+            _row(pattern="P1", file="/a/src/x.py", status="dismissed", reason="unclear", ts=self.YESTERDAY),
+        ]
+        result = precision_by_pattern_and_class(rows, now=self.NOW, min_weighted_n=0.5)
+        bucket = result[("P1", "app")]
+        assert bucket.weighted_confirmed == pytest.approx(1.0, rel=0.05)
+        assert bucket.weighted_dismissed == pytest.approx(0.0, abs=0.01)
+
+    def test_legacy_free_text_reason_excluded(self):
+        rows = [
+            _row(pattern="P1", file="/a/src/x.py", status="dismissed",
+                 reason="this was a false alarm imo", ts=self.YESTERDAY),
+            _row(pattern="P1", file="/a/src/x.py", status="dismissed",
+                 reason="fp", ts=self.YESTERDAY),
+        ]
+        result = precision_by_pattern_and_class(rows, now=self.NOW, min_weighted_n=0.5)
+        bucket = result[("P1", "app")]
+        assert bucket.weighted_dismissed == pytest.approx(1.0, rel=0.05)
+
+    def test_buckets_split_on_file_class(self):
+        rows = [
+            _row(pattern="P1", file="/a/src/foo.py", status="confirmed", ts=self.YESTERDAY),
+            _row(pattern="P1", file="/a/tests/test_foo.py", status="dismissed",
+                 reason="fp", ts=self.YESTERDAY),
+        ]
+        result = precision_by_pattern_and_class(rows, now=self.NOW, min_weighted_n=0.5)
+        assert ("P1", "app") in result
+        assert ("P1", "test") in result
+        assert result[("P1", "app")].weighted_confirmed > 0
+        assert result[("P1", "app")].weighted_dismissed == 0
+        assert result[("P1", "test")].weighted_confirmed == 0
+        assert result[("P1", "test")].weighted_dismissed > 0
+
+    def test_decay_applied(self):
+        """A 60-day-old confirmation contributes 0.25× of a fresh one."""
+        rows = [
+            _row(pattern="P1", file="/a/src/x.py", status="confirmed",
+                 ts=(self.NOW - timedelta(days=60)).strftime("%Y-%m-%dT%H:%M:%SZ")),
+            _row(pattern="P1", file="/a/src/x.py", status="confirmed",
+                 ts=self.NOW.strftime("%Y-%m-%dT%H:%M:%SZ")),
+        ]
+        result = precision_by_pattern_and_class(rows, now=self.NOW, half_life_days=30.0,
+                                                min_weighted_n=0.5)
+        bucket = result[("P1", "app")]
+        assert bucket.weighted_confirmed == pytest.approx(1.25, rel=0.01)
+
+    def test_min_weighted_n_returns_none_ci(self):
+        rows = [
+            _row(pattern="P1", file="/a/src/x.py", status="confirmed", ts=self.YESTERDAY),
+        ]
+        result = precision_by_pattern_and_class(rows, now=self.NOW, min_weighted_n=10.0)
+        bucket = result[("P1", "app")]
+        assert bucket.ci_lower is None, "below min_weighted_n should yield ci_lower=None"
+
+    def test_above_min_weighted_n_returns_ci(self):
+        rows = [
+            _row(pattern="P1", file="/a/src/x.py", status="confirmed", ts=self.YESTERDAY)
+            for _ in range(20)
+        ]
+        result = precision_by_pattern_and_class(rows, now=self.NOW, min_weighted_n=10.0)
+        bucket = result[("P1", "app")]
+        assert bucket.ci_lower is not None
+        assert bucket.ci_lower > 0.7
+
+    def test_unparseable_timestamp_skipped(self):
+        rows = [
+            _row(pattern="P1", file="/a/src/x.py", status="confirmed", ts="garbage"),
+            _row(pattern="P1", file="/a/src/x.py", status="confirmed", ts=self.YESTERDAY),
+        ]
+        result = precision_by_pattern_and_class(rows, now=self.NOW, min_weighted_n=0.5)
+        bucket = result[("P1", "app")]
+        assert bucket.weighted_confirmed == pytest.approx(1.0, rel=0.05)
+
+
+def test_precision_reasons_constant_shape():
+    """Document the canonical taxonomy. Precision math counts as TN ONLY
+    the reasons that mean 'this finding was a false positive'."""
+    assert PRECISION_REASONS_TRUE_NEGATIVE == frozenset({"fp"})
