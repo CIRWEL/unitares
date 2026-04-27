@@ -51,3 +51,49 @@ class TestJeffreysLowerBound:
         # Decay-weighted counts are floats, not ints. The function must accept them.
         lb = jeffreys_lower_bound(2.5, 7.5)
         assert 0.0 <= lb <= 1.0
+
+
+from agents.watcher.calibration import classify_file, FileClass
+
+
+class TestClassifyFile:
+    """File class is the second axis of the calibration bucket. Six
+    coarse classes are enough to capture the heterogeneity the dialectic
+    flagged (a regex that's 90% precise on app code and 10% on tests
+    averages to ~50% globally and gets demoted everywhere)."""
+
+    def test_test_files(self):
+        assert classify_file("/repo/agents/watcher/tests/test_x.py") == FileClass.TEST
+        assert classify_file("/repo/tests/integration/foo.py") == FileClass.TEST
+        assert classify_file("/repo/foo_test.py") == FileClass.TEST
+        assert classify_file("/repo/test_bar.py") == FileClass.TEST
+
+    def test_migration_files(self):
+        assert classify_file("/repo/migrations/018_foo.sql") == FileClass.MIGRATION
+        assert classify_file("/repo/db/migrations/up.py") == FileClass.MIGRATION
+
+    def test_generated_files(self):
+        assert classify_file("/repo/build/foo.py") == FileClass.GENERATED
+        assert classify_file("/repo/dist/bundle.js") == FileClass.GENERATED
+        assert classify_file("/repo/__pycache__/x.pyc") == FileClass.GENERATED
+        assert classify_file("/repo/foo.pb.go") == FileClass.GENERATED
+
+    def test_config_files(self):
+        assert classify_file("/repo/pyproject.toml") == FileClass.CONFIG
+        assert classify_file("/repo/setup.cfg") == FileClass.CONFIG
+        assert classify_file("/repo/.github/workflows/ci.yml") == FileClass.CONFIG
+        assert classify_file("/repo/Makefile") == FileClass.CONFIG
+
+    def test_doc_files(self):
+        assert classify_file("/repo/README.md") == FileClass.DOC
+        assert classify_file("/repo/docs/foo.md") == FileClass.DOC
+        assert classify_file("/repo/CHANGELOG") == FileClass.DOC
+
+    def test_app_default(self):
+        assert classify_file("/repo/src/server.py") == FileClass.APP
+        assert classify_file("/repo/agents/watcher/agent.py") == FileClass.APP
+        assert classify_file("/repo/governance_core/eisv.py") == FileClass.APP
+
+    def test_test_wins_over_app(self):
+        # tests/ is the strongest signal — it sits inside src/ in some layouts
+        assert classify_file("/repo/src/tests/foo.py") == FileClass.TEST

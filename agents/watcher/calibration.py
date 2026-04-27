@@ -26,6 +26,7 @@ the math trivially testable.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
@@ -130,3 +131,89 @@ def _betacf(x: float, a: float, b: float, max_iter: int = 200, eps: float = 3e-7
         if abs(delta - 1.0) < eps:
             return h
     return h
+
+
+# ---------------------------------------------------------------------------
+# File classifier
+# ---------------------------------------------------------------------------
+
+
+class FileClass:
+    """Closed enum of file classes used as the second calibration axis.
+
+    Strings (not IntEnum) so they round-trip through pattern_floor.json
+    losslessly without requiring a converter. Ordering matters in
+    ``classify_file`` — first match wins, with TEST checked before APP
+    so test files inside src/ trees still classify as tests.
+    """
+
+    APP = "app"
+    TEST = "test"
+    MIGRATION = "migration"
+    GENERATED = "generated"
+    CONFIG = "config"
+    DOC = "doc"
+
+
+_TEST_FRAGMENTS = ("/tests/", "/test/")
+_TEST_NAME_PREFIX = "test_"
+_TEST_NAME_SUFFIX = "_test"
+
+_MIGRATION_FRAGMENTS = ("/migrations/",)
+
+_GENERATED_FRAGMENTS = ("/build/", "/dist/", "/__pycache__/", "/.venv/", "/node_modules/")
+_GENERATED_SUFFIXES = (".pb.go", ".pb.py", ".min.js", ".pyc")
+
+_CONFIG_FRAGMENTS = ("/.github/",)
+_CONFIG_BASENAMES = frozenset({
+    "pyproject.toml", "setup.cfg", "setup.py", "Makefile", "tox.ini",
+    ".gitignore", ".dockerignore", "Dockerfile", "docker-compose.yml",
+    "pre-commit-config.yaml", ".pre-commit-config.yaml",
+})
+_CONFIG_SUFFIXES = (".yml", ".yaml", ".toml", ".ini", ".cfg")
+
+_DOC_SUFFIXES = (".md", ".rst", ".txt")
+_DOC_BASENAMES = frozenset({"README", "CHANGELOG", "LICENSE", "NOTICE", "AUTHORS"})
+
+
+def classify_file(path: str) -> str:
+    """Map a file path to a FileClass.
+
+    Order: test → migration → generated → doc → config → app. TEST wins
+    over APP because tests/ trees often live inside src/ trees and the
+    regex precision on test fixtures is qualitatively different from
+    application code.
+    """
+    p = Path(path)
+    name = p.name
+    norm = "/" + str(p).strip("/")
+
+    if any(frag in norm for frag in _TEST_FRAGMENTS):
+        return FileClass.TEST
+    if name.startswith(_TEST_NAME_PREFIX):
+        return FileClass.TEST
+    stem = p.stem
+    if stem.endswith(_TEST_NAME_SUFFIX):
+        return FileClass.TEST
+
+    if any(frag in norm for frag in _MIGRATION_FRAGMENTS):
+        return FileClass.MIGRATION
+
+    if any(frag in norm for frag in _GENERATED_FRAGMENTS):
+        return FileClass.GENERATED
+    if any(name.endswith(suf) for suf in _GENERATED_SUFFIXES):
+        return FileClass.GENERATED
+
+    if name in _DOC_BASENAMES:
+        return FileClass.DOC
+    if any(name.endswith(suf) for suf in _DOC_SUFFIXES):
+        return FileClass.DOC
+
+    if any(frag in norm for frag in _CONFIG_FRAGMENTS):
+        return FileClass.CONFIG
+    if name in _CONFIG_BASENAMES:
+        return FileClass.CONFIG
+    if any(name.endswith(suf) for suf in _CONFIG_SUFFIXES):
+        return FileClass.CONFIG
+
+    return FileClass.APP
