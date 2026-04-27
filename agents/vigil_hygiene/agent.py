@@ -282,7 +282,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="vigil-hygiene weekly branch sweep")
     parser.add_argument(
         "--repo",
-        default=os.environ.get("UNITARES_REPO", str(Path("/Users/cirwel/projects/unitares"))),
+        default=os.environ.get("UNITARES_REPO", str(Path(__file__).resolve().parents[2])),
         help="path to git repo",
     )
     parser.add_argument("--live", action="store_true", help="actually delete (default: dry-run)")

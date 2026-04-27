@@ -33,7 +33,6 @@ The bulk of operational scripts live in `scripts/ops/`.
 | `mcp_agent.py` | Autonomous MCP agent |
 | `operator_agent.py` | Operator-level agent with elevated permissions |
 | `governance_cli.sh` | Governance CLI wrapper |
-| `answer_lumen_questions.py` | Answer Lumen's questions via governance data |
 
 ### Server Lifecycle
 

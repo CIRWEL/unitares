@@ -50,11 +50,6 @@ FORBIDDEN_IN_FILE = [
         "operator's domain must not appear in install comments",
     ),
     (
-        "scripts/ops/answer_lumen_questions.py",
-        r"192\.168\.1\.\d+|lumen\.cirwel\.org",
-        "operator's LAN IP / domain must not be hardcoded fallback",
-    ),
-    (
         "scripts/ops/com.unitares.ipv6-loopback-proxy.plist.template",
         r"/Users/[a-zA-Z0-9_-]+/projects/unitares",
         "plist template must use __UNITARES_ROOT__ placeholder",

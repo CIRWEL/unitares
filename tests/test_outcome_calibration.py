@@ -348,6 +348,7 @@ class TestExplicitOutcomeEventCalibration:
             confidence=0.85,
             decision='proceed',
             immediate_outcome=True,  # not is_bad
+            signal_source='tests',  # routes to per-channel breakdown
         )
         mock_seq_tracker.record_exogenous_tactical_outcome.assert_called_once_with(
             confidence=0.85,
@@ -402,10 +403,20 @@ class TestExplicitOutcomeEventCalibration:
             predicted_correct=True,
             actual_correct=1.0,
         )
-        mock_seq_tracker.record_exogenous_tactical_outcome.assert_not_called()
+        # task_completed became hard-exogenous-eligible when the truth channel
+        # broadened (epoch 3); the seq_tracker is now called for it.
+        mock_seq_tracker.record_exogenous_tactical_outcome.assert_called_once_with(
+            confidence=0.7,
+            outcome_correct=True,
+            agent_id='agent-mon',
+            signal_source='tasks',
+            decision_action=None,
+            outcome_type='task_completed',
+            prediction_id=None,
+        )
         _, kwargs = mock_db.record_outcome_event.call_args
         assert kwargs['detail']['reported_confidence'] == 0.7
-        assert kwargs['detail']['eprocess_eligible'] is False
+        assert kwargs['detail']['eprocess_eligible'] is True
 
     @pytest.mark.asyncio
     async def test_no_calibration_when_no_confidence_available(self):
@@ -527,6 +538,7 @@ class TestExplicitOutcomeEventCalibration:
             confidence=0.9,
             decision='proceed',
             immediate_outcome=False,  # is_bad=True → not is_bad = False
+            signal_source='tests',  # routes to per-channel breakdown
         )
         mock_seq_tracker.record_exogenous_tactical_outcome.assert_called_once_with(
             confidence=0.9,

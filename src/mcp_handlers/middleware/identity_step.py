@@ -417,6 +417,32 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
             resume=True,
             token_agent_uuid=_token_agent_uuid,
         )
+        # S21-a: PATH 2 now fail-closes when there is no PG session row, so
+        # tools called without a prior onboard arrive here with a
+        # session_resolve_miss instead of a silent PATH-3 ghost. Retry with
+        # force_new=True so the handler chain still has an identity to work
+        # with; the mint_guard in _cache_session ensures the fresh UUID
+        # cannot overwrite a concurrently-bound legitimate session.
+        # The retry declares spawn_reason="dispatch_auto_mint" so these
+        # mints carry lineage instead of contributing to the no-lineage
+        # ghost rate (the underlying motivation for the S21 incident).
+        # Without this, S21-a would stop the Redis-overwrite bleed but
+        # leave the lineage-declaration bleed open.
+        if (identity_result.get("resume_failed")
+                and identity_result.get("error") == "session_resolve_miss"):
+            logger.info(
+                "[DISPATCH] session_resolve_miss for %s... — minting "
+                "ephemeral dispatch identity (S21-a, spawn_reason="
+                "dispatch_auto_mint)",
+                session_key[:20],
+            )
+            identity_result = await resolve_session_identity(
+                session_key,
+                trajectory_signature=trajectory_sig,
+                force_new=True,
+                token_agent_uuid=_token_agent_uuid,
+                spawn_reason="dispatch_auto_mint",
+            )
         bound_agent_id = identity_result.get("agent_uuid")
 
         # PATH 2.75: X-Agent-Id UUID recovery

@@ -153,6 +153,16 @@ class CalibrationChecker:
             'actual_correct': 0,  # Fixed at decision time, never updated retroactively
             'confidence_sum': 0.0
         })
+
+        # Per-channel tactical bin stats (parallel to aggregate above).
+        # Populated when record_tactical_decision is called with signal_source.
+        # Aggregate stats remain populated for back-compat regardless.
+        self.tactical_bin_stats_by_channel = defaultdict(lambda: defaultdict(lambda: {
+            'count': 0,
+            'predicted_correct': 0,
+            'actual_correct': 0,
+            'confidence_sum': 0.0,
+        }))
         
         # Ensure complexity_bins is initialized (may already be set in __init__)
         if not hasattr(self, 'complexity_bins'):
@@ -221,20 +231,25 @@ class CalibrationChecker:
         if complexity_discrepancy is not None:
             self.record_complexity_discrepancy(abs(complexity_discrepancy))
     
-    def record_tactical_decision(self, confidence: float, decision: str, 
-                                  immediate_outcome: bool):
+    def record_tactical_decision(self, confidence: float, decision: str,
+                                  immediate_outcome: bool,
+                                  signal_source: Optional[str] = None):
         """
         Record a decision for TACTICAL calibration (per-decision, no retroactive).
-        
+
         This measures if individual decisions were correct AT THE TIME they were made.
         Unlike strategic calibration, this is NEVER updated retroactively.
-        
+
         Args:
             confidence: Confidence estimate at decision time (0-1)
             decision: The decision made ("proceed", "pause", etc.)
             immediate_outcome: Whether the decision was correct based on immediate context
                               (not trajectory outcomes - that's strategic calibration)
-        
+            signal_source: Optional channel name (e.g. "tests", "tasks"). When provided,
+                           the row is also recorded in tactical_bin_stats_by_channel for
+                           per-channel reliability breakdown. Aggregate stats above are
+                           populated regardless.
+
         Example:
             - Decision "proceed" is tactically correct if agent could proceed without immediate issues
             - Decision "pause" is tactically correct if there was a genuine reason to pause
@@ -246,10 +261,10 @@ class CalibrationChecker:
             if bin_min <= confidence < bin_max or (bin_max == 1.0 and confidence == 1.0):
                 bin_key = f"{bin_min:.1f}-{bin_max:.1f}"
                 break
-        
+
         if bin_key is None:
             bin_key = f"{self.bins[-1][0]:.1f}-{self.bins[-1][1]:.1f}"
-        
+
         # Initialize tactical_bin_stats if needed (backward compatibility)
         if not hasattr(self, 'tactical_bin_stats'):
             self.tactical_bin_stats = defaultdict(lambda: {
@@ -258,11 +273,11 @@ class CalibrationChecker:
                 'actual_correct': 0,
                 'confidence_sum': 0.0
             })
-        
+
         stats = self.tactical_bin_stats[bin_key]
         stats['count'] += 1
         stats['confidence_sum'] += confidence
-        
+
         # FIXED: predicted_correct is based on confidence, not decision
         # High confidence (>=0.5) = we predicted correct
         # Low confidence (<0.5) = we predicted incorrect
@@ -270,11 +285,29 @@ class CalibrationChecker:
         predicted_correct = confidence >= 0.5
         if predicted_correct:
             stats['predicted_correct'] += 1
-        
+
         # Tactical correctness is fixed at decision time - no retroactive updates!
         if immediate_outcome:
             stats['actual_correct'] += 1
-        
+
+        # Per-channel routing (additive — aggregate above is unchanged).
+        if signal_source:
+            if not hasattr(self, 'tactical_bin_stats_by_channel'):
+                # Backward-compat for instances created before this field existed.
+                self.tactical_bin_stats_by_channel = defaultdict(lambda: defaultdict(lambda: {
+                    'count': 0,
+                    'predicted_correct': 0,
+                    'actual_correct': 0,
+                    'confidence_sum': 0.0,
+                }))
+            channel_stats = self.tactical_bin_stats_by_channel[signal_source][bin_key]
+            channel_stats['count'] += 1
+            channel_stats['confidence_sum'] += confidence
+            if predicted_correct:
+                channel_stats['predicted_correct'] += 1
+            if immediate_outcome:
+                channel_stats['actual_correct'] += 1
+
         # Save state
         self.save_state()
     
@@ -443,9 +476,44 @@ class CalibrationChecker:
                 expected_accuracy=expected_accuracy,
                 calibration_error=calibration_error
             )
-        
+
         return results
-    
+
+    def compute_tactical_metrics_per_channel(self) -> Dict[str, Dict[str, CalibrationBin]]:
+        """
+        Compute per-channel tactical calibration metrics.
+
+        Returns {channel: {bin_key: CalibrationBin}} so callers can ask
+        "miscalibrated where?" instead of just "miscalibrated".
+        """
+        results: Dict[str, Dict[str, CalibrationBin]] = {}
+
+        if not hasattr(self, 'tactical_bin_stats_by_channel'):
+            return results
+
+        for channel, channel_bins in self.tactical_bin_stats_by_channel.items():
+            channel_results: Dict[str, CalibrationBin] = {}
+            for bin_key, stats in channel_bins.items():
+                if stats['count'] == 0:
+                    continue
+                bin_min, bin_max = map(float, bin_key.split('-'))
+                accuracy = stats['actual_correct'] / stats['count']
+                expected_accuracy = stats['confidence_sum'] / stats['count']
+                calibration_error = abs(accuracy - expected_accuracy)
+                channel_results[bin_key] = CalibrationBin(
+                    bin_range=(bin_min, bin_max),
+                    count=stats['count'],
+                    predicted_correct=stats['predicted_correct'],
+                    actual_correct=stats['actual_correct'],
+                    accuracy=accuracy,
+                    expected_accuracy=expected_accuracy,
+                    calibration_error=calibration_error,
+                )
+            if channel_results:
+                results[channel] = channel_results
+
+        return results
+
     def check_calibration(self, min_samples_per_bin: int = 10, include_complexity: bool = True) -> Tuple[bool, Dict]:
         """
         Check if calibration is acceptable.
@@ -580,13 +648,51 @@ class CalibrationChecker:
         
         result["is_calibrated"] = is_calibrated
         result["issues"] = strategic_issues + tactical_issues
-        
+
+        # Per-channel breakdown (additive — aggregate fields above are unchanged).
+        # Allows callers to ask "miscalibrated where?" instead of just "miscalibrated".
+        per_channel_metrics = self.compute_tactical_metrics_per_channel()
+        if per_channel_metrics:
+            per_channel_response = {}
+            for channel, bin_metrics in per_channel_metrics.items():
+                channel_samples = sum(b.count for b in bin_metrics.values())
+                channel_issues = []
+                max_gap = 0.0
+                for bin_key, b in bin_metrics.items():
+                    if b.count < min_samples_per_bin:
+                        continue
+                    if b.calibration_error > 0.2:
+                        channel_issues.append(
+                            f"Bin {bin_key}: large calibration error ({b.calibration_error:.2f})"
+                        )
+                    if b.calibration_error > max_gap:
+                        max_gap = b.calibration_error
+                per_channel_response[channel] = {
+                    "calibrated": len(channel_issues) == 0,
+                    "samples": channel_samples,
+                    "calibration_gap": max_gap,
+                    "issues": channel_issues,
+                }
+            result["per_channel_calibration"] = per_channel_response
+
+        # Hygiene guard from sequential tracker (signal_source_outcomes).
+        # Surfaces bad_rate_pinned_to_zero so Sentinel can raise an anomaly when
+        # a previously-non-zero channel collapses back to a high-prior pin.
+        try:
+            from src.sequential_calibration import sequential_calibration_tracker
+            health = sequential_calibration_tracker.compute_per_channel_health()
+            if health:
+                result["per_channel_health"] = health
+        except Exception as e_health:  # pragma: no cover - defensive
+            import logging
+            logging.getLogger(__name__).debug("per_channel_health unavailable: %s", e_health)
+
         result["honesty_note"] = (
             "Calibration ground truth comes from objective outcomes (test pass/fail, command exit codes, "
             "lint results, file operations) as the primary signal. Dialectic peer agreement is a secondary "
             "signal (0.7 peer_weight). Human feedback is optional, not required."
         )
-        
+
         return is_calibrated, result
     
     def update_ground_truth(self, confidence: float, predicted_correct: bool, 
@@ -784,7 +890,12 @@ class CalibrationChecker:
                 'bins': {k: dict(v) for k, v in self.bin_stats.items()},
                 'complexity_bins': {k: dict(v) for k, v in self.complexity_stats.items()},
                 # NEW: Tactical calibration (per-decision, no retroactive marking)
-                'tactical_bins': {k: dict(v) for k, v in self.tactical_bin_stats.items()} if hasattr(self, 'tactical_bin_stats') else {}
+                'tactical_bins': {k: dict(v) for k, v in self.tactical_bin_stats.items()} if hasattr(self, 'tactical_bin_stats') else {},
+                # Per-channel breakdown (additive — older readers ignore unknown keys)
+                'tactical_bins_by_channel': {
+                    channel: {k: dict(v) for k, v in bins.items()}
+                    for channel, bins in self.tactical_bin_stats_by_channel.items()
+                } if hasattr(self, 'tactical_bin_stats_by_channel') else {},
             }
 
             # PostgreSQL backend
@@ -851,6 +962,17 @@ class CalibrationChecker:
 
         for bin_key, stats in state_data.get('tactical_bins', {}).items():
             self.tactical_bin_stats[bin_key] = stats
+
+        # Per-channel tactical bin stats (may be absent in older state files).
+        self.tactical_bin_stats_by_channel = defaultdict(lambda: defaultdict(lambda: {
+            'count': 0,
+            'predicted_correct': 0,
+            'actual_correct': 0,
+            'confidence_sum': 0.0,
+        }))
+        for channel, channel_bins in state_data.get('tactical_bins_by_channel', {}).items():
+            for bin_key, stats in channel_bins.items():
+                self.tactical_bin_stats_by_channel[channel][bin_key] = stats
 
     def load_state(self):
         """Load calibration state from JSON file (sync, used at __init__ time).

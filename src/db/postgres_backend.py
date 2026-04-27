@@ -19,6 +19,7 @@ except ImportError:
     asyncpg = None  # type: ignore
 
 from .base import DatabaseBackend
+from .executor_pool import ExecutorPool
 from .mixins import (
     IdentityMixin,
     AgentMixin,
@@ -137,20 +138,28 @@ class PostgresBackend(
             return self._pool
 
     async def _create_pool(self):
-        """Create a new connection pool. Caller must hold _init_lock."""
+        """Create a new connection pool. Caller must hold _init_lock.
+
+        Wraps the asyncpg pool in ExecutorPool so all DB operations route
+        through a dedicated background thread+loop, isolating asyncpg from
+        the MCP SDK's anyio task group. See docs/handoffs/2026-04-27-anyio-
+        followup-scope.md and src/db/executor_pool.py.
+        """
         logger.info("Creating PostgreSQL connection pool...")
         try:
-            return await asyncio.wait_for(
-                asyncpg.create_pool(
-                    self._db_url,
-                    min_size=self._min_conn,
-                    max_size=self._max_conn,
-                    command_timeout=30,
-                    max_inactive_connection_lifetime=300,  # Close idle connections after 5 minutes
-                    max_queries=50000,  # Recycle connections after 50k queries
-                ),
-                timeout=5.0  # Fail fast if PostgreSQL isn't available
-            )
+            def _create_factory():
+                return asyncio.wait_for(
+                    asyncpg.create_pool(
+                        self._db_url,
+                        min_size=self._min_conn,
+                        max_size=self._max_conn,
+                        command_timeout=30,
+                        max_inactive_connection_lifetime=300,  # Close idle connections after 5 minutes
+                        max_queries=50000,  # Recycle connections after 50k queries
+                    ),
+                    timeout=5.0  # Fail fast if PostgreSQL isn't available
+                )
+            return await ExecutorPool.create(_create_factory)
         except asyncio.TimeoutError:
             raise ConnectionError(
                 f"PostgreSQL connection timeout after 5s. "

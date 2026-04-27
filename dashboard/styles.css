@@ -5005,7 +5005,9 @@ main {
    Match the 1400px column used by .main-content above. */
 #activity-timeline-section,
 #fleet-metrics-section,
-#watcher-section {
+#watcher-section,
+#sentinel-section,
+#vigil-section {
     max-width: 1400px;
     margin-left: auto;
     margin-right: auto;

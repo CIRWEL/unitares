@@ -159,7 +159,15 @@ async def handle_check_calibration(arguments: Dict[str, Any]) -> Sequence[TextCo
                 "(tests, commands, files, lint, tool-result evidence)."
             ),
         }
-    
+
+    # Forward per-channel breakdown + hygiene from CalibrationChecker.check_calibration.
+    # The handler composes its own response dict, so additions to the underlying
+    # metrics dict do not propagate automatically — they have to be forwarded here.
+    if 'per_channel_calibration' in metrics:
+        response['per_channel_calibration'] = metrics['per_channel_calibration']
+    if 'per_channel_health' in metrics:
+        response['per_channel_health'] = metrics['per_channel_health']
+
     # Add complexity calibration metrics if available
     if 'complexity_calibration' in metrics:
         complexity_data = metrics['complexity_calibration']

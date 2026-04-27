@@ -738,8 +738,14 @@ async def _try_resume_by_session_key(
         token_agent_uuid=token_agent_uuid,
     )
 
-    # Token-based resume failed — agent not found or not active
+    # Token-based resume failed — agent not found or not active.
+    # S21-a: distinguish session_resolve_miss (PATH 2 fail-closed, no existing
+    # session row) from token-rebind failures. The former is the normal path
+    # for a fresh session and should fall through to create-finisher exactly
+    # as a `created=True` shape did before; the latter remains an error.
     if existing_identity.get("resume_failed"):
+        if existing_identity.get("error") == "session_resolve_miss":
+            return None, existing_identity
         return (
             error_response(
                 existing_identity.get("message", "Could not resume identity"),
@@ -1165,7 +1171,10 @@ async def handle_bind_session(arguments: Dict[str, Any]) -> Sequence[TextContent
     # Resolve the agent from the provided client_session_id
     # resume=True is correct here — bind_session is explicitly resuming an existing identity
     target_identity = await resolve_session_identity(client_session_id, persist=False, resume=True)
-    if not target_identity or target_identity.get("created"):
+    # S21-a: resume=True with no PG row now returns resume_failed instead
+    # of silently minting a ghost. Treat that the same as "no existing agent".
+    if (not target_identity or target_identity.get("created")
+            or target_identity.get("resume_failed")):
         return error_response(
             f"No existing agent found for client_session_id '{client_session_id[:20]}...'. "
             "Ensure the session-start hook onboarded successfully."
@@ -1349,16 +1358,43 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         # Hoisting the check past both branches ensures an archived-token
         # onboard gets a clean rejection instead of falling through to
         # code that assumes an active existing_identity.
+        # S21-a: session_resolve_miss is *not* a hard failure — it just
+        # means "no prior binding for this session_key." Null out
+        # existing_identity so the resume / captured-fresh branches below
+        # are skipped, and the STEP-2 else branch at line ~1509 mints via
+        # resolve_session_identity(persist=True) with the caller-provided
+        # force_new value.
         if existing_identity.get("resume_failed"):
-            return error_response(
-                existing_identity.get("message", "Could not resume identity"),
-                recovery={
-                    "reason": "resume_failed",
-                    "token_agent_uuid": existing_identity.get("token_agent_uuid"),
-                    "hint": "Call onboard(force_new=true) to create a new identity.",
-                }
-            )
-        if not existing_identity.get("created"):
+            if existing_identity.get("error") == "session_resolve_miss":
+                logger.info(
+                    "[ONBOARD] No existing session for session_key=%s... "
+                    "minting fresh in-memory identity",
+                    base_session_key[:20],
+                )
+                # Mint via persist=False + force_new=True so the captured-
+                # fresh branch below handles persistence + error surfacing
+                # uniformly. The mint_guard inside _cache_session prevents
+                # this fresh UUID from ratifying itself over a concurrently-
+                # bound legitimate session in Redis.
+                existing_identity = await resolve_session_identity(
+                    base_session_key,
+                    persist=False,
+                    model_type=model_type,
+                    client_hint=client_hint,
+                    force_new=True,
+                    parent_agent_id=_parent_agent_id,
+                    spawn_reason=_spawn_reason,
+                )
+            else:
+                return error_response(
+                    existing_identity.get("message", "Could not resume identity"),
+                    recovery={
+                        "reason": "resume_failed",
+                        "token_agent_uuid": existing_identity.get("token_agent_uuid"),
+                        "hint": "Call onboard(force_new=true) to create a new identity.",
+                    }
+                )
+        if existing_identity and not existing_identity.get("created"):
             if existing_identity.get("archived"):
                 # ARCHIVED AGENT — auto-unarchive with same UUID (only when resume=True)
                 if resume:

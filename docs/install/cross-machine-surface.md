@@ -34,8 +34,6 @@ These values bake one operator's environment into code that ships to others. Eac
 | ✅ resolved | `scripts/ops/start_unitares.sh` | 121 | Prints `Tunnel: https://gov.cirwel.org/mcp/` unconditionally | Conditional print guarded by `CLOUDFLARE_TUNNEL_HOSTNAME` |
 | ✅ resolved | `scripts/ops/start_server.sh` | 60 | Same `gov.cirwel.org` example string | Generic example |
 | ⏸ deferred | `scripts/ops/health_watchdog.sh` | 28 | Hardcoded Pi Tailscale IP `100.79.215.83` | See *deferred rationale* below |
-| ✅ resolved | `scripts/ops/answer_lumen_questions.py` | 19 | Default `https://lumen.cirwel.org/mcp/` | `PI_MCP_URL` required, script exits if unset |
-| ✅ resolved | `scripts/ops/answer_lumen_questions.py` | 84 | Hardcoded Pi LAN IP `192.168.1.165` | Optional `PI_MCP_URL_FALLBACK` env var; no hardcoded IP |
 | ✅ resolved | `requirements-core.txt` | 22 | Comment example uses `https://gov.cirwel.org/v1/tools` | Generic example |
 | ✅ resolved | `scripts/ops/com.unitares.ipv6-loopback-proxy.plist.template` | 33 | Hardcoded `/Users/cirwel/projects/unitares/scripts/ops/ipv6_loopback_proxy.py` | `__UNITARES_ROOT__` + `__PYTHON3__` placeholders; install header shows `sed` substitution |
 

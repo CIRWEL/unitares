@@ -8,8 +8,7 @@ clients (Claude Code, Codex, Gemini CLI, Copilot CLI).
 
 Setup PRINTS commands. It does NOT install postgres, run SQL, invoke brew, or
 modify MCP client config files. The two filesystem mutations under --apply are
-bounded exceptions documented in
-docs/superpowers/specs/2026-04-25-unitares-setup-design.md.
+bounded exceptions: scaffolding ~/.unitares/ and ~/.config/cirwel/secrets.env.
 
 Usage:
     python3 scripts/install/setup.py            # interactive, dry-run

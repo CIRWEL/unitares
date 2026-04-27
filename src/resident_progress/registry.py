@@ -2,8 +2,7 @@
 
 Resident UUIDs are NOT stored here. They resolve at tick time from
 filesystem anchors, so a resident that re-onboards or rotates UUID is
-picked up automatically. See
-docs/superpowers/specs/2026-04-25-resident-progress-detection-design.md
+picked up automatically.
 """
 from __future__ import annotations
 

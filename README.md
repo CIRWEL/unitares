@@ -9,11 +9,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19647159.svg)](https://doi.org/10.5281/zenodo.19647159)
 
-> **Reference implementation** of *UNITARES: Information-Theoretic Governance of Heterogeneous Agent Fleets* — Kenny Wang ([ORCID 0009-0006-7544-2374](https://orcid.org/0009-0006-7544-2374)), CIRWEL Systems, 2026. Paper: [CIRWEL/unitares-paper-v6](https://github.com/CIRWEL/unitares-paper-v6) · DOI: [10.5281/zenodo.19647159](https://doi.org/10.5281/zenodo.19647159). If you use these ideas, please cite — see [`CITATION.cff`](CITATION.cff).
-
-Status: live. First public commit 2025-12-04. For architecture details, see [docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md).
-
-**In one line:** UNITARES is a runtime governance layer for heterogeneous AI-agent fleets. It tracks continuous agent state, calibrates by class, detects drift, and issues governance interventions with auditable provenance.
+**UNITARES is a runtime governance layer for heterogeneous AI-agent fleets.** It tracks continuous agent state, calibrates by class, detects drift, and issues governance interventions with auditable provenance.
 
 Most AI agents fly blind: they can't tell when they're thrashing, drifting, or overconfident until a human notices. UNITARES is a runtime layer that lets agents **see their own state and regulate themselves** — slow down when disorder spikes, ask for review when integrity drops, hand off when they're running on fumes.
 
@@ -94,7 +90,7 @@ As of April 2026 (single-operator deployment — self-traffic, not external adop
 | Metric | Value |
 |--------|-------|
 | Agents onboarded | 2,574 total process-instances — overwhelmingly ephemeral CLI sessions from one operator's workstation plus a handful of long-running resident agents (launchd crons, Pi-side Lumen) |
-| Distinct external (non-resident) agents | ~56 over a 3-week post-grounding window — the corpus v7 empirical work is blocked on maturing |
+| Distinct external (non-resident) agents | ~56 over a 3-week post-grounding window |
 | Unique agents active (last 7 days) | 2,226 |
 | Governance events processed | 94,000+ (≈51K in the last 7 days) |
 | Knowledge graph discoveries | 578 |
@@ -104,8 +100,6 @@ As of April 2026 (single-operator deployment — self-traffic, not external adop
 </details>
 
 *What these numbers are good for:* a stress test that the pipeline holds up under sustained volume. *What they are not:* evidence of product-market traction. External adoption is the open question.
-
-This repo is the credibility surface. The accumulated calibration curves, basin thresholds, production telemetry, and corpus-grounded verdict math that make UNITARES verdicts useful aren't in the code — they live in months of fleet operation, the [EISV trajectories on HuggingFace](https://github.com/CIRWEL/eisv-lumen), and the iteration history documented in the paper. Open-sourcing the runtime exposes how it works without exposing what makes it work.
 
 <p align="center">
   <img src="docs/assets/dashboard.png" width="80%" alt="UNITARES dashboard — stats overview with fleet coherence, agent count, discoveries, and system health"/>
@@ -218,7 +212,7 @@ python src/mcp_server.py --port 8767
 
 `requirements-full.txt` is the default for almost everything — running the local server, running tests (`pytest` is in `full` only), and handler development. `requirements-core.txt` is a 2-package subset (`mcp` + `numpy`) for thin stdio/proxy setups where the governance server runs elsewhere and you only need a local client. Database bring-up details (PostgreSQL 17 + AGE + pgvector compile): [db/postgres/README.md](db/postgres/README.md).
 
-The EISV **ODE** engine lives in this repo at `governance_core/` (pure Python, no separate install). The four-component drift decomposition is fully described in the v6 paper. To skip the ODE entirely and run with behavioral-EISV only: `export UNITARES_DISABLE_ODE=1`.
+The EISV ODE engine lives in this repo at `governance_core/` (pure Python, no separate install). To skip the ODE entirely and run with behavioral-EISV only: `export UNITARES_DISABLE_ODE=1`.
 
 ### MCP configuration
 
@@ -303,11 +297,21 @@ Three files at the repo root orient different AI CLIs. Human readers can skip th
 | [`AGENTS.md`](AGENTS.md) | Codex sessions — machine-facing bootstrap (shares a core contract with `CLAUDE.md`) |
 | [`CODEX_START.md`](CODEX_START.md) | Codex users — human-facing quickstart for direct workflow |
 
-## Paper
+---
 
-[**UNITARES v6**](https://github.com/CIRWEL/unitares-paper-v6) — *Information-Theoretic Governance of Heterogeneous Agent Fleets*. Framework + migration paper (30 pages, latest: `paper-v6.9.1`). Grounds EISV in Shannon entropy and class-conditional calibration, with variational free energy as the asymptote target for `E` rather than the current estimator (v6.9 §4.1). Documents the pipeline-ordering migration mechanism used to re-ground the live system. Headline empirical finding: a 13,310-row verdict counterfactual shows 28.9% of governance basin assignments flip under class-conditional grounded coherence relative to the legacy fleet-wide form, with a strong directional bias into the `low` basin — direct empirical support for the homogenization-failure-mode argument. Concept DOI: [10.5281/zenodo.19647159](https://doi.org/10.5281/zenodo.19647159) (resolves to latest version; each tagged release has its own version DOI).
+## Related Projects
 
-### How to cite
+- [**Lumen / anima-mcp**](https://github.com/CIRWEL/anima-mcp) — Embodied agent on Raspberry Pi
+- [**unitares-governance-plugin**](https://github.com/CIRWEL/unitares-governance-plugin) — Installable client adapters for Codex and Claude
+- [**unitares-discord-bridge**](https://github.com/CIRWEL/unitares-discord-bridge) — Discord presence and governance events
+- [**eisv-lumen**](https://github.com/CIRWEL/eisv-lumen) — Governance benchmark (21K trajectories on HuggingFace)
+- [**unitares-paper-v6**](https://github.com/CIRWEL/unitares-paper-v6) — Companion paper *Information-Theoretic Governance of Heterogeneous Agent Fleets* (Wang, 2026); concept DOI [10.5281/zenodo.19647159](https://doi.org/10.5281/zenodo.19647159)
+
+This `unitares` repo is the governance server/runtime. Plugin-side `.codex-plugin/`, `hooks/`, `skills/`, and `commands/` content belongs to the companion adapter repo, not as canonical copies here.
+
+## Citation
+
+Kenny Wang ([ORCID 0009-0006-7544-2374](https://orcid.org/0009-0006-7544-2374)), CIRWEL Systems. If you build on this work, please cite — see [`CITATION.cff`](CITATION.cff).
 
 ```bibtex
 @misc{wang2026unitares,
@@ -319,14 +323,6 @@ Three files at the repo root orient different AI CLIs. Human readers can skip th
   note         = {Concept DOI; resolves to latest version. ORCID: 0009-0006-7544-2374}
 }
 ```
-
-## Related Projects
-
-- [**Lumen / anima-mcp**](https://github.com/CIRWEL/anima-mcp) — Embodied agent on Raspberry Pi
-- [**unitares-discord-bridge**](https://github.com/CIRWEL/unitares-discord-bridge) — Discord presence and governance events
-- [**eisv-lumen**](https://github.com/CIRWEL/eisv-lumen) — Governance benchmark (21K trajectories on HuggingFace)
-
-Installable client adapters for Codex and Claude live in the companion [`unitares-governance-plugin`](https://github.com/CIRWEL/unitares-governance-plugin) repo. This `unitares` repo is the governance server/runtime; any plugin-side `.codex-plugin/`, `hooks/`, `skills/`, and `commands/` content should be treated as belonging to the companion adapter repo, not as canonical copies here.
 
 ---
 
