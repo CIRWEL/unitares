@@ -21,7 +21,9 @@ version-bump: ## Bump version (usage: make version-bump PART=patch)
 # ── Testing ──────────────────────────────────────────────
 
 test: ## Run full test suite with coverage
-	@python3 -m pytest
+	@python3 -m pytest \
+		--cov=src --cov=agents/sdk/src/unitares_sdk --cov=agents \
+		--cov-report=term-missing --cov-fail-under=25
 
 test-quick: ## Run tests without coverage
 	@python3 -m pytest -o addopts= -q
