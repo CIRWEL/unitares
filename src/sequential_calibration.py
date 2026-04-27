@@ -34,17 +34,12 @@ Null and construction
 
 Known limitations
 -----------------
-- No prediction_id seam yet. Reported confidences are attached to outcomes
-  via explicit argument or a monitor-level `_prev_confidence` fallback
-  resolved at outcome time (see
-  src/mcp_handlers/observability/outcome_events.py). This is sufficient when
-  an agent has at most one tactical prediction in flight per outcome window,
-  but degrades to approximate temporal matching when multiple predictions
-  overlap. The filtration is therefore approximate, not exact, and forensic
-  replay from an alarm back to the specific (confidence, outcome) pair is
-  not guaranteed. A prediction_id seam is phase-two work and is required
-  before composing this e-process with knowledge-graph or dialectic
-  evidence streams.
+- The prediction_id seam is operational at the outcome_event tool level:
+  register_tactical_prediction (governance_monitor) mints; outcome_event consumes
+  via consume_prediction. The remaining gap was the report path — closed by the
+  Refined Phase-5 Evidence Contract (docs/proposals/refined-phase-5-evidence-contract.md),
+  which adds recent_tool_results to process_agent_update and emits outcome_event
+  server-side per item with verification_source="agent_reported_tool_result".
 - Global and per-agent trackers update from the same samples. Each is
   individually a valid e-process under H0, but they are correlated by
   construction and must not be multiplied together.
