@@ -648,13 +648,39 @@ class CalibrationChecker:
         
         result["is_calibrated"] = is_calibrated
         result["issues"] = strategic_issues + tactical_issues
-        
+
+        # Per-channel breakdown (additive — aggregate fields above are unchanged).
+        # Allows callers to ask "miscalibrated where?" instead of just "miscalibrated".
+        per_channel_metrics = self.compute_tactical_metrics_per_channel()
+        if per_channel_metrics:
+            per_channel_response = {}
+            for channel, bin_metrics in per_channel_metrics.items():
+                channel_samples = sum(b.count for b in bin_metrics.values())
+                channel_issues = []
+                max_gap = 0.0
+                for bin_key, b in bin_metrics.items():
+                    if b.count < min_samples_per_bin:
+                        continue
+                    if b.calibration_error > 0.2:
+                        channel_issues.append(
+                            f"Bin {bin_key}: large calibration error ({b.calibration_error:.2f})"
+                        )
+                    if b.calibration_error > max_gap:
+                        max_gap = b.calibration_error
+                per_channel_response[channel] = {
+                    "calibrated": len(channel_issues) == 0,
+                    "samples": channel_samples,
+                    "calibration_gap": max_gap,
+                    "issues": channel_issues,
+                }
+            result["per_channel_calibration"] = per_channel_response
+
         result["honesty_note"] = (
             "Calibration ground truth comes from objective outcomes (test pass/fail, command exit codes, "
             "lint results, file operations) as the primary signal. Dialectic peer agreement is a secondary "
             "signal (0.7 peer_weight). Human feedback is optional, not required."
         )
-        
+
         return is_calibrated, result
     
     def update_ground_truth(self, confidence: float, predicted_correct: bool, 
