@@ -440,6 +440,15 @@ _SEVERITY_DEMOTION_LADDER = {
     "low": "low",
 }
 
+# In-memory de-dup for the 'calibration: demoted' log line. Without this,
+# the surface hook (UserPromptSubmit, fires on every prompt) would emit one
+# line per demoted finding per render — a stable demoted pattern with 8
+# findings produces 8 lines per prompt forever. Keys are
+# (fingerprint, day) so a re-render the same day stays silent but a new
+# day re-emits the demotion fact (operator-visible signal that calibration
+# is still applied, without noise). Tests reset via ``.clear()``.
+_DEMOTION_LOG_SEEN: set[tuple[str, str]] = set()
+
 
 def _apply_floor_to_finding(
     finding: dict[str, Any],
@@ -531,13 +540,18 @@ def _format_findings_block(
         for f in findings
     ]
     for f in findings:
-        if "calibration_demoted_from" in f:
-            log(
-                f"calibration: demoted {f.get('pattern','?')} on "
-                f"{f.get('file','?')} from {f['calibration_demoted_from']} "
-                f"to {f.get('severity','?')} (ci_lower below floor)",
-                "info",
-            )
+        if "calibration_demoted_from" not in f:
+            continue
+        seen_key = (f.get("fingerprint", ""), today)
+        if seen_key in _DEMOTION_LOG_SEEN:
+            continue  # already logged today; skip the spam
+        _DEMOTION_LOG_SEEN.add(seen_key)
+        log(
+            f"calibration: demoted {f.get('pattern','?')} on "
+            f"{f.get('file','?')} from {f['calibration_demoted_from']} "
+            f"to {f.get('severity','?')} (ci_lower below floor)",
+            "info",
+        )
 
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     findings = sorted(

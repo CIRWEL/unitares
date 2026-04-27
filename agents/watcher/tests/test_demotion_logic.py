@@ -119,3 +119,70 @@ class TestFormatBlockWithFloor:
         assert block is not None
         assert "[MEDIUM]" in block, "demoted-to-medium should still surface"
         assert len(shown) == 1
+
+
+class TestDemotionLogDeduplication:
+    """The 'calibration: demoted ...' log line fires inside
+    _format_findings_block which renders on every UserPromptSubmit. Without
+    de-dup, a stable demoted finding would emit one line per render,
+    drowning the calibration signal. Council-flagged log spam (dialectic)."""
+
+    def test_log_emitted_on_first_render_only(self):
+        from agents.watcher import findings as findings_mod
+
+        # Reset the dedup set so test ordering doesn't matter
+        findings_mod._DEMOTION_LOG_SEEN.clear()
+
+        floor = FloorState(updated_at="t", buckets={
+            ("P1", "app"): _bucket(ci=0.10, n=15.0)
+        })
+        rows = [_f(pattern="P1", severity="high", fingerprint="abcd1234")]
+
+        log_calls = []
+
+        def capture_log(msg, level="info"):
+            if "calibration: demoted" in msg:
+                log_calls.append(msg)
+
+        with patch("agents.watcher.findings.load_floor", return_value=floor), \
+             patch("agents.watcher.findings.should_probe", return_value=False), \
+             patch("agents.watcher.findings.log", side_effect=capture_log):
+            # First render: log fires
+            _format_findings_block(rows, header="hdr")
+            # Second and third renders within the same day: log does NOT fire
+            _format_findings_block(rows, header="hdr")
+            _format_findings_block(rows, header="hdr")
+
+        assert len(log_calls) == 1, (
+            f"expected exactly 1 demote log line on first render, got {len(log_calls)}"
+        )
+
+    def test_distinct_fingerprints_each_log_once(self):
+        from agents.watcher import findings as findings_mod
+        findings_mod._DEMOTION_LOG_SEEN.clear()
+
+        floor = FloorState(updated_at="t", buckets={
+            ("P1", "app"): _bucket(ci=0.10, n=15.0)
+        })
+        rows = [
+            _f(pattern="P1", severity="high", fingerprint="aaaa0001"),
+            _f(pattern="P1", severity="high", fingerprint="aaaa0002"),
+            _f(pattern="P1", severity="high", fingerprint="aaaa0003"),
+        ]
+
+        log_calls = []
+
+        def capture_log(msg, level="info"):
+            if "calibration: demoted" in msg:
+                log_calls.append(msg)
+
+        with patch("agents.watcher.findings.load_floor", return_value=floor), \
+             patch("agents.watcher.findings.should_probe", return_value=False), \
+             patch("agents.watcher.findings.log", side_effect=capture_log):
+            _format_findings_block(rows, header="hdr")
+            _format_findings_block(rows, header="hdr")  # second render: no new logs
+
+        assert len(log_calls) == 3, (
+            f"each distinct fingerprint should log once on first sighting; "
+            f"got {len(log_calls)} for 3 fingerprints"
+        )
