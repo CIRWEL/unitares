@@ -2619,7 +2619,7 @@ class TestWatcherCheckin:
 
 
 class TestResolutionAuditTrail:
-    """--resolve/--dismiss posts watcher_resolution governance events."""
+    """--resolve/--dismiss posts watcher_resolution_finding governance events."""
 
     def _write_findings(self, watcher_module, findings: list[dict]):
         watcher_module.FINDINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -2628,7 +2628,7 @@ class TestResolutionAuditTrail:
                 f.write(json.dumps(finding) + "\n")
 
     def test_resolve_posts_governance_event(self, watcher_module, monkeypatch):
-        """--resolve posts a watcher_resolution event with action=confirmed."""
+        """--resolve posts a watcher_resolution_finding event with action=confirmed."""
         self._write_findings(watcher_module, [
             {"fingerprint": "ff27c1b200000000", "status": "open", "severity": "high",
              "pattern": "P004", "file": "/tmp/x.py", "line": 97,
@@ -2646,14 +2646,14 @@ class TestResolutionAuditTrail:
 
         watcher_module.update_finding_status("ff27c1b2", "confirmed", resolver_agent_id="uuid-agent-X")
 
-        assert posted["event_type"] == "watcher_resolution"
+        assert posted["event_type"] == "watcher_resolution_finding"
         assert posted["extra"]["action"] == "confirmed"
         assert posted["extra"]["resolved_by"] == "uuid-agent-X"
         assert posted["extra"]["pattern"] == "P004"
         assert posted["agent_id"] == "uuid-watcher"
 
     def test_dismiss_posts_governance_event(self, watcher_module, monkeypatch):
-        """--dismiss posts a watcher_resolution event with action=dismissed."""
+        """--dismiss posts a watcher_resolution_finding event with action=dismissed."""
         self._write_findings(watcher_module, [
             {"fingerprint": "8266dfb800000000", "status": "surfaced", "severity": "high",
              "pattern": "P004", "file": "/tmp/y.py", "line": 114,
@@ -2671,7 +2671,7 @@ class TestResolutionAuditTrail:
 
         watcher_module.update_finding_status("8266dfb8", "dismissed", resolver_agent_id="uuid-agent-Y")
 
-        assert posted["event_type"] == "watcher_resolution"
+        assert posted["event_type"] == "watcher_resolution_finding"
         assert posted["extra"]["action"] == "dismissed"
         assert posted["extra"]["resolved_by"] == "uuid-agent-Y"
 
@@ -2821,7 +2821,7 @@ class TestWatcherLifecycleIntegration:
         result = watcher_module.update_finding_status("integ000", "confirmed", resolver_agent_id="uuid-agent-resolver")
         assert result == 0
         assert len(posted_events) == 1
-        assert posted_events[0]["event_type"] == "watcher_resolution"
+        assert posted_events[0]["event_type"] == "watcher_resolution_finding"
         assert posted_events[0]["extra"]["resolved_by"] == "uuid-agent-resolver"
 
         # Verify local status also updated

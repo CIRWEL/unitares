@@ -857,7 +857,7 @@ def _post_resolution_event(
 
     try:
         post_finding(
-            event_type="watcher_resolution",
+            event_type="watcher_resolution_finding",
             severity=finding.get("severity", "unknown"),
             message=message,
             agent_id=identity["agent_uuid"],
