@@ -25,6 +25,7 @@ What it does each cycle:
 
 import asyncio
 
+import json
 import os
 import subprocess
 import sys
@@ -59,6 +60,11 @@ TEST_TIMEOUT = 180  # 3 minutes per suite
 
 # Wall-clock cap for a single heartbeat cycle.
 CYCLE_TIMEOUT = int(os.getenv("HEARTBEAT_CYCLE_TIMEOUT", "120"))
+
+# KG hygiene v1: retrieval-eval step configuration
+RETRIEVAL_EVAL_DIR = project_root / "tests" / "retrieval_eval"
+RETRIEVAL_EVAL_SCRIPT = project_root / "scripts" / "eval" / "retrieval_eval.py"
+NDCG_REGRESSION_THRESHOLD = 0.05  # absolute drop in nDCG@10 that flags regression
 
 
 _interactive = sys.stdout.isatty()
@@ -253,6 +259,70 @@ def _filter_sentinel_findings(
     return out
 
 
+# ---------------------------------------------------------------------------
+# KG hygiene v1: retrieval-eval helpers
+# ---------------------------------------------------------------------------
+
+def _derive_eval_config_tag() -> str:
+    """Derive a config tag matching baseline filename suffix from env vars.
+
+    Tag values mirror existing baselines in tests/retrieval_eval/:
+    bge_m3, bge_m3_reranked, hybrid_rrf, hybrid_graph.
+    """
+    embedding = os.environ.get("UNITARES_EMBEDDING_MODEL", "").strip().lower()
+    hybrid = os.environ.get("UNITARES_ENABLE_HYBRID", "").strip() == "1"
+    graph = os.environ.get("UNITARES_ENABLE_GRAPH_EXPANSION", "").strip() == "1"
+    reranker = os.environ.get("UNITARES_ENABLE_RERANKER", "").strip() == "1"
+
+    base = "bge_m3" if "bge-m3" in embedding else (embedding.replace("-", "_") or "default")
+
+    if graph:
+        return "hybrid_graph"
+    if hybrid:
+        return "hybrid_rrf"
+    if reranker:
+        return f"{base}_reranked"
+    return base
+
+
+def _pick_eval_baseline(baseline_dir: Path, config_tag: str) -> Optional[Path]:
+    """Return newest baseline_*_<config_tag>.json by mtime, or None."""
+    if not baseline_dir.exists():
+        return None
+    matches = sorted(
+        baseline_dir.glob(f"baseline_*_{config_tag}.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    return matches[0] if matches else None
+
+
+def _run_eval_subprocess() -> Dict[str, Any]:
+    """Invoke the eval harness as a subprocess; return parsed JSON metrics.
+
+    Sync function — designed to be called via ``run_in_executor`` from the
+    async cycle. Returns ``{}`` on any failure (caller handles).
+    """
+    try:
+        proc = subprocess.run(
+            ["python3", str(RETRIEVAL_EVAL_SCRIPT), "--json"],
+            capture_output=True, text=True, timeout=300,
+        )
+        if proc.returncode != 0:
+            log(f"eval subprocess returned {proc.returncode}: {proc.stderr[:200]}")
+            return {}
+        return json.loads(proc.stdout)
+    except subprocess.TimeoutExpired:
+        log("eval subprocess timed out after 300s")
+        return {}
+    except json.JSONDecodeError as e:
+        log(f"eval subprocess JSON parse failed: {e}")
+        return {}
+    except Exception as e:
+        log(f"eval subprocess failed: {e}")
+        return {}
+
+
 class VigilAgent(GovernanceAgent):
     def __init__(
         self,
@@ -261,6 +331,8 @@ class VigilAgent(GovernanceAgent):
         heartbeat_interval: int = 1800,
         with_tests: bool = False,
         with_audit: bool = True,
+        with_hygiene: bool = False,
+        with_eval: bool = False,
         force_new: bool = False,
     ):
         super().__init__(
@@ -280,6 +352,8 @@ class VigilAgent(GovernanceAgent):
         self.heartbeat_interval = heartbeat_interval
         self.with_tests = with_tests
         self.with_audit = with_audit
+        self.with_hygiene = with_hygiene
+        self.with_eval = with_eval
         self.force_new = force_new
         # Vigil-specific cycle data (populated during run_cycle, used in post-checkin)
         self._cycle_state: Dict[str, Any] = {}
@@ -391,6 +465,108 @@ class VigilAgent(GovernanceAgent):
 
         return summary
 
+    async def _run_stale_opens_sweep(
+        self, client: GovernanceClient, top_n: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """KG hygiene v1: propose-only sweep of oldest stale-open KG entries.
+
+        Reads via ``client.audit_knowledge(scope='open')``; the audit handler
+        already scores each open entry (via _score_discovery in
+        knowledge_graph_lifecycle.py) and returns ``top_stale`` ordered by
+        last_activity_days desc with bucket classification + permanent-policy
+        already applied. We just take up to ``top_n`` entries and surface them.
+
+        Returns oldest-first (matches the audit's own ordering). Empty list
+        on any failure or when ``with_hygiene`` is False — propose-only is
+        best-effort, must not poison the cycle.
+        """
+        if not self.with_hygiene:
+            return []
+
+        try:
+            result = await asyncio.wait_for(
+                client.audit_knowledge(scope="open", top_n=top_n),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            log("stale-opens sweep timed out after 15s; continuing cycle")
+            return []
+        except Exception as e:
+            log(f"stale-opens sweep failed ({e}); continuing cycle")
+            return []
+
+        if not getattr(result, "success", False):
+            return []
+
+        audit_data = getattr(result, "audit", None) or {}
+        if not isinstance(audit_data, dict):
+            return []
+        top_stale = audit_data.get("top_stale", []) or []
+
+        # The audit already orders by last_activity_days desc. Re-sort
+        # defensively in case the contract ever changes.
+        top_stale.sort(key=lambda x: x.get("last_activity_days", 0), reverse=True)
+        return top_stale[:top_n]
+
+    async def _run_eval_step(self) -> Dict[str, Any]:
+        """KG hygiene v1: run retrieval_eval as a subprocess; diff against baseline.
+
+        Subprocess runs via ``run_in_executor`` to avoid the anyio-asyncpg
+        deadlock surface (the eval script itself awaits asyncpg internally).
+
+        Returns a dict with keys: ``ran`` (bool), ``metrics`` (dict),
+        ``baseline`` (str|None), ``delta`` (dict), ``regression`` (bool),
+        plus optional ``no_baseline_warning``, ``diff_error``, ``reason``.
+        Never raises — disabled or failed runs return ``{"ran": False, ...}``.
+        """
+        if not self.with_eval:
+            return {"ran": False, "reason": "with_eval=False"}
+
+        loop = asyncio.get_event_loop()
+        try:
+            metrics = await loop.run_in_executor(None, _run_eval_subprocess)
+        except Exception as e:
+            log(f"eval step failed: {e}")
+            return {"ran": False, "reason": f"executor error: {e}"}
+
+        if not metrics:
+            return {"ran": False, "reason": "empty metrics"}
+
+        config_tag = _derive_eval_config_tag()
+        baseline_path = _pick_eval_baseline(RETRIEVAL_EVAL_DIR, config_tag)
+
+        result: Dict[str, Any] = {
+            "ran": True,
+            "metrics": metrics,
+            "config_tag": config_tag,
+            "baseline": baseline_path.name if baseline_path else None,
+            "delta": {},
+            "regression": False,
+        }
+
+        if baseline_path is None:
+            result["no_baseline_warning"] = (
+                f"no matching baseline for config={config_tag}; "
+                f"run output not compared. Promote manually if good."
+            )
+            log(result["no_baseline_warning"])
+            return result
+
+        try:
+            baseline = json.loads(baseline_path.read_text())
+            base_metrics = baseline.get("metrics", baseline)  # tolerate flat or nested
+            for key in ("nDCG@10", "Recall@20", "MRR", "latency_p50", "latency_p95"):
+                if key in metrics and key in base_metrics:
+                    result["delta"][key] = metrics[key] - base_metrics[key]
+            ndcg_delta = result["delta"].get("nDCG@10", 0.0)
+            if ndcg_delta < -NDCG_REGRESSION_THRESHOLD:
+                result["regression"] = True
+        except Exception as e:
+            log(f"baseline diff failed: {e}")
+            result["diff_error"] = str(e)
+
+        return result
+
     async def run_cycle(self, client: GovernanceClient) -> CycleResult | None:
         """Run one heartbeat cycle."""
         findings: List[str] = []
@@ -489,6 +665,40 @@ class VigilAgent(GovernanceAgent):
             if sentinel_force_audit and not self.with_audit:
                 findings.append("Groundskeeper forced by Sentinel coordination")
 
+        # --- 4.5. KG hygiene v1: stale-opens propose-only sweep (optional) ---
+        stale_opens = await self._run_stale_opens_sweep(client)
+        if stale_opens:
+            oldest = stale_opens[0]
+            findings.append(
+                f"hygiene: {len(stale_opens)} stale opens (oldest "
+                f"{oldest.get('id', '?')[:12]}, "
+                f"age={oldest.get('last_activity_days', 0)}d)"
+            )
+            for item in stale_opens[:5]:  # top 5 inline; full count in cycle state
+                summary_short = (item.get("summary") or "")[:60]
+                age_days = item.get("last_activity_days", 0)
+                findings.append(
+                    f"stale_open: {item.get('id', '?')[:12]} \"{summary_short}\" age={age_days}d"
+                )
+
+        # --- 4.7. KG hygiene v1: retrieval-eval step (optional) ---
+        eval_result = await self._run_eval_step()
+        if eval_result.get("ran"):
+            metrics = eval_result["metrics"]
+            delta = eval_result.get("delta", {})
+            baseline_name = eval_result.get("baseline") or "no-baseline"
+            ndcg = metrics.get("nDCG@10", 0.0)
+            ndcg_delta = delta.get("nDCG@10", 0.0)
+            p95 = metrics.get("latency_p95", 0)
+            p95_delta = delta.get("latency_p95", 0)
+            findings.append(
+                f"eval: nDCG@10 {ndcg:.3f} (Δ {ndcg_delta:+.3f} vs {baseline_name}), "
+                f"p95 {p95:.0f}ms (Δ {p95_delta:+.0f}ms)"
+            )
+            if eval_result.get("regression"):
+                findings.append("⚠ eval regression: nDCG@10 dropped beyond threshold")
+                issues += 1
+
         # --- 5. Compute complexity/confidence from actual signals ---
         complexity = 0.15
         if self.with_tests:
@@ -534,8 +744,15 @@ class VigilAgent(GovernanceAgent):
 
         self._cycle_state = {
             **health_state,
+            # Use null-safe indirection (gk_stale/gk_archived computed above)
+            # rather than direct groundskeeper_summary.get() — preserves the
+            # None-summary fallback path that the if/else block establishes.
             "groundskeeper_stale": gk_stale,
             "groundskeeper_archived": gk_archived,
+            "hygiene_stale_opens": len(stale_opens),
+            "eval_ndcg10": eval_result.get("metrics", {}).get("nDCG@10"),
+            "eval_baseline": eval_result.get("baseline"),
+            "eval_regression": eval_result.get("regression", False),
             "total_cycles": total_cycles,
             "cycle_time": datetime.now(timezone.utc).isoformat(),
         }

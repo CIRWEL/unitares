@@ -85,7 +85,8 @@ class DiscoveryNode:
     tags: List[str] = field(default_factory=list)
     severity: Optional[str] = None  # "low", "medium", "high", "critical"
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    status: str = "open"  # "open", "resolved", "archived", "disputed"
+    status: str = "open"  # "open", "resolved", "archived", "disputed", "superseded", "closed", "wont_fix"
+    superseded_by: Optional[str] = None  # discovery_id of the entry that superseded this one (KG hygiene v1)
     related_to: List[str] = field(default_factory=list)  # IDs of related discoveries (backward compat)
     response_to: Optional[ResponseTo] = None  # Typed response to parent discovery
     responses_from: List[str] = field(default_factory=list)  # IDs of discoveries that respond to this one (backlinks)
@@ -129,6 +130,9 @@ class DiscoveryNode:
 
         if self.confidence is not None:
             result["confidence"] = self.confidence
+
+        if self.superseded_by is not None:
+            result["superseded_by"] = self.superseded_by
 
         # Include provenance if present (agent state at creation)
         if self.provenance:
@@ -188,6 +192,7 @@ class DiscoveryNode:
             confidence=data.get("confidence"),
             provenance=data.get("provenance"),
             provenance_chain=data.get("provenance_chain"),
+            superseded_by=data.get("superseded_by"),
         )
 
 

@@ -409,7 +409,16 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
                                     "summary is required - what did you discover/learn?")
     if error:
         return [error]
-    
+
+    # KG hygiene v1: supersedes parameter — early validation only.
+    # Pre-flight predecessor lookup + permanent-policy veto happens inside
+    # the try block once we have a graph instance.
+    supersedes_id = arguments.get("supersedes")
+    if supersedes_id is not None:
+        supersedes_id = str(supersedes_id).strip()
+        if not supersedes_id:
+            return [error_response("supersedes parameter cannot be empty string")]
+
     try:
         # SECURITY: Rate limiting is handled by the knowledge graph backend
         # Backend handles rate limiting internally (O(1) per store)
@@ -611,6 +620,30 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
             confidence=parsed_confidence
         )
 
+        # KG hygiene v1: supersedes pre-flight.
+        # Look up predecessor; veto if permanent (would silently downgrade an
+        # ADR/learning/etc.); warn if missing (new entry still stored, but no
+        # supersession applied). Veto must run BEFORE add_discovery so a
+        # rejected supersession does not orphan the new entry.
+        supersedes_target = None
+        supersedes_warning = None
+        if supersedes_id:
+            supersedes_target = await graph.get_discovery(supersedes_id)
+            if supersedes_target is None:
+                supersedes_warning = (
+                    f"supersedes target '{supersedes_id}' not found; "
+                    f"new discovery will be stored without flip"
+                )
+            else:
+                from src.knowledge_graph_lifecycle import KnowledgeGraphLifecycle
+                lifecycle = KnowledgeGraphLifecycle()
+                if lifecycle.get_lifecycle_policy(supersedes_target) == "permanent":
+                    return [error_response(
+                        f"Cannot supersede permanent discovery '{supersedes_id}' "
+                        f"(type={supersedes_target.type}, tags={supersedes_target.tags}). "
+                        "Use knowledge(action='update') with explicit operator action to override."
+                    )]
+
         # CONFIDENCE CROSS-CHECK: Clamp to agent coherence + 0.3
         await _clamp_confidence_to_coherence(discovery, agent_id)
 
@@ -644,6 +677,15 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
         await graph.add_discovery(discovery)
         await _broadcast_knowledge_write(discovery, agent_id)
 
+        # KG hygiene v1: flip predecessor status now that the new entry exists.
+        # Pre-flight already verified the predecessor exists and is non-permanent.
+        if supersedes_id and supersedes_target is not None:
+            await graph.update_discovery(supersedes_id, {
+                "status": "superseded",
+                "superseded_by": discovery_id,
+                "updated_at": datetime.now().isoformat(),
+            })
+
         # v2.5.3: Resolve UUID to display name for human-readable output
         agent_display = arguments.get("_agent_display") or _resolve_agent_display(agent_id)
         display_name = agent_display.get("display_name", agent_id)
@@ -664,6 +706,13 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
 
         # KG loop closure: remind agents to resolve when addressed
         response["_resolve_when_done"] = f"When this is addressed, close the loop: knowledge(action='update', discovery_id='{discovery_id}', status='resolved')"
+
+        # KG hygiene v1: surface supersession outcome
+        if supersedes_id:
+            if supersedes_target is not None:
+                response["superseded"] = supersedes_id
+            elif supersedes_warning:
+                response["_supersedes_warning"] = supersedes_warning
 
         # UX FIX (Feb 2026): Include warning if display_name was auto-generated
         if display_name_warning:
