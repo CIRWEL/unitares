@@ -395,6 +395,7 @@ class TestExplicitOutcomeEventCalibration:
 
         parsed = parse_result(result)
         assert parsed.get('outcome_id') == 'oe-2'
+        assert parsed['prediction_binding'] == 'prev_confidence_fallback'
 
         mock_checker.record_prediction.assert_called_once_with(
             confidence=0.7,
@@ -468,6 +469,7 @@ class TestExplicitOutcomeEventCalibration:
 
         parsed = parse_result(result)
         assert parsed.get('outcome_id') == 'oe-db'
+        assert parsed['prediction_binding'] == 'audit_trail_fallback'
 
         # Calibration should fire with DB-resolved confidence
         mock_checker.record_prediction.assert_called_once_with(
@@ -583,6 +585,7 @@ class TestPredictionIdLookup:
     @pytest.mark.asyncio
     async def test_prediction_id_uses_registered_confidence(self):
         """When prediction_id is present, registered confidence wins over _prev_confidence."""
+        from src.monitor_prediction import register_tactical_prediction
         mock_db = MagicMock()
         mock_db.record_outcome_event = AsyncMock(return_value='oe-pid-1')
         mock_db.get_latest_eisv_by_agent_id = AsyncMock(return_value={
@@ -590,14 +593,17 @@ class TestPredictionIdLookup:
             'phi': 0.1, 'verdict': 'safe', 'coherence': 0.48, 'regime': 'CONVERGENCE',
         })
 
+        # Use a real _open_predictions dict so the two-phase lookup works correctly.
+        open_predictions = {}
+        pid = register_tactical_prediction(open_predictions, confidence=0.9)
+
         mock_monitor = MagicMock()
         # _prev_confidence is intentionally different to prove the registry path wins
         mock_monitor._prev_confidence = 0.4
-        mock_monitor.consume_prediction = MagicMock(return_value={
-            'confidence': 0.9,
-            'decision_action': 'proceed',
-            'consumed': False,
-        })
+        mock_monitor._open_predictions = open_predictions
+        mock_monitor._prediction_ttl_seconds = 3600.0
+        mock_monitor._behavioral_state = None
+        mock_monitor.get_primary_eisv.return_value = (0.7, 0.75, 0.15, -0.03)
 
         mock_checker = MagicMock()
         mock_seq_tracker = MagicMock()
@@ -613,14 +619,14 @@ class TestPredictionIdLookup:
             from src.mcp_handlers.observability.outcome_events import handle_outcome_event
             result = await handle_outcome_event({
                 'outcome_type': 'test_passed',
-                'prediction_id': 'pid-xyz',
+                'prediction_id': pid,
             })
 
         parsed = parse_result(result)
         assert parsed.get('outcome_id') == 'oe-pid-1'
 
-        # Registry was consulted
-        mock_monitor.consume_prediction.assert_called_once_with('pid-xyz')
+        # Registry was consumed (two-phase path)
+        assert open_predictions[pid].get('consumed') is True
 
         # Calibration used the registered confidence (0.9), not _prev_confidence (0.4)
         mock_checker.record_prediction.assert_called_once_with(
@@ -633,13 +639,13 @@ class TestPredictionIdLookup:
         mock_seq_tracker.record_exogenous_tactical_outcome.assert_called_once()
         _, seq_kwargs = mock_seq_tracker.record_exogenous_tactical_outcome.call_args
         assert seq_kwargs['confidence'] == 0.9
-        assert seq_kwargs['prediction_id'] == 'pid-xyz'
+        assert seq_kwargs['prediction_id'] == pid
         assert seq_kwargs['signal_source'] == 'tests'
 
         # Detail preserves provenance
         _, db_kwargs = mock_db.record_outcome_event.call_args
         assert db_kwargs['detail']['reported_confidence'] == 0.9
-        assert db_kwargs['detail']['prediction_id'] == 'pid-xyz'
+        assert db_kwargs['detail']['prediction_id'] == pid
         assert db_kwargs['detail']['prediction_source'] == 'registry'
         assert db_kwargs['detail']['eprocess_eligible'] is True
 
@@ -655,7 +661,10 @@ class TestPredictionIdLookup:
 
         mock_monitor = MagicMock()
         mock_monitor._prev_confidence = 0.55
-        mock_monitor.consume_prediction = MagicMock(return_value=None)  # unknown id
+        # Use a real empty dict so lookup_prediction correctly returns None for unknown ids
+        mock_monitor._open_predictions = {}
+        mock_monitor._prediction_ttl_seconds = 3600.0
+        mock_monitor._behavioral_state = None
 
         mock_checker = MagicMock()
         mock_seq_tracker = MagicMock()
@@ -677,7 +686,7 @@ class TestPredictionIdLookup:
         parsed = parse_result(result)
         assert parsed.get('outcome_id') == 'oe-pid-2'
 
-        # Fallback confidence used
+        # Fallback confidence used (id was not in registry)
         mock_checker.record_prediction.assert_called_once_with(
             confidence=0.55,
             predicted_correct=True,
@@ -687,3 +696,364 @@ class TestPredictionIdLookup:
         assert db_kwargs['detail']['reported_confidence'] == 0.55
         assert db_kwargs['detail']['prediction_source'] == 'prev_confidence_fallback'
         assert db_kwargs['detail']['prediction_id'] == 'pid-stale'
+
+
+# ============================================================================
+# Task 1: Hard TTL on consume_prediction
+# ============================================================================
+
+class TestConsumePredictionHardTTL:
+    """consume_prediction must enforce TTL at consume time, not just at registration."""
+
+    def test_consume_returns_none_when_past_ttl(self):
+        """A record older than ttl_seconds must not be consumed."""
+        from src.monitor_prediction import register_tactical_prediction, consume_prediction
+        open_predictions = {}
+        pid = register_tactical_prediction(
+            open_predictions, confidence=0.7, prediction_ttl_seconds=3600.0
+        )
+        # Force the record's age past TTL by rewriting created_at
+        open_predictions[pid]["created_at"] -= 7200.0  # 2 hours old
+        result = consume_prediction(open_predictions, pid, ttl_seconds=3600.0)
+        assert result is None
+
+    def test_consume_succeeds_when_within_ttl(self):
+        """A fresh record must be consumable within TTL."""
+        from src.monitor_prediction import register_tactical_prediction, consume_prediction
+        open_predictions = {}
+        pid = register_tactical_prediction(open_predictions, confidence=0.7)
+        result = consume_prediction(open_predictions, pid, ttl_seconds=3600.0)
+        assert result is not None
+        assert result["confidence"] == 0.7
+
+    def test_expired_record_is_not_consumed(self):
+        """The expired record stays in the dict un-consumed so lookup_prediction
+        can later distinguish "expired" from "missing" when computing prediction_binding.
+        """
+        from src.monitor_prediction import register_tactical_prediction, consume_prediction
+        open_predictions = {}
+        pid = register_tactical_prediction(open_predictions, confidence=0.7)
+        open_predictions[pid]["created_at"] -= 7200.0
+        consume_prediction(open_predictions, pid, ttl_seconds=3600.0)
+        assert open_predictions[pid].get("consumed") is not True
+
+
+# ============================================================================
+# Task 1: prediction_binding echo on outcome_event
+# ============================================================================
+
+def _make_outcome_mock_db():
+    """Shared mock DB for TestPredictionBindingEcho tests."""
+    mock_db = MagicMock()
+    mock_db.record_outcome_event = AsyncMock(return_value='oe-binding-1')
+    mock_db.get_latest_eisv_by_agent_id = AsyncMock(return_value={
+        'E': 0.7, 'I': 0.75, 'S': 0.15, 'V': -0.03,
+        'phi': 0.1, 'verdict': 'safe', 'coherence': 0.48, 'regime': 'CONVERGENCE',
+    })
+    mock_db.get_latest_confidence_before = AsyncMock(return_value=None)
+    return mock_db
+
+
+class TestPredictionBindingEcho:
+    """Six binding labels per spec §4. Each fallback path emits a distinct label.
+
+    Tests use mock monitors with real _open_predictions dicts so the two-phase
+    lookup (lookup_prediction → consume_prediction) runs against actual data
+    structures rather than mocked method return values.
+    """
+
+    @pytest.mark.asyncio
+    async def test_binding_registry_when_id_lives(self):
+        """A fresh prediction_id resolves as 'registry'."""
+        from src.monitor_prediction import register_tactical_prediction
+        mock_db = _make_outcome_mock_db()
+
+        open_predictions = {}
+        pid = register_tactical_prediction(open_predictions, confidence=0.8)
+
+        mock_monitor = MagicMock()
+        mock_monitor._open_predictions = open_predictions
+        mock_monitor._prediction_ttl_seconds = 3600.0
+        mock_monitor._prev_confidence = None
+        mock_monitor.get_primary_eisv.return_value = (0.7, 0.75, 0.15, -0.03)
+        mock_monitor._behavioral_state = None
+
+        with patch('src.db.get_db', return_value=mock_db), \
+             patch('src.mcp_handlers.observability.outcome_events.mcp_server') as mock_server, \
+             patch('src.mcp_handlers.context.get_context_agent_id', return_value='agent-binding-reg'), \
+             patch('src.mcp_handlers.context.get_context_client_session_id', return_value=None):
+
+            mock_server.monitors = {'agent-binding-reg': mock_monitor}
+
+            from src.mcp_handlers.observability.outcome_events import handle_outcome_event
+            result = await handle_outcome_event({
+                'outcome_type': 'test_passed',
+                'prediction_id': pid,
+            })
+
+        parsed = parse_result(result)
+        assert parsed.get('prediction_binding') == 'registry'
+        # Record is consumed
+        assert open_predictions[pid].get('consumed') is True
+
+    @pytest.mark.asyncio
+    async def test_binding_missing_prediction_when_id_unknown(self):
+        """An id that doesn't exist in open_predictions resolves as 'missing_prediction'."""
+        mock_db = _make_outcome_mock_db()
+
+        open_predictions = {}  # empty — id will not be found
+
+        mock_monitor = MagicMock()
+        mock_monitor._open_predictions = open_predictions
+        mock_monitor._prediction_ttl_seconds = 3600.0
+        mock_monitor._prev_confidence = None
+        mock_monitor._behavioral_state = None
+
+        with patch('src.db.get_db', return_value=mock_db), \
+             patch('src.mcp_handlers.observability.outcome_events.mcp_server') as mock_server, \
+             patch('src.mcp_handlers.context.get_context_agent_id', return_value='agent-binding-miss'), \
+             patch('src.mcp_handlers.context.get_context_client_session_id', return_value=None):
+
+            mock_server.monitors = {'agent-binding-miss': mock_monitor}
+
+            from src.mcp_handlers.observability.outcome_events import handle_outcome_event
+            result = await handle_outcome_event({
+                'outcome_type': 'test_passed',
+                'prediction_id': '00000000-0000-0000-0000-000000000000',
+                'confidence': 0.5,
+            })
+
+        parsed = parse_result(result)
+        assert parsed.get('prediction_binding') == 'missing_prediction'
+
+    @pytest.mark.asyncio
+    async def test_binding_ttl_expired_when_record_present_but_old(self):
+        """A record that exists but is past TTL resolves as 'ttl_expired_fallback'."""
+        from src.monitor_prediction import register_tactical_prediction
+        mock_db = _make_outcome_mock_db()
+        mock_db.get_latest_confidence_before = AsyncMock(return_value=None)
+
+        open_predictions = {}
+        pid = register_tactical_prediction(open_predictions, confidence=0.7)
+        # Force record past TTL
+        open_predictions[pid]['created_at'] -= 7200.0
+
+        mock_monitor = MagicMock()
+        mock_monitor._open_predictions = open_predictions
+        mock_monitor._prediction_ttl_seconds = 3600.0
+        mock_monitor._prev_confidence = None
+        mock_monitor._behavioral_state = None
+
+        with patch('src.db.get_db', return_value=mock_db), \
+             patch('src.mcp_handlers.observability.outcome_events.mcp_server') as mock_server, \
+             patch('src.mcp_handlers.context.get_context_agent_id', return_value='agent-binding-ttl'), \
+             patch('src.mcp_handlers.context.get_context_client_session_id', return_value=None):
+
+            mock_server.monitors = {'agent-binding-ttl': mock_monitor}
+
+            from src.mcp_handlers.observability.outcome_events import handle_outcome_event
+            result = await handle_outcome_event({
+                'outcome_type': 'test_passed',
+                'prediction_id': pid,
+                'confidence': 0.5,
+            })
+
+        parsed = parse_result(result)
+        assert parsed.get('prediction_binding') == 'ttl_expired_fallback'
+        # Record must NOT have been consumed
+        assert open_predictions[pid].get('consumed') is not True
+
+    @pytest.mark.asyncio
+    async def test_binding_argument_fallback_when_no_id_supplied(self):
+        """No prediction_id + confidence arg → 'argument_fallback'."""
+        mock_db = _make_outcome_mock_db()
+
+        mock_monitor = MagicMock()
+        mock_monitor._open_predictions = {}
+        mock_monitor._prediction_ttl_seconds = 3600.0
+        mock_monitor._prev_confidence = None
+        mock_monitor._behavioral_state = None
+
+        with patch('src.db.get_db', return_value=mock_db), \
+             patch('src.mcp_handlers.observability.outcome_events.mcp_server') as mock_server, \
+             patch('src.mcp_handlers.context.get_context_agent_id', return_value='agent-binding-arg'), \
+             patch('src.mcp_handlers.context.get_context_client_session_id', return_value=None):
+
+            mock_server.monitors = {'agent-binding-arg': mock_monitor}
+
+            from src.mcp_handlers.observability.outcome_events import handle_outcome_event
+            result = await handle_outcome_event({
+                'outcome_type': 'test_passed',
+                'confidence': 0.5,
+                # No prediction_id
+            })
+
+        parsed = parse_result(result)
+        assert parsed.get('prediction_binding') == 'argument_fallback'
+
+    @pytest.mark.asyncio
+    async def test_binding_no_binding_when_all_fallbacks_fail(self):
+        """No id, no confidence arg, no monitor, no audit trail → 'no_binding'."""
+        mock_db = _make_outcome_mock_db()
+        mock_db.get_latest_confidence_before = AsyncMock(return_value=None)
+
+        with patch('src.db.get_db', return_value=mock_db), \
+             patch('src.mcp_handlers.observability.outcome_events.mcp_server') as mock_server, \
+             patch('src.mcp_handlers.context.get_context_agent_id', return_value='agent-binding-none'), \
+             patch('src.mcp_handlers.context.get_context_client_session_id', return_value=None):
+
+            mock_server.monitors = {}  # No monitor
+
+            from src.mcp_handlers.observability.outcome_events import handle_outcome_event
+            result = await handle_outcome_event({
+                'outcome_type': 'test_passed',
+                # No prediction_id, no confidence
+            })
+
+        parsed = parse_result(result)
+        assert parsed.get('prediction_binding') == 'no_binding'
+
+
+# ============================================================================
+# Task 1: Concurrency regression canary
+# ============================================================================
+
+class TestPredictionBindingConcurrencyCanary:
+    """Regression canary, NOT a correctness assertion. Documents current
+    behavior under racing outcome_events for the same prediction_id.
+    The lock fix is explicitly deferred per spec §4. If this test ever
+    starts failing because both calls resolve as `registry`, the race
+    has become observable and the lock is no longer optional.
+    """
+
+    @pytest.mark.asyncio
+    async def test_concurrent_outcome_events_one_wins_one_misses(self):
+        """Under typical scheduling, one call consumes the prediction (registry)
+        and the other misses (missing_prediction). Both must NOT resolve as registry
+        simultaneously without a lock — which is the future failure mode this canary
+        documents.
+        """
+        import asyncio
+        from src.monitor_prediction import register_tactical_prediction
+        mock_db = MagicMock()
+        mock_db.get_latest_eisv_by_agent_id = AsyncMock(return_value={
+            'E': 0.7, 'I': 0.75, 'S': 0.15, 'V': -0.03,
+            'phi': 0.1, 'verdict': 'safe', 'coherence': 0.48, 'regime': 'CONVERGENCE',
+        })
+        mock_db.get_latest_confidence_before = AsyncMock(return_value=None)
+        mock_db.record_outcome_event = AsyncMock(side_effect=['oe-c1', 'oe-c2'])
+
+        open_predictions = {}
+        pid = register_tactical_prediction(open_predictions, confidence=0.7)
+
+        mock_monitor = MagicMock()
+        mock_monitor._open_predictions = open_predictions
+        mock_monitor._prediction_ttl_seconds = 3600.0
+        mock_monitor._prev_confidence = None
+        mock_monitor._behavioral_state = None
+
+        from src.mcp_handlers.observability.outcome_events import handle_outcome_event
+
+        with patch('src.db.get_db', return_value=mock_db), \
+             patch('src.mcp_handlers.observability.outcome_events.mcp_server') as mock_server, \
+             patch('src.mcp_handlers.context.get_context_agent_id', return_value='agent-canary'), \
+             patch('src.mcp_handlers.context.get_context_client_session_id', return_value=None):
+
+            mock_server.monitors = {'agent-canary': mock_monitor}
+
+            results = await asyncio.gather(
+                handle_outcome_event({
+                    'outcome_type': 'test_passed',
+                    'prediction_id': pid,
+                }),
+                handle_outcome_event({
+                    'outcome_type': 'test_passed',
+                    'prediction_id': pid,
+                }),
+            )
+
+        bindings = sorted(parse_result(r)['prediction_binding'] for r in results)
+        # Under typical async scheduling: one wins (registry), one misses (missing_prediction).
+        # Under unlucky scheduling without a lock, both could resolve as registry —
+        # which is the failure mode this canary will eventually catch.
+        assert bindings.count('registry') <= 1, (
+            "Concurrency race made both calls resolve to registry — "
+            "the lock fix deferred in v1 is no longer optional"
+        )
+
+
+# ============================================================================
+# Task 3: verification_source round-trip
+# ============================================================================
+
+class TestVerificationSourceRoundTrip:
+    """Confirm verification_source lands in detail JSONB for both default and
+    explicit values. Uses the same mock-DB pattern as the rest of this module
+    (no live DB required); inspects record_outcome_event call_args directly."""
+
+    def _make_mock_db(self, outcome_id="oe-vs-1"):
+        mock_db = MagicMock()
+        mock_db.record_outcome_event = AsyncMock(return_value=outcome_id)
+        mock_db.get_latest_eisv_by_agent_id = AsyncMock(return_value={
+            'E': 0.7, 'I': 0.75, 'S': 0.15, 'V': -0.03,
+            'phi': 0.1, 'verdict': 'safe', 'coherence': 0.48, 'regime': 'CONVERGENCE',
+        })
+        return mock_db
+
+    @pytest.mark.asyncio
+    async def test_default_recorded_in_detail(self):
+        """Omitting verification_source stores 'agent_reported_tool_result' in detail.
+
+        In production, params_step.py runs Pydantic validation before the handler,
+        so the schema default is already present in `arguments` when the handler
+        runs. This test mirrors that by including the default explicitly — the
+        handler no longer has a fallback string (schema is the single source of truth).
+        """
+        mock_db = self._make_mock_db("oe-vs-default")
+
+        with patch('src.db.get_db', return_value=mock_db), \
+             patch('src.mcp_handlers.observability.outcome_events.mcp_server') as mock_server, \
+             patch('src.mcp_handlers.context.get_context_agent_id', return_value='agent-vs-1'), \
+             patch('src.mcp_handlers.context.get_context_client_session_id', return_value='sess-vs-1'):
+
+            mock_server.monitors = {}
+
+            from src.mcp_handlers.observability.outcome_events import handle_outcome_event
+            # Simulate post-Pydantic arguments dict: params_step fills schema defaults
+            # before calling the handler, so verification_source is always present.
+            result = await handle_outcome_event({
+                'outcome_type': 'test_passed',
+                'confidence': 0.7,
+                'verification_source': 'agent_reported_tool_result',
+            })
+
+        parsed = parse_result(result)
+        assert parsed.get('outcome_id') == 'oe-vs-default'
+
+        _, kwargs = mock_db.record_outcome_event.call_args
+        assert kwargs['detail']['verification_source'] == 'agent_reported_tool_result'
+
+    @pytest.mark.asyncio
+    async def test_server_observation_recorded_when_set(self):
+        """Explicit verification_source='server_observation' is stored in detail."""
+        mock_db = self._make_mock_db("oe-vs-server")
+
+        with patch('src.db.get_db', return_value=mock_db), \
+             patch('src.mcp_handlers.observability.outcome_events.mcp_server') as mock_server, \
+             patch('src.mcp_handlers.context.get_context_agent_id', return_value='agent-vs-2'), \
+             patch('src.mcp_handlers.context.get_context_client_session_id', return_value='sess-vs-2'):
+
+            mock_server.monitors = {}
+
+            from src.mcp_handlers.observability.outcome_events import handle_outcome_event
+            result = await handle_outcome_event({
+                'outcome_type': 'test_passed',
+                'confidence': 0.7,
+                'verification_source': 'server_observation',
+            })
+
+        parsed = parse_result(result)
+        assert parsed.get('outcome_id') == 'oe-vs-server'
+
+        _, kwargs = mock_db.record_outcome_event.call_args
+        assert kwargs['detail']['verification_source'] == 'server_observation'

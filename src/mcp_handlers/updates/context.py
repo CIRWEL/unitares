@@ -64,6 +64,9 @@ class UpdateContext:
     _cal_error: Optional[float] = None
     _cal_error_ready: bool = False
 
+    # ── Phase-5 evidence supply (Task 4) ──────────────────────────
+    recent_tool_results: List[Any] = field(default_factory=list)
+
     # ── Flags ──────────────────────────────────────────────────────
     key_was_generated: bool = False
     api_key_auto_retrieved: bool = False

@@ -10,6 +10,7 @@ Phases 1-5 of the process_agent_update pipeline:
 """
 
 import asyncio
+import os
 import re
 import secrets
 from datetime import datetime
@@ -106,6 +107,21 @@ def _infer_purpose(response_text: str) -> Optional[str]:
             best_count = count
             best_purpose = purpose
     return best_purpose if best_count >= 1 else None
+
+
+def _derive_outcome(evidence: dict) -> tuple:
+    """Map a ToolResultEvidence dict to (outcome_type, is_bad) per spec §1 mapping table.
+
+    Evidence arrives as a plain dict because params_step.py calls model_dump() which
+    flattens nested Pydantic models. Use dict access throughout.
+    """
+    is_bad = evidence.get("is_bad")
+    if is_bad is None:
+        exit_code = evidence.get("exit_code")
+        is_bad = (exit_code is not None and exit_code != 0)
+    if evidence.get("kind") == "test":
+        return ("test_failed" if is_bad else "test_passed", is_bad)
+    return ("task_failed" if is_bad else "task_completed", is_bad)
 
 
 # ─── Phase 1: Identity Resolution & Guards ─────────────────────────────
@@ -450,6 +466,12 @@ def transform_inputs(ctx: UpdateContext) -> Optional[Sequence[TextContent]]:
 
     # Task Type
     ctx.task_type = ctx.arguments.get("task_type", "mixed")
+
+    # Phase-5 evidence supply: collect self-reported tool results.
+    # model_dump() in params_step.py flattens ToolResultEvidence → plain dicts.
+    # The actual per-item outcome_event iteration (which is async) runs in
+    # execute_post_update_effects after the ODE update, using ctx.recent_tool_results.
+    ctx.recent_tool_results = ctx.arguments.get("recent_tool_results") or []
 
     return None  # Continue
 
@@ -1186,3 +1208,44 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
                 )
     except Exception as e:
         logger.debug(f"Trajectory validation record skipped: {e}")
+
+    # Phase-5: iterate self-reported tool evidence. Spec §2 + §8.
+    # ctx.recent_tool_results was populated in transform_inputs (sync phase).
+    # Evidence arrives as plain dicts (model_dump() flattens Pydantic models).
+    evidence_mode = os.environ.get("UNITARES_PHASE5_EVIDENCE_WRITE", "").lower()
+    if ctx.recent_tool_results and evidence_mode in ("shadow", "1", "enable"):
+        from src.mcp_handlers.observability.outcome_events import _record_outcome_event_inline
+        for evidence in ctx.recent_tool_results:
+            try:
+                outcome_type, is_bad = _derive_outcome(evidence)
+                detail = {
+                    "tool": evidence.get("tool", "?"),
+                    "summary": evidence.get("summary", ""),
+                    "kind": evidence.get("kind"),
+                    "exit_code": evidence.get("exit_code"),
+                    "phase5_emitter": True,
+                }
+                if evidence_mode == "shadow":
+                    detail["shadow_write"] = True
+                await _record_outcome_event_inline({
+                    "outcome_type": outcome_type,
+                    "is_bad": is_bad,
+                    "prediction_id": evidence.get("prediction_id"),
+                    "confidence": ctx.confidence,
+                    "verification_source": "agent_reported_tool_result",
+                    "detail": detail,
+                    "agent_id": ctx.agent_id,
+                    "client_session_id": ctx.arguments.get("client_session_id"),
+                })
+            except Exception as e:
+                ctx.warnings.append(
+                    f"evidence record failed for tool={evidence.get('tool', '?')}: {e}"
+                )
+                logger.debug("Phase-5 evidence record failed: %s", e, exc_info=True)
+    elif ctx.recent_tool_results:
+        # Default off: log per-item count only, per spec §8.
+        logger.info(
+            "Phase-5 evidence iteration skipped (UNITARES_PHASE5_EVIDENCE_WRITE unset); "
+            "would have processed %d items for agent=%s",
+            len(ctx.recent_tool_results), ctx.agent_id,
+        )

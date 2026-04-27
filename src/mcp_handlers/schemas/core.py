@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Optional, Union, Literal, Dict, Any, List, Sequence
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .mixins import AgentIdentityMixin
@@ -101,6 +102,25 @@ class SimulateUpdateParams(AgentIdentityMixin):
         return self
 
 
+class ToolResultEvidence(BaseModel):
+    """Self-reported tool outcome evidence from a recent agent action.
+
+    Self-report — the server treats this as
+    `verification_source="agent_reported_tool_result"`. A future server-verified
+    primitive will provide `server_observation` outcomes for the subset of
+    work the server can independently verify. See spec §1.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["command", "test", "lint", "build", "file_op", "tool_call"]
+    tool: str = Field(..., max_length=64)
+    summary: str = Field(..., max_length=512)
+    exit_code: Optional[int] = None
+    is_bad: Optional[bool] = None
+    prediction_id: Optional[str] = None
+    observed_at: Optional[datetime] = None
+
+
 class ProcessAgentUpdateParams(AgentIdentityMixin):
     """
     Share your work and get supportive feedback. Your main tool for checking in.
@@ -157,6 +177,14 @@ class ProcessAgentUpdateParams(AgentIdentityMixin):
         default=None,
         description="Your display name for identity reconnection."
     )
+    recent_tool_results: Optional[List[ToolResultEvidence]] = Field(
+        None,
+        description=(
+            "Self-reported tool outcomes from the agent's most recent actions. "
+            "Server emits one outcome_event per item (gated by "
+            "UNITARES_PHASE5_EVIDENCE_WRITE). See docs/proposals/refined-phase-5-evidence-contract.md."
+        ),
+    )
 
     @model_validator(mode='after')
     def coerce_types(self):
@@ -178,6 +206,7 @@ class ProcessAgentUpdateParams(AgentIdentityMixin):
             self.require_strong_identity = self.require_strong_identity.lower() in ('true', '1', 'yes')
         return self
 
+
 class OutcomeEventParams(AgentIdentityMixin):
     """Parameters for outcome_event"""
     outcome_type: Literal["drawing_completed", "drawing_abandoned", "test_passed", "test_failed", "tool_rejected", "task_completed", "task_failed", "trajectory_validated"] = Field(..., description="Type of outcome event")
@@ -189,6 +218,18 @@ class OutcomeEventParams(AgentIdentityMixin):
     agent_id: Optional[str] = Field(None, description="Agent ID. Falls back to session-bound agent_id if omitted.")
     decision_action: Optional[str] = Field(None, description="The decision the agent took (e.g. 'proceed', 'pause'). Used by sequential calibration tracking; for test_passed/test_failed defaults to 'proceed'.")
     session_id: Optional[str] = Field(None, description="Optional session id; falls back to client_session_id and then to context.")
+    verification_source: Literal[
+        "agent_reported_tool_result",
+        "server_observation",
+        "external_signal",
+    ] = Field(
+        "agent_reported_tool_result",
+        description=(
+            "Provenance of this outcome. v1 default is agent_reported_tool_result. "
+            "server_observation reserved for v2 server-verified primitive (KG writes, "
+            "dialectic verdicts, state transitions). external_signal for CI webhooks etc."
+        ),
+    )
 
 
 class CirsProtocolParams(AgentIdentityMixin):

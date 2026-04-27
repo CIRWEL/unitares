@@ -11,6 +11,18 @@ from src.logging_utils import get_logger
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
 
+
+def _copy_passthrough_fields(response_data: dict, result: dict, fields: tuple) -> None:
+    """Copy named fields from response_data to result if present (not None).
+
+    Empty containers (e.g., empty warnings list) are forwarded so callers
+    can distinguish 'no warnings recorded' from 'warnings field absent.'
+    """
+    for field in fields:
+        value = response_data.get(field)
+        if value is not None:
+            result[field] = value
+
 def format_response(
     response_data: dict,
     arguments: dict,
@@ -154,6 +166,7 @@ def _format_standard(response_data: dict, task_type: str) -> dict:
     identity_notifications = response_data.get("_identity_notifications")
     if identity_notifications:
         result["identity_notifications"] = identity_notifications
+    _copy_passthrough_fields(response_data, result, ("prediction_id", "warnings"))
     return result
 
 def _format_mirror(response_data: dict, saved_trust_tier: Optional[str], meta: Any = None) -> dict:
@@ -289,6 +302,7 @@ def _format_mirror(response_data: dict, saved_trust_tier: Optional[str], meta: A
     if identity_notifications:
         result["identity_notifications"] = identity_notifications
 
+    _copy_passthrough_fields(response_data, result, ("prediction_id", "warnings"))
     return result
 
 
@@ -325,6 +339,7 @@ def _format_minimal(response_data: dict, using_default_mode: bool, saved_trust_t
     identity_notifications = response_data.get("_identity_notifications")
     if identity_notifications:
         result["identity_notifications"] = identity_notifications
+    _copy_passthrough_fields(response_data, result, ("warnings",))
 
     return result
 
@@ -389,6 +404,7 @@ def _format_compact(response_data: dict, using_default_mode: bool, saved_trust_t
     if identity_notifications:
         result["identity_notifications"] = identity_notifications
 
+    _copy_passthrough_fields(response_data, result, ("prediction_id", "warnings"))
     return result
 
 def _strip_context(response_data: dict, is_new_agent: bool, key_was_generated: bool, api_key_auto_retrieved: bool):
