@@ -386,6 +386,9 @@ class TestQuickResume:
         ), patch(
             "src.agent_storage.update_agent",
             new_callable=AsyncMock,
+        ), patch(
+            "src.agent_storage.persist_runtime_state",
+            new_callable=AsyncMock,
         ):
             result = await handle_quick_resume({"_agent_uuid": "test-uuid"})
             text = json.loads(result[0].text)
@@ -445,6 +448,97 @@ class TestQuickResume:
             result = await handle_quick_resume({"_agent_uuid": "test-uuid"})
             text = json.loads(result[0].text)
             assert "error" in text or "Cannot" in str(text)
+
+    # =====================================================================
+    # Watcher P011 — persist_runtime_state must be called with the
+    # paused_at/loop_detector clears + lifecycle event, and a persist
+    # failure must NOT mutate in-memory state. Mirrors the fix-resume
+    # pattern from operations.py:80-109 / resume.py 3a0de6b.
+    # =====================================================================
+
+    @pytest.mark.asyncio
+    async def test_quick_resume_persists_runtime_state(self):
+        from src.mcp_handlers.lifecycle.self_recovery import handle_quick_resume
+        mock_server = self._make_mock_server()
+
+        with patch(
+            "src.mcp_handlers.lifecycle.self_recovery.require_registered_agent",
+            return_value=("test-agent", None),
+        ), patch(
+            "src.mcp_handlers.lifecycle.self_recovery.verify_agent_ownership",
+            return_value=True,
+        ), patch(
+            "src.mcp_handlers.lifecycle.self_recovery.mcp_server",
+            mock_server,
+        ), patch(
+            "src.mcp_handlers.lifecycle.self_recovery.store_discovery_internal",
+            new_callable=AsyncMock,
+            create=True,
+        ), patch(
+            "src.agent_storage.update_agent",
+            new_callable=AsyncMock,
+        ) as mock_update, patch(
+            "src.agent_storage.persist_runtime_state",
+            new_callable=AsyncMock,
+        ) as mock_persist:
+            result = await handle_quick_resume({
+                "_agent_uuid": "test-uuid",
+                "reason": "soak passed",
+            })
+            text = json.loads(result[0].text)
+            data = text.get("data", text)
+            assert data.get("success") is True or data.get("recovered") is True
+
+            mock_update.assert_awaited_once_with("test-uuid", status="active")
+            mock_persist.assert_awaited_once()
+            call = mock_persist.await_args
+            assert call.args[0] == "test-uuid"
+            assert call.kwargs["paused_at"] is None
+            assert call.kwargs["loop_detected_at"] is None
+            assert call.kwargs["loop_cooldown_until"] is None
+            event = call.kwargs["append_lifecycle_event"]
+            assert event["event"] == "quick_resumed"
+            assert "soak passed" in event["reason"]
+            assert "timestamp" in event
+
+    @pytest.mark.asyncio
+    async def test_quick_resume_persist_failure_returns_persist_failed(self):
+        """If update_agent raises, handler returns PERSIST_FAILED and meta is
+        NOT mutated to active — prevents in-memory/DB divergence."""
+        from src.mcp_handlers.lifecycle.self_recovery import handle_quick_resume
+        mock_server = self._make_mock_server(status="paused")
+        meta = mock_server.agent_metadata.get("test-uuid")
+
+        update_agent_mock = AsyncMock(side_effect=RuntimeError("db down"))
+
+        with patch(
+            "src.mcp_handlers.lifecycle.self_recovery.require_registered_agent",
+            return_value=("test-agent", None),
+        ), patch(
+            "src.mcp_handlers.lifecycle.self_recovery.verify_agent_ownership",
+            return_value=True,
+        ), patch(
+            "src.mcp_handlers.lifecycle.self_recovery.mcp_server",
+            mock_server,
+        ), patch(
+            "src.mcp_handlers.lifecycle.self_recovery.store_discovery_internal",
+            new_callable=AsyncMock,
+            create=True,
+        ), patch(
+            "src.agent_storage.update_agent",
+            update_agent_mock,
+        ), patch(
+            "src.agent_storage.persist_runtime_state",
+            new_callable=AsyncMock,
+        ):
+            result = await handle_quick_resume({"_agent_uuid": "test-uuid"})
+            text = json.loads(result[0].text)
+            assert "PERSIST_FAILED" in str(text)
+            # Critical: in-memory status was NOT flipped to active, and
+            # add_lifecycle_event was not called — proves no field above
+            # the try block was hoisted into a pre-persist mutation.
+            assert meta.status != "active"
+            meta.add_lifecycle_event.assert_not_called()
 
 
 # ============================================================================
@@ -506,6 +600,9 @@ class TestOperatorResumeAgent:
         ), patch(
             "src.agent_storage.update_agent",
             new_callable=AsyncMock,
+        ), patch(
+            "src.agent_storage.persist_runtime_state",
+            new_callable=AsyncMock,
         ):
             result = await handle_operator_resume_agent({
                 "_agent_uuid": "caller-uuid",
@@ -557,6 +654,9 @@ class TestOperatorResumeAgent:
             create=True,
         ), patch(
             "src.agent_storage.update_agent",
+            new_callable=AsyncMock,
+        ), patch(
+            "src.agent_storage.persist_runtime_state",
             new_callable=AsyncMock,
         ):
             result = await handle_operator_resume_agent({
@@ -649,6 +749,9 @@ class TestOperatorResumeAgent:
         ), patch(
             "src.agent_storage.update_agent",
             new_callable=AsyncMock,
+        ), patch(
+            "src.agent_storage.persist_runtime_state",
+            new_callable=AsyncMock,
         ):
             result = await handle_operator_resume_agent({
                 "_agent_uuid": "caller-uuid",
@@ -660,6 +763,98 @@ class TestOperatorResumeAgent:
             data = text.get("data", text)
             assert data.get("success") is True
             assert data.get("force_used") is True
+
+    # =====================================================================
+    # Watcher P011 — persist_runtime_state must be called with the
+    # paused_at/loop_detector clears + lifecycle event, and a persist
+    # failure must NOT mutate in-memory state. Mirrors the fix-resume
+    # pattern from operations.py:80-109 / resume.py 3a0de6b.
+    # =====================================================================
+
+    @pytest.mark.asyncio
+    async def test_operator_resume_persists_runtime_state(self):
+        from src.mcp_handlers.lifecycle.self_recovery import handle_operator_resume_agent
+        mock_server = self._make_mock_server()
+
+        with patch(
+            "src.mcp_handlers.lifecycle.self_recovery.require_registered_agent",
+            return_value=("caller-agent", None),
+        ), patch(
+            "src.mcp_handlers.lifecycle.self_recovery.mcp_server",
+            mock_server,
+        ), patch(
+            "src.mcp_handlers.lifecycle.self_recovery.store_discovery_internal",
+            new_callable=AsyncMock,
+            create=True,
+        ), patch(
+            "src.agent_storage.update_agent",
+            new_callable=AsyncMock,
+        ) as mock_update, patch(
+            "src.agent_storage.persist_runtime_state",
+            new_callable=AsyncMock,
+        ) as mock_persist:
+            result = await handle_operator_resume_agent({
+                "_agent_uuid": "caller-uuid",
+                "target_agent_id": "target-uuid",
+                "reason": "Stuck agent recovery",
+            })
+            text = json.loads(result[0].text)
+            data = text.get("data", text)
+            assert data.get("success") is True
+
+            mock_update.assert_awaited_once_with("target-uuid", status="active")
+            mock_persist.assert_awaited_once()
+            # First positional arg is the agent UUID; the rest are kwargs.
+            call = mock_persist.await_args
+            assert call.args[0] == "target-uuid"
+            assert call.kwargs["paused_at"] is None
+            assert call.kwargs["loop_detected_at"] is None
+            assert call.kwargs["loop_cooldown_until"] is None
+            event = call.kwargs["append_lifecycle_event"]
+            assert event["event"] == "operator_resumed"
+            assert "caller-uuid" in event["reason"]
+            assert "Stuck agent recovery" in event["reason"]
+            assert "timestamp" in event
+
+    @pytest.mark.asyncio
+    async def test_operator_resume_persist_failure_returns_persist_failed(self):
+        """If update_agent raises, handler returns PERSIST_FAILED and target_meta
+        is NOT mutated to active — prevents in-memory/DB divergence."""
+        from src.mcp_handlers.lifecycle.self_recovery import handle_operator_resume_agent
+        mock_server = self._make_mock_server(target_status="paused")
+        target_meta = mock_server.agent_metadata.get("target-uuid")
+
+        update_agent_mock = AsyncMock(side_effect=RuntimeError("db down"))
+
+        with patch(
+            "src.mcp_handlers.lifecycle.self_recovery.require_registered_agent",
+            return_value=("caller-agent", None),
+        ), patch(
+            "src.mcp_handlers.lifecycle.self_recovery.mcp_server",
+            mock_server,
+        ), patch(
+            "src.mcp_handlers.lifecycle.self_recovery.store_discovery_internal",
+            new_callable=AsyncMock,
+            create=True,
+        ), patch(
+            "src.agent_storage.update_agent",
+            update_agent_mock,
+        ), patch(
+            "src.agent_storage.persist_runtime_state",
+            new_callable=AsyncMock,
+        ):
+            result = await handle_operator_resume_agent({
+                "_agent_uuid": "caller-uuid",
+                "target_agent_id": "target-uuid",
+                "reason": "Stuck",
+            })
+            text = json.loads(result[0].text)
+            assert "PERSIST_FAILED" in str(text)
+            # Critical: in-memory status was NOT flipped to active, and
+            # add_lifecycle_event was not called — proves no field above
+            # the try block was hoisted into a pre-persist mutation.
+            assert target_meta.status != "active"
+            target_meta.add_lifecycle_event.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_missing_target_agent_id(self):
