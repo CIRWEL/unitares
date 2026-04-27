@@ -470,15 +470,21 @@ def _apply_floor_to_finding(
     pattern = finding.get("pattern", "")
     file_path = finding.get("file", "")
     severity = finding.get("severity", "low")
-    fingerprint = finding.get("fingerprint", "")
 
     file_class = classify_file(file_path)
     bucket = floor.get(pattern, file_class)
     if bucket is None or bucket.ci_lower is None or bucket.ci_lower >= 0.3:
         return finding
 
+    # Probe seed is the calibration unit — (pattern, file_class) — NOT the
+    # fingerprint. A bucket is the thing being calibrated; probes should
+    # apply at that granularity so the operator sees coherent batches
+    # ("today the P1/app bucket is on probe duty") rather than a
+    # stochastic mix of demoted-and-not within a single render.
+    # Council Q3 (dialectic).
     rate = probe_rate_for_n(bucket.weighted_n)
-    if should_probe(fingerprint, date_iso=today, probe_rate=rate):
+    probe_seed = f"{pattern}|{file_class}"
+    if should_probe(probe_seed, date_iso=today, probe_rate=rate):
         out = dict(finding)
         out["calibration_probe"] = True
         return out

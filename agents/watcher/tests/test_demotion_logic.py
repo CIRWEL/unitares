@@ -121,6 +121,61 @@ class TestFormatBlockWithFloor:
         assert len(shown) == 1
 
 
+class TestProbeGranularity:
+    """Probe selection should hash on (pattern, file_class, day) so a
+    bucket is probed-as-a-bucket on a given day. Earlier impl used the
+    finding's fingerprint, which gave a stochastic mix within one render
+    (council Q3). Same-bucket findings should now share probe state."""
+
+    def test_same_bucket_findings_share_probe_state(self):
+        floor = FloorState(updated_at="t", buckets={
+            ("P1", "app"): _bucket(ci=0.10, n=15.0)
+        })
+        rows = [
+            _f(pattern="P1", severity="high", fingerprint=f"abcd{i:04d}",
+               file="/repo/src/x.py")
+            for i in range(20)
+        ]
+        # Don't patch should_probe — we want to verify the seed shape directly
+        with patch("agents.watcher.findings.load_floor", return_value=floor):
+            block, shown = _format_findings_block(rows, header="hdr")
+        # Either ALL 20 are probe-exempt (still high) OR ALL 20 are demoted
+        # (medium) — never a mix, because they share the (pattern, file_class)
+        # bucket key for probe selection.
+        sevs = {f.get("severity") for f in shown}
+        assert len(sevs) == 1, (
+            f"same-bucket findings should share probe state, got mixed "
+            f"severities {sevs}"
+        )
+
+    def test_different_buckets_probe_independently(self):
+        """A finding in (P1, app) and one in (P1, test) should NOT share
+        probe state — they're different calibration units."""
+        floor = FloorState(updated_at="t", buckets={
+            ("P1", "app"): _bucket(ci=0.10, n=15.0),
+            ("P1", "test"): _bucket(ci=0.10, n=15.0),
+        })
+        rows = [
+            _f(pattern="P1", severity="high", fingerprint="aaaa0001",
+               file="/repo/src/x.py"),
+            _f(pattern="P1", severity="high", fingerprint="bbbb0001",
+               file="/repo/tests/test_y.py"),
+        ]
+        # Sample many days to confirm the two buckets are seeded
+        # independently — over a month, at rate=1/3 each, the two buckets'
+        # outcomes should disagree on at least one day.
+        from agents.watcher.calibration import should_probe
+        decisions_app = []
+        decisions_test = []
+        for d in range(1, 31):
+            day = f"2026-04-{d:02d}"
+            decisions_app.append(should_probe("P1|app", date_iso=day, probe_rate=1/3))
+            decisions_test.append(should_probe("P1|test", date_iso=day, probe_rate=1/3))
+        assert decisions_app != decisions_test, (
+            "the two buckets must seed probes independently"
+        )
+
+
 class TestDemotionLogDeduplication:
     """The 'calibration: demoted ...' log line fires inside
     _format_findings_block which renders on every UserPromptSubmit. Without
