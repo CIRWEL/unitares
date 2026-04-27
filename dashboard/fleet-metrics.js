@@ -17,6 +17,12 @@
     var currentName = null;
     var catalogCache = [];
 
+    // Default x-axis window. Chronicler scrapes daily, so 14 days = ~14
+    // points per series — matches the 14-day rolling window the GitHub
+    // traffic series advertise and gives all other series enough context
+    // to read trend without dragging in months of cold history.
+    var WINDOW_DAYS = 14;
+
     // Set once so subsequent `new Chart()` calls pick up the theme without
     // repeating the block. Applied at wire() time because the dashboard body
     // CSS vars must be resolvable.
@@ -49,7 +55,9 @@
 
     async function fetchSeries(name) {
         try {
-            var resp = await authFetch('/v1/metrics/series?name=' + encodeURIComponent(name));
+            var since = new Date(Date.now() - WINDOW_DAYS * 86400 * 1000).toISOString();
+            var resp = await authFetch('/v1/metrics/series?name=' + encodeURIComponent(name)
+                + '&since=' + encodeURIComponent(since));
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             var data = await resp.json();
             if (!data || data.success === false) {
@@ -81,13 +89,14 @@
         var el = document.getElementById('fleet-metrics-scrape-status');
         if (!el) return;
         if (!points || points.length === 0) {
-            el.textContent = 'no data — awaiting first scrape';
+            el.textContent = 'no data in last ' + WINDOW_DAYS + 'd — awaiting scrape';
             el.title = '';
             return;
         }
         var newest = points[points.length - 1];
         el.textContent = 'last scrape: ' + formatRelative(newest.ts)
-            + ' · ' + points.length + ' pt' + (points.length === 1 ? '' : 's');
+            + ' · ' + points.length + ' pt' + (points.length === 1 ? '' : 's')
+            + ' · ' + WINDOW_DAYS + 'd window';
         el.title = newest.ts;
     }
 
@@ -148,7 +157,8 @@
         if (!canvas) return;
 
         if (points.length === 0) {
-            renderEmpty('No data for "' + metric.name + '" yet. Chronicler runs daily — Refresh after the next cycle.');
+            renderEmpty('No data for "' + metric.name + '" in the last '
+                + WINDOW_DAYS + ' days. Chronicler runs daily — Refresh after the next cycle.');
             return;
         }
 
