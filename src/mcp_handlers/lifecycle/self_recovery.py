@@ -41,6 +41,7 @@ from ..utils import (
 )
 from ..decorators import mcp_tool
 from ..support.coerce import safe_float, resolve_agent_uuid
+from .helpers import _invalidate_agent_cache
 from src.logging_utils import get_logger
 from config.governance_config import GovernanceConfig
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
@@ -462,20 +463,43 @@ async def handle_quick_resume(arguments: Dict[str, Any]) -> Sequence[TextContent
     except Exception as e:
         logger.warning(f"Failed to log quick_resume: {e}")
     
-    # Resume
     previous_status = meta.status
-    meta.status = "active"
-    meta.paused_at = None
-    clear_loop_detector_state(meta)
-    meta.add_lifecycle_event("quick_resumed", f"Quick resume: {reason}")
-    
-    # Update PostgreSQL
+    event_details = f"Quick resume: {reason}"
+    event_entry = {
+        "event": "quick_resumed",
+        "reason": event_details,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Persist FIRST so in-memory state can't diverge from DB on persist failure.
+    # Runtime state (paused_at, lifecycle_events) must be persisted alongside
+    # status or it gets clobbered on the next load_metadata_async(force=True).
     try:
         from src import agent_storage
         await agent_storage.update_agent(agent_uuid, status="active")
+        await agent_storage.persist_runtime_state(
+            agent_uuid,
+            paused_at=None,
+            loop_detected_at=None,
+            loop_cooldown_until=None,
+            append_lifecycle_event=event_entry,
+        )
+        await _invalidate_agent_cache(agent_uuid)
     except Exception as e:
-        logger.debug(f"PostgreSQL update failed: {e}")
-    
+        logger.warning(f"PostgreSQL update failed for quick_resume: {e}", exc_info=True)
+        return [error_response(
+            f"Failed to quick_resume agent '{agent_id}': persistence error",
+            error_code="PERSIST_FAILED",
+            error_category="system_error",
+            details={"agent_id": agent_id, "cause": str(e)},
+        )]
+
+    # Persist succeeded — now mutate in-memory state.
+    meta.status = "active"
+    meta.paused_at = None
+    clear_loop_detector_state(meta)
+    meta.add_lifecycle_event("quick_resumed", event_details)
+
     return success_response({
         "success": True,
         "recovered": True,
@@ -654,22 +678,42 @@ async def handle_operator_resume_agent(arguments: Dict[str, Any]) -> Sequence[Te
     except Exception as e:
         logger.warning(f"Failed to log operator intervention: {e}")
     
-    # Resume target agent
     previous_status = target_meta.status
-    target_meta.status = "active"
-    target_meta.paused_at = None
-    clear_loop_detector_state(target_meta)
-    target_meta.add_lifecycle_event(
-        "operator_resumed",
-        f"Resumed by operator {caller_uuid}: {reason}"
-    )
-    
-    # Update PostgreSQL
+    event_details = f"Resumed by operator {caller_uuid}: {reason}"
+    event_entry = {
+        "event": "operator_resumed",
+        "reason": event_details,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Persist FIRST so in-memory state can't diverge from DB on persist failure.
+    # Runtime state (paused_at, lifecycle_events) must be persisted alongside
+    # status or it gets clobbered on the next load_metadata_async(force=True).
     try:
         from src import agent_storage
         await agent_storage.update_agent(target_agent_id, status="active")
+        await agent_storage.persist_runtime_state(
+            target_agent_id,
+            paused_at=None,
+            loop_detected_at=None,
+            loop_cooldown_until=None,
+            append_lifecycle_event=event_entry,
+        )
+        await _invalidate_agent_cache(target_agent_id)
     except Exception as e:
-        logger.debug(f"PostgreSQL update failed: {e}")
+        logger.warning(f"PostgreSQL update failed for operator_resume: {e}", exc_info=True)
+        return [error_response(
+            f"Failed to operator_resume agent '{target_agent_id}': persistence error",
+            error_code="PERSIST_FAILED",
+            error_category="system_error",
+            details={"target_agent_id": target_agent_id, "cause": str(e)},
+        )]
+
+    # Persist succeeded — now mutate in-memory state.
+    target_meta.status = "active"
+    target_meta.paused_at = None
+    clear_loop_detector_state(target_meta)
+    target_meta.add_lifecycle_event("operator_resumed", event_details)
     
     return success_response({
         "success": True,
