@@ -26,6 +26,7 @@ the math trivially testable.
 from __future__ import annotations
 
 import math
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -217,3 +218,54 @@ def classify_file(path: str) -> str:
         return FileClass.CONFIG
 
     return FileClass.APP
+
+
+# ---------------------------------------------------------------------------
+# Decay weighting
+# ---------------------------------------------------------------------------
+
+
+def parse_iso_z(value):
+    """Tolerant parser for the two timestamp formats present in
+    findings.jsonl. Returns None on any failure — callers exclude the
+    row from the weighted aggregate rather than crashing the loop.
+    """
+    if not value or not isinstance(value, str):
+        return None
+    candidates = (
+        ("%Y-%m-%dT%H:%M:%SZ", value),
+        ("%Y-%m-%dT%H:%M:%S%z", value.replace("Z", "+0000")),
+    )
+    for fmt, raw in candidates:
+        try:
+            ts = datetime.strptime(raw, fmt)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            return ts
+        except (TypeError, ValueError):
+            continue
+    try:
+        ts = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return ts
+    except (TypeError, ValueError):
+        return None
+
+
+def decay_weight(detected_at: datetime, now: datetime, half_life_days: float) -> float:
+    """Exponential decay weight: ``2^(-age_days / half_life_days)``.
+
+    Future timestamps clamp to 1.0 (clock skew shouldn't produce
+    ``> 1.0`` weights). Both arguments must be timezone-aware; comparing
+    naive and aware datetimes raises a TypeError, which we surface as a
+    ValueError so callers don't silently miscompute against a wall-clock
+    age that's actually wrong by the local UTC offset.
+    """
+    if detected_at.tzinfo is None or now.tzinfo is None:
+        raise ValueError("decay_weight: both timestamps must be timezone-aware")
+    age_seconds = (now - detected_at).total_seconds()
+    if age_seconds <= 0:
+        return 1.0
+    age_days = age_seconds / 86400.0
+    return 0.5 ** (age_days / half_life_days)

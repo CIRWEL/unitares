@@ -97,3 +97,57 @@ class TestClassifyFile:
     def test_test_wins_over_app(self):
         # tests/ is the strongest signal — it sits inside src/ in some layouts
         assert classify_file("/repo/src/tests/foo.py") == FileClass.TEST
+
+
+from agents.watcher.calibration import decay_weight, parse_iso_z
+
+
+class TestDecayWeight:
+    """Exponential decay replaces the 90-day hard cutoff. Half-life ~30d
+    means a 60-day-old observation contributes 0.25× of a fresh one.
+    Old observations don't fall off a cliff; they just matter less."""
+
+    def test_zero_age_full_weight(self):
+        now = datetime(2026, 4, 27, tzinfo=timezone.utc)
+        assert decay_weight(now, now, half_life_days=30.0) == pytest.approx(1.0)
+
+    def test_one_half_life_half_weight(self):
+        now = datetime(2026, 4, 27, tzinfo=timezone.utc)
+        thirty_days_ago = now - timedelta(days=30)
+        assert decay_weight(thirty_days_ago, now, half_life_days=30.0) == pytest.approx(0.5, rel=1e-9)
+
+    def test_two_half_lives_quarter_weight(self):
+        now = datetime(2026, 4, 27, tzinfo=timezone.utc)
+        sixty_days_ago = now - timedelta(days=60)
+        assert decay_weight(sixty_days_ago, now, half_life_days=30.0) == pytest.approx(0.25, rel=1e-9)
+
+    def test_future_timestamps_clamp_to_one(self):
+        """Clock skew shouldn't manufacture > 1.0 weights."""
+        now = datetime(2026, 4, 27, tzinfo=timezone.utc)
+        future = now + timedelta(hours=1)
+        assert decay_weight(future, now, half_life_days=30.0) == pytest.approx(1.0)
+
+    def test_naive_datetime_raises(self):
+        now = datetime.now(timezone.utc)
+        naive = datetime(2026, 4, 1)
+        with pytest.raises(ValueError):
+            decay_weight(naive, now, half_life_days=30.0)
+
+
+class TestParseIsoZ:
+    """Tolerate the two timestamp formats actually present in
+    findings.jsonl: '2026-04-20T12:34:56Z' (Watcher's own writes) and
+    '2026-04-20T12:34:56+00:00' (governance writes via Python isoformat)."""
+
+    def test_z_suffix(self):
+        ts = parse_iso_z("2026-04-20T12:34:56Z")
+        assert ts == datetime(2026, 4, 20, 12, 34, 56, tzinfo=timezone.utc)
+
+    def test_plus_zero_suffix(self):
+        ts = parse_iso_z("2026-04-20T12:34:56+00:00")
+        assert ts == datetime(2026, 4, 20, 12, 34, 56, tzinfo=timezone.utc)
+
+    def test_garbage_returns_none(self):
+        assert parse_iso_z("not a date") is None
+        assert parse_iso_z("") is None
+        assert parse_iso_z(None) is None  # type: ignore[arg-type]
