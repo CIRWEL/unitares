@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+title: "UNITARES: runtime governance for heterogeneous AI-agent fleets"
+message: >
+  If you use this software or its underlying ideas, please cite both the
+  software (this entry) and the paper (preferred-citation, below).
+type: software
+authors:
+  - family-names: Wang
+    given-names: Kenny
+    affiliation: "CIRWEL Systems"
+    orcid: "https://orcid.org/0009-0006-7544-2374"
+repository-code: "https://github.com/CIRWEL/unitares"
+url: "https://github.com/CIRWEL/unitares"
+license: Apache-2.0
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.19647159
+    description: "Concept DOI — always resolves to latest paper version"
+keywords:
+  - autonomous governance
+  - information theory
+  - heterogeneous multi-agent systems
+  - class-conditional calibration
+  - AI safety
+preferred-citation:
+  type: article
+  title: "UNITARES: Information-Theoretic Governance of Heterogeneous Agent Fleets"
+  authors:
+    - family-names: Wang
+      given-names: Kenny
+      affiliation: "CIRWEL Systems"
+      orcid: "https://orcid.org/0009-0006-7544-2374"
+  year: 2026
+  doi: 10.5281/zenodo.19647159
+  url: "https://github.com/CIRWEL/unitares-paper-v6"
+  license: CC-BY-4.0

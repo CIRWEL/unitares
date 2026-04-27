@@ -6,9 +6,12 @@
 
 [![Tests](https://github.com/CIRWEL/unitares/actions/workflows/tests.yml/badge.svg)](https://github.com/CIRWEL/unitares/actions/workflows/tests.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19647159.svg)](https://doi.org/10.5281/zenodo.19647159)
 
-Status: live. For architecture details, see [docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md).
+> **Reference implementation** of *UNITARES: Information-Theoretic Governance of Heterogeneous Agent Fleets* — Kenny Wang ([ORCID 0009-0006-7544-2374](https://orcid.org/0009-0006-7544-2374)), CIRWEL Systems, 2026. Paper: [CIRWEL/unitares-paper-v6](https://github.com/CIRWEL/unitares-paper-v6) · DOI: [10.5281/zenodo.19647159](https://doi.org/10.5281/zenodo.19647159). If you use these ideas, please cite — see [`CITATION.cff`](CITATION.cff).
+
+Status: live. First public commit 2025-12-04. For architecture details, see [docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md).
 
 **In one line:** UNITARES is a runtime governance layer for heterogeneous AI-agent fleets. It tracks continuous agent state, calibrates by class, detects drift, and issues governance interventions with auditable provenance.
 
@@ -327,6 +330,6 @@ Installable client adapters for Codex and Claude live in the companion [`unitare
 
 ---
 
-**MIT with attribution** — see [LICENSE](LICENSE). Covers server, dashboard, tooling, and the ODE dynamics engine in `governance_core/`.
+**Apache License 2.0** — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Covers server, dashboard, tooling, and the ODE dynamics engine in `governance_core/`. Attribution requested per the NOTICE file (Apache §4(d)) for redistributions and derivative works.
 
 Built by [@CIRWEL](https://github.com/CIRWEL)

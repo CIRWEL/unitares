@@ -1,0 +1,21 @@
+UNITARES Governance MCP
+Copyright 2025-2026 Kenny Wang (CIRWEL Systems)
+
+This product includes software developed at CIRWEL Systems
+(https://github.com/CIRWEL/unitares).
+
+Reference implementation of the paper "UNITARES: Information-Theoretic
+Governance of Heterogeneous Agent Fleets" — Kenny Wang, CIRWEL Systems,
+2026 (https://github.com/CIRWEL/unitares-paper-v6,
+DOI: 10.5281/zenodo.19647159).
+
+Attribution
+-----------
+Per Apache License 2.0 §4(d), this NOTICE must be included in
+redistributions and derivative works. Commercial use, derivative
+works, and public presentations should credit:
+
+  "Based on UNITARES Governance MCP by Kenny Wang
+   https://github.com/CIRWEL/unitares"
+
+Academic use should cite the paper above (see CITATION.cff).
