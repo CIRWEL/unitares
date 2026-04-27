@@ -263,6 +263,19 @@ class UNITARESMonitor:
                 beh_data = data.pop('behavioral_eisv', None)
                 if beh_data:
                     self._behavioral_state = BehavioralEISV.from_dict(beh_data)
+                # Restore last_update if persisted; otherwise leave the in-memory
+                # value (set in __init__) intact. last_update lives on the monitor,
+                # not on GovernanceState, so it's handled here as a side effect —
+                # mirroring the behavioral_eisv pattern above.
+                last_update_iso = data.pop('last_update_iso', None)
+                if last_update_iso:
+                    try:
+                        self.last_update = datetime.fromisoformat(last_update_iso)
+                    except (TypeError, ValueError) as e:
+                        logger.warning(
+                            f"Could not parse last_update_iso for {self.agent_id} "
+                            f"({last_update_iso!r}): {e}; falling back to now()",
+                        )
                 return GovernanceState.from_dict(data)
         except Exception as e:
             logger.warning(f"Could not load persisted state for {self.agent_id}: {e}", exc_info=True)
@@ -281,6 +294,9 @@ class UNITARESMonitor:
             state_data = self.state.to_dict_with_history()
             # Include behavioral EISV state for persistence
             state_data['behavioral_eisv'] = self._behavioral_state.to_dict_with_history()
+            # Persist last_update so cross-restart gaps integrate against the real
+            # prior check-in time, not the lazy-init wall-clock.
+            state_data['last_update_iso'] = self.last_update.isoformat()
             # Atomic write: write to temp file, then rename to prevent corruption
             tmp_fd, tmp_path = tempfile.mkstemp(dir=state_file.parent, suffix='.tmp')
             try:
@@ -725,15 +741,24 @@ class UNITARESMonitor:
         """
         # Compute elapsed time for gap-aware decay scaling
         now = datetime.now()
-        elapsed_seconds = (now - self.last_update).total_seconds()
+        # Guard against NTP step-back / clock skew: dt must never be negative.
+        elapsed_seconds = max(0.0, (now - self.last_update).total_seconds())
         self.last_update = now
 
         # Scale dt proportionally to elapsed time vs expected cadence.
         # Floor at DT (rapid updates stay at base), cap at DT_MAX (Euler stability).
-        effective_dt = max(
-            config.DT,
-            min(elapsed_seconds * (config.DT / config.DT_EXPECTED_INTERVAL), config.DT_MAX)
-        )
+        scaled_dt = elapsed_seconds * (config.DT / config.DT_EXPECTED_INTERVAL)
+        effective_dt = max(config.DT, min(scaled_dt, config.DT_MAX))
+
+        # Saturation event: gap exceeds the cadence band that the linear
+        # scaling can represent. Above this threshold a 17h gap and a 30h
+        # gap integrate identically — operator-visible signal that decay
+        # is no longer gap-proportional. See task #7 for semantics decision.
+        if scaled_dt > config.DT_MAX:
+            logger.info(
+                f"[DT_MAX saturation] {self.agent_id}: elapsed={elapsed_seconds:.1f}s "
+                f"clipped to dt={config.DT_MAX} (linear scaling would give {scaled_dt:.2f})"
+            )
 
         # === DUAL-LOG GROUNDING (Patent: Dual-Log Architecture) ===
         # Process through continuity layer to get grounded metrics.
