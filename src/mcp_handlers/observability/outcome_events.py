@@ -41,38 +41,24 @@ def _classify_hard_exogenous_signal(outcome_type: str, detail: Dict[str, Any]) -
             return label
     return None
 
-@mcp_tool("outcome_event", timeout=15.0)
-async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextContent]:
-    """Record an outcome event paired with the agent's current EISV snapshot."""
+async def _record_outcome_event_inline(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Shared body for outcome_event recording.
+
+    Returns the response payload as a plain dict (not wrapped in TextContent).
+    Used by both:
+    - handle_outcome_event (the @mcp_tool decorated MCP entry point)
+    - Phase-5 evidence iteration in phases.py (in-process, must avoid the
+      decorator's asyncio.wait_for to prevent anyio-asyncio deadlock)
+
+    Caller is responsible for input validation (outcome_type, agent_id) —
+    handle_outcome_event does this before delegating; in-process callers
+    must pre-validate.
+    """
     from src.db import get_db
-    from ..context import get_context_agent_id, get_context_client_session_id
+    from ..context import get_context_client_session_id
 
-    outcome_type = arguments.get("outcome_type")
-    if not outcome_type:
-        return [error_response(
-            "outcome_type is required",
-            error_code="MISSING_PARAM",
-            error_category="validation_error",
-        )]
-
-    if outcome_type not in VALID_OUTCOME_TYPES:
-        return [error_response(
-            f"Unknown outcome_type '{outcome_type}'. Valid: {sorted(VALID_OUTCOME_TYPES)}",
-            error_code="INVALID_PARAM",
-            error_category="validation_error",
-        )]
-
-    # Get agent_id from context
-    agent_id = get_context_agent_id()
-    if not agent_id:
-        # Fall back to explicit argument
-        agent_id = arguments.get("agent_id")
-    if not agent_id:
-        return [error_response(
-            "Could not determine agent_id from session context. Provide agent_id explicitly.",
-            error_code="NO_AGENT_ID",
-            error_category="identity_error",
-        )]
+    outcome_type = arguments["outcome_type"]
+    agent_id = arguments["agent_id"]
 
     # Infer is_bad if not provided
     is_bad = arguments.get("is_bad")
@@ -291,11 +277,7 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
     )
 
     if not outcome_id:
-        return [error_response(
-            "Failed to record outcome event (database error)",
-            error_code="DB_ERROR",
-            error_category="system_error",
-        )]
+        return {"error": "Failed to record outcome event (database error)"}
 
     logger.info(
         "Recorded outcome: type=%s is_bad=%s score=%.2f agent=%s verdict=%s",
@@ -337,14 +319,61 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
             except Exception as e_seq:
                 logger.debug(f"Sequential calibration tracking skipped: {e_seq}")
 
-    return success_response({
+    return {
         "outcome_id": outcome_id,
         "outcome_type": outcome_type,
         "is_bad": is_bad,
         "outcome_score": outcome_score,
         "eisv_snapshot": snapshot,
         "prediction_binding": prediction_binding,
-    })
+    }
+
+
+@mcp_tool("outcome_event", timeout=15.0)
+async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """Record an outcome event paired with the agent's current EISV snapshot."""
+    from ..context import get_context_agent_id
+
+    outcome_type = arguments.get("outcome_type")
+    if not outcome_type:
+        return [error_response(
+            "outcome_type is required",
+            error_code="MISSING_PARAM",
+            error_category="validation_error",
+        )]
+
+    if outcome_type not in VALID_OUTCOME_TYPES:
+        return [error_response(
+            f"Unknown outcome_type '{outcome_type}'. Valid: {sorted(VALID_OUTCOME_TYPES)}",
+            error_code="INVALID_PARAM",
+            error_category="validation_error",
+        )]
+
+    # Get agent_id from context
+    agent_id = get_context_agent_id()
+    if not agent_id:
+        # Fall back to explicit argument
+        agent_id = arguments.get("agent_id")
+    if not agent_id:
+        return [error_response(
+            "Could not determine agent_id from session context. Provide agent_id explicitly.",
+            error_code="NO_AGENT_ID",
+            error_category="identity_error",
+        )]
+
+    # Delegate to the non-decorated helper to avoid the @mcp_tool decorator's
+    # asyncio.wait_for wrapping (anyio-asyncio deadlock risk — see CLAUDE.md).
+    # agent_id resolved above is injected so the helper can skip context lookup.
+    payload = await _record_outcome_event_inline({**arguments, "agent_id": agent_id})
+
+    if "error" in payload:
+        return [error_response(
+            payload["error"],
+            error_code="DB_ERROR",
+            error_category="system_error",
+        )]
+
+    return success_response(payload)
 
 
 @mcp_tool("outcome_correlation", timeout=30.0)

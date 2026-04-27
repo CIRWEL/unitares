@@ -158,3 +158,47 @@ class TestVerificationSource:
                 outcome_type="test_passed",
                 verification_source="random_made_up_string",
             )
+
+
+class TestToolResultEvidence:
+    def test_minimal_valid(self):
+        from src.mcp_handlers.schemas.core import ToolResultEvidence
+        ev = ToolResultEvidence(kind="test", tool="pytest", summary="ok")
+        assert ev.kind == "test"
+        assert ev.exit_code is None
+
+    def test_rejects_extra_fields(self):
+        from pydantic import ValidationError
+        from src.mcp_handlers.schemas.core import ToolResultEvidence
+        with pytest.raises(ValidationError):
+            ToolResultEvidence(kind="test", tool="pytest", summary="ok", random_field="x")
+
+    def test_rejects_unknown_kind(self):
+        from pydantic import ValidationError
+        from src.mcp_handlers.schemas.core import ToolResultEvidence
+        with pytest.raises(ValidationError):
+            ToolResultEvidence(kind="not_a_real_kind", tool="x", summary="x")
+
+    def test_tool_name_max_length(self):
+        from pydantic import ValidationError
+        from src.mcp_handlers.schemas.core import ToolResultEvidence
+        with pytest.raises(ValidationError):
+            ToolResultEvidence(kind="test", tool="x" * 65, summary="ok")
+
+
+class TestProcessAgentUpdateAcceptsRecentToolResults:
+    def test_optional_field_defaults_none(self):
+        from src.mcp_handlers.schemas.core import ProcessAgentUpdateParams
+        params = ProcessAgentUpdateParams(response_text="hello")
+        assert params.recent_tool_results is None
+
+    def test_accepts_list_of_evidence(self):
+        from src.mcp_handlers.schemas.core import ProcessAgentUpdateParams
+        params = ProcessAgentUpdateParams(
+            response_text="ran tests",
+            recent_tool_results=[
+                {"kind": "test", "tool": "pytest", "summary": "passed", "exit_code": 0}
+            ],
+        )
+        assert len(params.recent_tool_results) == 1
+        assert params.recent_tool_results[0].kind == "test"
