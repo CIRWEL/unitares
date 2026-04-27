@@ -73,6 +73,9 @@ def _empty_state() -> Dict[str, Any]:
         "last_e_value": 1.0,
         "last_alt_probability": 0.5,
         "signal_sources": {},
+        # Per-channel hygiene tracking — {channel: {samples: int, successes: int}}
+        # Used by compute_per_channel_health to flag bad_rate_pinned_to_zero.
+        "signal_source_outcomes": {},
         "last_updated": None,
     }
 
@@ -189,6 +192,14 @@ class SequentialCalibrationTracker:
         signal_sources = state.setdefault("signal_sources", {})
         signal_sources[signal_source] = int(signal_sources.get(signal_source, 0)) + 1
 
+        # Per-channel sample/success tracking for the hygiene guard
+        # (bad_rate_pinned_to_zero in compute_per_channel_health).
+        source_outcomes = state.setdefault("signal_source_outcomes", {})
+        ch_outcomes = source_outcomes.setdefault(signal_source, {"samples": 0, "successes": 0})
+        ch_outcomes["samples"] = int(ch_outcomes.get("samples", 0)) + 1
+        if y == 1.0:
+            ch_outcomes["successes"] = int(ch_outcomes.get("successes", 0)) + 1
+
         return {
             "p": p,
             "q": q,
@@ -250,6 +261,34 @@ class SequentialCalibrationTracker:
             "global": global_update,
             "agent": agent_update,
         }
+
+    def compute_per_channel_health(self, min_samples_for_pin: int = 100) -> Dict[str, Dict[str, Any]]:
+        """
+        Reporting-hygiene check on per-channel outcome stream.
+
+        A channel "pinned to zero" means it has accumulated enough samples to
+        be diagnostic but every observed outcome was a success — exactly the
+        pathology the broadened truth channel was meant to escape. Sentinel
+        can subscribe to this and raise an anomaly when a previously-non-zero
+        channel pins.
+
+        Args:
+            min_samples_for_pin: minimum samples before pinned flag can fire.
+        """
+        out: Dict[str, Dict[str, Any]] = {}
+        source_outcomes = self.global_state.get("signal_source_outcomes", {})
+        for channel, counts in source_outcomes.items():
+            samples = int(counts.get("samples", 0))
+            successes = int(counts.get("successes", 0))
+            bad_rate = 0.0 if samples == 0 else (samples - successes) / samples
+            pinned = (samples >= min_samples_for_pin) and (bad_rate == 0.0)
+            out[channel] = {
+                "samples": samples,
+                "successes": successes,
+                "bad_rate": bad_rate,
+                "bad_rate_pinned_to_zero": pinned,
+            }
+        return out
 
     def compute_metrics(self, agent_id: Optional[str] = None) -> Dict[str, Any]:
         """Return bounded, operator-friendly metrics for the tracked e-process."""

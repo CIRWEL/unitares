@@ -675,6 +675,18 @@ class CalibrationChecker:
                 }
             result["per_channel_calibration"] = per_channel_response
 
+        # Hygiene guard from sequential tracker (signal_source_outcomes).
+        # Surfaces bad_rate_pinned_to_zero so Sentinel can raise an anomaly when
+        # a previously-non-zero channel collapses back to a high-prior pin.
+        try:
+            from src.sequential_calibration import sequential_calibration_tracker
+            health = sequential_calibration_tracker.compute_per_channel_health()
+            if health:
+                result["per_channel_health"] = health
+        except Exception as e_health:  # pragma: no cover - defensive
+            import logging
+            logging.getLogger(__name__).debug("per_channel_health unavailable: %s", e_health)
+
         result["honesty_note"] = (
             "Calibration ground truth comes from objective outcomes (test pass/fail, command exit codes, "
             "lint results, file operations) as the primary signal. Dialectic peer agreement is a secondary "
