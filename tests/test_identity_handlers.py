@@ -1303,6 +1303,35 @@ class TestHandleIdentityAdapter:
         )
 
     @pytest.mark.asyncio
+    async def test_identity_binds_returned_stable_client_session_id(self, patch_identity_deps, mock_db, mock_redis):
+        """Fresh identity() must bind the stable client_session_id it returns."""
+        from src.mcp_handlers.identity import handlers as identity_handlers
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.get_identity.return_value = None
+        mock_db.get_agent.return_value = None
+
+        persist_spy = AsyncMock(return_value=True)
+        bind_spy = AsyncMock(return_value={"bound": True})
+        with patch.object(identity_handlers, "ensure_agent_persisted", persist_spy), \
+             patch.object(identity_handlers, "_perform_session_bind", bind_spy):
+            result = await identity_handlers.handle_identity_adapter({
+                "client_session_id": "transport-session",
+                "force_new": True,
+            })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["client_session_id"] == f"agent-{data['uuid'][:12]}"
+        bind_spy.assert_any_await(
+            agent_uuid=data["uuid"],
+            session_key=data["client_session_id"],
+            display_agent_id=data["agent_id"],
+            source="identity_stable_session",
+        )
+
+    @pytest.mark.asyncio
     async def test_identity_does_not_re_persist_existing_agent(self, patch_identity_deps, mock_db, mock_redis):
         """
         identity() for an already-persisted agent must not redundantly call

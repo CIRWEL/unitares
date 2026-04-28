@@ -118,6 +118,28 @@ async def handle_get_governance_metrics(arguments: ToolArgumentsDict) -> Sequenc
         verbosity: 'minimal' (default), 'standard', or 'full'. Replaces lite param.
         lite: Backward compat — lite=true maps to verbosity=minimal, lite=false to full.
     """
+    if arguments.get("client_session_id") and not arguments.get("agent_id"):
+        try:
+            from src.mcp_handlers.context import get_context_agent_id
+            bound_agent_id = get_context_agent_id()
+        except Exception:
+            bound_agent_id = None
+        if not bound_agent_id:
+            return success_response({
+                "status": "⚪ unbound",
+                "verdict": "unbound",
+                "guidance": "Establish identity before reading agent metrics.",
+                "next_action": {
+                    "tool": "identity",
+                    "example": "identity() or onboard(force_new=true, spawn_reason='new_session')",
+                    "note": (
+                        "get_governance_metrics is read-only and will not create "
+                        "an identity for an unbound or stale client_session_id."
+                    ),
+                },
+                "related_tools": ["identity", "onboard", "process_agent_update"],
+            })
+
     agent_id, error = require_agent_id(arguments)
     if error:
         return [error]  # Wrap in list for Sequence[TextContent]

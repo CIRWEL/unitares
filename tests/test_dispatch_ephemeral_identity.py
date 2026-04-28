@@ -145,3 +145,39 @@ class TestEphemeralIdentityMarking:
 
         # No TTL refresh for ephemeral identities
         mock_db.update_session_activity.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_read_only_session_miss_does_not_auto_mint(self, mock_db):
+        """Diagnostics should not mint identities when a client_session_id misses.
+
+        Regression for mixed adapter signatures: read-only calls with a stale or
+        unbound ``client_session_id`` used to retry ``resolve_session_identity``
+        with ``force_new=True``, producing a different UUID for each diagnostic.
+        """
+        identity_result = {
+            "resume_failed": True,
+            "error": "session_resolve_miss",
+            "session_key": "agent-missing",
+        }
+
+        resolve_mock = AsyncMock(return_value=identity_result)
+        patches = [
+            patch("src.mcp_handlers.context.get_session_signals", return_value=None),
+            patch("src.mcp_handlers.identity.handlers.derive_session_key", new_callable=AsyncMock, return_value="agent-missing"),
+            patch("src.mcp_handlers.identity.handlers.resolve_session_identity", resolve_mock),
+            patch("src.mcp_handlers.context.set_session_context", return_value=MagicMock()),
+            patch("src.db.get_db", return_value=mock_db),
+        ]
+        for p in patches:
+            p.start()
+        try:
+            ctx = DispatchContext()
+            await resolve_identity("get_governance_metrics", {"client_session_id": "agent-missing"}, ctx)
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+        assert resolve_mock.await_count == 1
+        assert ctx.bound_agent_id is None
+        assert ctx.identity_result is identity_result
+        mock_db.update_session_activity.assert_not_called()

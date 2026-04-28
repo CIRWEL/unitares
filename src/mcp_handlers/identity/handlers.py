@@ -1013,6 +1013,17 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
 
     verbose = coerce_bool(arguments.get("verbose"), default=False) if arguments else False
     identity_status = "created" if result.get("created") else "resumed"
+    auto_bind = coerce_bool(arguments.get("auto_bind", True))
+    if auto_bind and not (existing_identity and existing_identity.get("archived")):
+        try:
+            await _perform_session_bind(
+                agent_uuid=agent_uuid,
+                session_key=client_session_id,
+                display_agent_id=final_agent_id,
+                source="identity_stable_session",
+            )
+        except Exception as e:
+            logger.debug(f"[IDENTITY] Stable session bind failed (non-fatal): {e}")
 
     response_data = build_identity_response_data(
         agent_uuid=agent_uuid,
@@ -1030,7 +1041,6 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     )
 
     # Auto-bind: automatically perform session binding so agents don't need a separate bind_session call
-    auto_bind = coerce_bool(arguments.get("auto_bind", True))
     if auto_bind and not (existing_identity and existing_identity.get("archived")):
         try:
             from ..context import get_session_signals as _abs_signals

@@ -284,6 +284,24 @@ class TestGetGovernanceMetrics:
             assert "agent_id required" in result[0].text
 
     @pytest.mark.asyncio
+    async def test_get_metrics_unbound_does_not_create_monitor(self, mock_mcp_server):
+        """Read-only metrics without a bound identity should report unbound.
+
+        This prevents diagnostic calls with stale/missing client_session_id from
+        creating fresh monitor/UUID state just to answer "who am I?".
+        """
+        with patch("src.mcp_handlers.core.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value=None):
+
+            from src.mcp_handlers.core import handle_get_governance_metrics
+            result = await handle_get_governance_metrics({"client_session_id": "agent-missing"})
+
+            data = json.loads(result[0].text)
+            assert data["verdict"] == "unbound"
+            assert data["next_action"]["tool"] == "identity"
+            mock_mcp_server.get_or_create_monitor.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_get_metrics_lite_mode(self, mock_mcp_server, mock_monitor):
         """Lite mode returns minimal metrics with status indicators."""
         meta = MagicMock()
