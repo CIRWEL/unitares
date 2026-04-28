@@ -181,9 +181,76 @@ Per memory entry "Council also for load-bearing implementation" (PR #24 vs PR #2
 
 - Explicit `client_session_id` with active `core.sessions` row resolves to original identity within one process-instance for the lifetime of the session row's `expires_at`.
 - `is_registered` check is consistent with `core.identities` — no false-negative rejections.
-- Fleet-wide ghost-fork rate (no-lineage fresh identities / total fresh in window) drops below a threshold to be set after a calibration period.
+- Fleet-wide ghost-fork rate drops below a threshold to be set after a calibration period. **Canonical metric defined below** (§Canonical lineage-decl gap metric).
 - Regression test in `tests/test_identity_handlers.py` asserts session-row-backed resume.
 - Honest-labeling field added to `identity()` and `onboard()` response shape.
+
+## Canonical lineage-decl gap metric
+
+Added 2026-04-27 (PR #226 followup) after a 20.3% / 93.8% denominator drift between code-review and post-deploy canary reads. The drift was a Simpson trap: rolling `new_session`-tagged forks into the denominator dilutes the bypass-class signal. The fix is **two rates, not one**, both derived from the same `core.agents` window with audit-window scoping.
+
+```sql
+-- Lineage-decl gap rate. Run against the governance database.
+WITH window_bounds AS (
+  SELECT COALESCE(
+           GREATEST(NOW() - INTERVAL '30 days',
+                    (SELECT MIN(created_at) FROM core.agents)),
+           NOW() - INTERVAL '30 days'
+         ) AS lower_bound
+)
+SELECT
+  status,
+  COUNT(*) AS total,
+  COUNT(*) FILTER (WHERE spawn_reason IS NULL
+                     AND parent_agent_id IS NULL) AS null_invisible,
+  COUNT(*) FILTER (WHERE spawn_reason = 'auto_onboard_no_session') AS marker_session_miss,
+  COUNT(*) FILTER (WHERE spawn_reason = 'new_session') AS lineage_declared,
+  -- Gating DoD signal: orphan-class concentration
+  -- (NULL fresh agents / agents not declared via new_session)
+  ROUND(100.0 * COUNT(*) FILTER (WHERE spawn_reason IS NULL
+                                   AND parent_agent_id IS NULL)
+        / NULLIF(COUNT(*) FILTER
+                 (WHERE spawn_reason IS DISTINCT FROM 'new_session'), 0), 2)
+    AS null_orphan_concentration_pct,
+  -- Secondary trend: broad hygiene (Simpson-trap warning)
+  ROUND(100.0 * COUNT(*) FILTER (WHERE spawn_reason IS NULL
+                                   AND parent_agent_id IS NULL)
+        / NULLIF(COUNT(*), 0), 2) AS null_broad_hygiene_pct
+FROM core.agents, window_bounds
+WHERE created_at >= window_bounds.lower_bound
+GROUP BY status
+ORDER BY total DESC;
+```
+
+### Reading the rates
+
+- **`null_orphan_concentration_pct`** is the **DoD-gating signal**. It answers: "of agents that didn't declare lineage via the well-formed `new_session` path, how many landed as silent NULL?" Movement on this rate tracks the bypass-class shrinking. Insulated from changes in `new_session` traffic volume.
+- **`null_broad_hygiene_pct`** is a **secondary trend**. It answers: "of all minted agents in the window, what fraction are silent NULL?" Useful for fleet-wide hygiene over time but vulnerable to dilution: a 5× increase in `new_session` traffic with no behavioral change would "improve" this rate.
+- **`null_invisible`** is the unfixed population (NULL spawn_reason, no lineage). This is what S21-a/S21-b need to drain.
+- **`marker_session_miss`** is rows tagged by PR #226's `auto_onboard_no_session` fallback. These are still no-lineage agents, but legibly so: they're caught at the session-resolve-miss branch and labeled. As PR #226 takes effect on live traffic, expect `marker_session_miss` to grow while `null_invisible` shrinks. The orphan-concentration rate stays roughly flat through that conversion (legibility, not lineage), and only drops when the upstream S21-b plumbing actually carries declared lineage through to the upsert.
+
+### Baseline 2026-04-27 (post-PR #226 merge, pre-S21-b)
+
+```
+ status   | total | null_invisible | marker_session_miss | lineage_declared | null_orphan_concentration_pct | null_broad_hygiene_pct
+----------+-------+----------------+---------------------+------------------+-------------------------------+------------------------
+ archived |  1957 |            386 |                   0 |             1545 |                         93.69 |                  19.72
+ active   |   262 |             65 |                   0 |              193 |                         94.20 |                  24.81
+```
+
+`marker_session_miss` is 0 because PR #226 just merged and traffic hadn't exercised the `session_resolve_miss` branch on the running process at sample time. As Codex/Claude dispatch sessions hit that branch post-deploy, expect non-zero counts.
+
+### Open sibling gap (S21-c)
+
+PR #226's fallback at `src/mcp_handlers/identity/handlers.py:1379` only fires inside the `session_resolve_miss` branch, which is gated by line 1339 `if not force_new:`. Arg-less `onboard(force_new=true)` calls (e.g., the v2 fresh-instance path canonized in CLAUDE.md "Minimal Agent Workflow") skip that block entirely and fall to STEP 2b at line 1554, which calls `resolve_session_identity(persist=True, spawn_reason=_spawn_reason)` with `_spawn_reason` still `None` from line 1294. The upsert writes NULL.
+
+Verified live 2026-04-27: agent `02a94193-d116-4682-a5d8-6c90c6908eab` minted via `force_new=true` post-merge has NULL spawn_reason. Code-reviewer caveat: do not backfill `auto_onboard_no_session` here — it's a misnomer (the marker was designed for dispatch-retry callers hitting `session_resolve_miss`, not first-mint). Either accept NULL is honest for declared-fresh-mints (per S13 fresh-instance ontology) or use a distinct label. File as S21-c if a distinct label path is preferred.
+
+### Movement-claim rules
+
+- "PR #226 worked" ≠ "no-lineage rate dropped." It means `marker_session_miss` is non-zero on live post-deploy traffic.
+- "S21 is closed" requires `null_orphan_concentration_pct` to drop, which only happens when upstream callers thread `parent_agent_id`/`spawn_reason` through `_session_identities` so the eventual upsert carries declared lineage. That's S21-b territory.
+- Cite both rates side-by-side. Don't quote a single number from this query in isolation.
 
 ## Open questions for the next process-instance picking this up
 
