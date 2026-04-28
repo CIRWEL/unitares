@@ -37,6 +37,13 @@ from src.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
+# Bounded timeout for the recovery-path failed_pool.close() call. close()
+# can hang indefinitely against a wedged executor loop (asyncpg released
+# connections but DISCARD ALL responses unread, observed 2026-04-27 →
+# "Pool.close() is taking over 60 seconds"). Module-level so tests can
+# patch.
+POOL_CLOSE_TIMEOUT_SECONDS = 10.0
+
 
 class PostgresBackend(
     IdentityMixin,
@@ -123,11 +130,37 @@ class PostgresBackend(
                         # Only destroy if still the same pool (another task may have already replaced it)
                         if self._pool is not None and self._pool is failed_pool:
                             logger.warning(f"Pool health check failed, destroying pool (backend={id(self)}): {e}")
-                            try:
-                                await self._pool.close()
-                            except Exception:
-                                pass
+                            # Null-before-close: drop the reference *before*
+                            # awaiting close() so concurrent acquires take
+                            # the slow-path create branch instead of blocking
+                            # on _init_lock for the close()'s lifetime.
+                            # close() can hang indefinitely if the executor
+                            # loop is wedged (asyncpg released connections
+                            # but DISCARD ALL responses unread, observed
+                            # 2026-04-27 → "Pool.close() is taking over 60
+                            # seconds"). Without this, _init_lock is held
+                            # forever and every subsequent acquire 5s-times
+                            # out → cascading wedge.
                             self._pool = None
+                            try:
+                                await asyncio.wait_for(
+                                    failed_pool.close(),
+                                    timeout=POOL_CLOSE_TIMEOUT_SECONDS,
+                                )
+                            except asyncio.TimeoutError:
+                                logger.warning(
+                                    f"Pool close timed out after 10s "
+                                    f"(backend={id(self)}); orphaning pool "
+                                    f"and proceeding to recreate. The "
+                                    f"executor loop is likely wedged; the "
+                                    f"daemon thread will die with the "
+                                    f"process."
+                                )
+                            except Exception as close_err:
+                                logger.debug(
+                                    f"Pool close raised (non-fatal): "
+                                    f"{close_err}"
+                                )
 
         if self._pool is not None:
             return self._pool
@@ -309,10 +342,23 @@ class PostgresBackend(
                 pass
 
     async def close(self) -> None:
-        """Close connection pool."""
+        """Close connection pool.
+
+        Same null-before-close discipline as the recovery path: drop the
+        reference *before* awaiting close() so a wedged executor loop
+        doesn't strand any concurrent caller observing self._pool. The
+        ExecutorPool.close() is internally idempotent + bounded by
+        CLOSE_TIMEOUT_SECONDS, so this caller doesn't need its own
+        wait_for — but null-before-close still matters for callers that
+        check self._pool directly (test code, shutdown coordinators).
+        """
         if self._pool:
-            await self._pool.close()
+            failed_pool = self._pool
             self._pool = None
+            try:
+                await failed_pool.close()
+            except Exception as e:
+                logger.debug(f"Pool close raised during shutdown (non-fatal): {e}")
 
     async def health_check(self) -> Dict[str, Any]:
         """Return health/status information."""
