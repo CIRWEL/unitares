@@ -51,6 +51,12 @@
         return Math.round(seconds / 86400) + 'd';
     }
 
+    function fmtCheckinSource(source) {
+        if (source === 'agent_metadata') return 'agent metadata';
+        if (source === 'broadcaster_eisv') return 'live EISV event';
+        return source || 'unknown source';
+    }
+
     function statusForCard(resident, nowMs) {
         // Recompute status client-side so the "silent" flip happens between
         // server fetches without waiting for a re-poll.
@@ -109,13 +115,15 @@
             rightHtml = '<span class="resident-pill-eventdriven" title="Event-driven — does not check in to governance on a schedule. See Activity for findings.">event-driven</span>';
         } else {
             var silenceTxt = fmtSilence(liveSilence);
+            var checkinSource = fmtCheckinSource(resident.last_checkin_source);
             var overThreshold = liveSilence != null &&
                 resident.silence_threshold_seconds != null &&
                 liveSilence > resident.silence_threshold_seconds;
             rightHtml = '<span class="resident-pill-silence' +
                 (overThreshold ? ' over-threshold' : '') +
                 '" title="time since last check-in (threshold: ' +
-                escapeHtml(fmtSilence(resident.silence_threshold_seconds)) + ')">' +
+                escapeHtml(fmtSilence(resident.silence_threshold_seconds)) +
+                ', source: ' + escapeHtml(checkinSource) + ')">' +
                 escapeHtml(silenceTxt) + '</span>';
         }
 
@@ -139,6 +147,7 @@
 
         var title = resident.label + ' · ' + (eventDriven ? 'event-driven' : status) +
             (!eventDriven && liveSilence != null ? ' · silent ' + fmtSilence(liveSilence) : '') +
+            (!eventDriven && resident.last_checkin_source ? ' · source ' + fmtCheckinSource(resident.last_checkin_source) : '') +
             (resident.total_updates ? ' · ' + resident.total_updates + ' check-ins' : '') +
             (writes.length ? ' · ' + writes.length + ' recent writes' : '');
 

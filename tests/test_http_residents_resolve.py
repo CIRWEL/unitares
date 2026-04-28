@@ -14,8 +14,9 @@ var. We intersect with the current fleet so a fresh install doesn't advertise
 residents that aren't running.
 """
 import os
+import json
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -24,6 +25,26 @@ from src.http_api import _resolve_resident_labels
 
 def _meta(label=None, resident=False):
     return SimpleNamespace(label=label, display_name=label, resident=resident)
+
+
+def _resident_meta(
+    label="Lumen",
+    *,
+    last_update="2026-04-28T10:06:04+00:00",
+    total_updates=10,
+    tags=None,
+    status="active",
+    resident=False,
+):
+    return SimpleNamespace(
+        label=label,
+        display_name=label,
+        resident=resident,
+        status=status,
+        last_update=last_update,
+        total_updates=total_updates,
+        tags=tags or ["persistent", "autonomous", "cadence.5min"],
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -111,3 +132,78 @@ class TestResolveResidentLabels:
         labels, source = _resolve_resident_labels(server)
         assert labels == ["Custom"]
         assert source == "metadata"
+
+
+@pytest.mark.asyncio
+async def test_residents_use_metadata_last_update_when_broadcaster_event_is_stale(monkeypatch):
+    """Resident strip must not lag behind the agent list when metadata is newer.
+
+    The dashboard agent list reads ``meta.last_update``. The resident strip used
+    to prefer the latest broadcaster event unconditionally, so it could show
+    Lumen as 5+ minutes silent while the agent list showed a newer check-in.
+    """
+    from src import http_api
+
+    request = SimpleNamespace(
+        headers={},
+        query_params={},
+        url=SimpleNamespace(path="/v1/residents"),
+        client=SimpleNamespace(host="127.0.0.1"),
+    )
+    server = SimpleNamespace(agent_metadata={
+        "uuid-lumen": _resident_meta(last_update="2026-04-28T10:06:04+00:00"),
+    })
+
+    http_api.broadcaster_instance.event_history.clear()
+    http_api.broadcaster_instance.event_history.append({
+        "type": "eisv_update",
+        "agent_id": "uuid-lumen",
+        "timestamp": "2026-04-28T10:01:56+00:00",
+        "eisv": {"E": 0.1, "I": 0.2, "S": 0.3, "V": 0.4},
+        "metrics": {"coherence": 0.5, "risk_score": 0.1, "verdict": "proceed"},
+    })
+
+    with patch("src.mcp_handlers.shared.lazy_mcp_server", server), \
+            patch("src.http_api._recent_writes_for_agent", AsyncMock(return_value=[])):
+        resp = await http_api.http_residents(request)
+
+    data = json.loads(resp.body.decode())
+    lumen = data["residents"][0]
+    assert lumen["last_checkin_at"] == "2026-04-28T10:06:04+00:00"
+    assert lumen["last_checkin_source"] == "agent_metadata"
+    assert lumen["latest_eisv_at"] == "2026-04-28T10:01:56+00:00"
+
+
+@pytest.mark.asyncio
+async def test_residents_use_broadcaster_event_when_it_is_newer(monkeypatch):
+    """Keep live websocket updates authoritative when they are the newest signal."""
+    from src import http_api
+
+    request = SimpleNamespace(
+        headers={},
+        query_params={},
+        url=SimpleNamespace(path="/v1/residents"),
+        client=SimpleNamespace(host="127.0.0.1"),
+    )
+    server = SimpleNamespace(agent_metadata={
+        "uuid-lumen": _resident_meta(last_update="2026-04-28T10:01:56+00:00"),
+    })
+
+    http_api.broadcaster_instance.event_history.clear()
+    http_api.broadcaster_instance.event_history.append({
+        "type": "eisv_update",
+        "agent_id": "uuid-lumen",
+        "timestamp": "2026-04-28T10:06:04+00:00",
+        "eisv": {"E": 0.1, "I": 0.2, "S": 0.3, "V": 0.4},
+        "metrics": {"coherence": 0.5, "risk_score": 0.1, "verdict": "proceed"},
+    })
+
+    with patch("src.mcp_handlers.shared.lazy_mcp_server", server), \
+            patch("src.http_api._recent_writes_for_agent", AsyncMock(return_value=[])):
+        resp = await http_api.http_residents(request)
+
+    data = json.loads(resp.body.decode())
+    lumen = data["residents"][0]
+    assert lumen["last_checkin_at"] == "2026-04-28T10:06:04+00:00"
+    assert lumen["last_checkin_source"] == "broadcaster_eisv"
+    assert lumen["metadata_last_update"] == "2026-04-28T10:01:56+00:00"

@@ -2015,6 +2015,19 @@ def _extract_eisv_fields(event: dict) -> dict:
     }
 
 
+def _parse_resident_timestamp(value: object) -> Optional[datetime]:
+    """Parse resident activity timestamps as timezone-aware datetimes."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
 def _coherence_history_for_agent(agent_id: str, window_minutes: int = 60) -> list[dict]:
     """Collect coherence (plus risk, verdict) data points for a sparkline.
 
@@ -2091,6 +2104,9 @@ async def http_residents(request):
                     "silence_seconds": 142,
                     "silence_threshold_seconds": 2400,
                     "last_checkin_at": "2026-04-14T...",
+                    "last_checkin_source": "broadcaster_eisv" | "agent_metadata",
+                    "metadata_last_update": "2026-04-14T...",
+                    "latest_eisv_at": "2026-04-14T...",
                     "eisv": {"E": ..., "I": ..., "S": ..., "V": ...},
                     "coherence": 0.48,
                     "risk_score": 0.12,
@@ -2154,23 +2170,35 @@ async def http_residents(request):
             history = _coherence_history_for_agent(agent_id) if agent_id else []
             recent_writes = await _recent_writes_for_agent(agent_id) if agent_id else []
 
-            # Compute silence in seconds — prefer the latest eisv event timestamp,
-            # fall back to metadata's last_update.
+            # Compute silence in seconds. The dashboard agent list uses
+            # metadata.last_update while the resident strip also has access to
+            # websocket/broadcaster EISV events. Treat both as activity signals
+            # and choose the newest, otherwise the two dashboard rows can
+            # disagree by several minutes after broadcaster gaps/restarts.
+            metadata_last_update = getattr(meta, "last_update", None) if meta else None
+            latest_eisv_at = latest.get("timestamp") if latest and latest.get("timestamp") else None
+            metadata_dt = _parse_resident_timestamp(metadata_last_update)
+            latest_dt = _parse_resident_timestamp(latest_eisv_at)
             last_checkin_str = None
-            if latest and latest.get("timestamp"):
-                last_checkin_str = latest.get("timestamp")
-            elif meta and getattr(meta, "last_update", None):
-                last_checkin_str = meta.last_update
+            last_checkin_source = None
+            if metadata_dt and latest_dt:
+                if metadata_dt >= latest_dt:
+                    last_checkin_str = metadata_last_update
+                    last_checkin_source = "agent_metadata"
+                else:
+                    last_checkin_str = latest_eisv_at
+                    last_checkin_source = "broadcaster_eisv"
+            elif metadata_dt:
+                last_checkin_str = metadata_last_update
+                last_checkin_source = "agent_metadata"
+            elif latest_dt:
+                last_checkin_str = latest_eisv_at
+                last_checkin_source = "broadcaster_eisv"
 
             silence_seconds: Optional[float] = None
-            if last_checkin_str:
-                try:
-                    last_dt = datetime.fromisoformat(str(last_checkin_str).replace("Z", "+00:00"))
-                    if last_dt.tzinfo is None:
-                        last_dt = last_dt.replace(tzinfo=timezone.utc)
-                    silence_seconds = max(0.0, now_ts - last_dt.timestamp())
-                except (ValueError, TypeError):
-                    pass
+            last_dt = _parse_resident_timestamp(last_checkin_str)
+            if last_dt:
+                silence_seconds = max(0.0, now_ts - last_dt.timestamp())
 
             # Prefer tag-driven cadence (generic, label-independent); fall
             # back to the hardcoded per-label default for agents not yet
@@ -2203,6 +2231,9 @@ async def http_residents(request):
                 "silence_seconds": round(silence_seconds, 1) if silence_seconds is not None else None,
                 "silence_threshold_seconds": silence_threshold,
                 "last_checkin_at": last_checkin_str,
+                "last_checkin_source": last_checkin_source,
+                "metadata_last_update": metadata_last_update,
+                "latest_eisv_at": latest_eisv_at,
                 "eisv": {
                     "E": flat["E"],
                     "I": flat["I"],
