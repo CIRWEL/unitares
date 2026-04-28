@@ -391,6 +391,56 @@ class TestPoolRecovery:
         assert wrapped._closed_flag is True
         assert wrapped._close_done.is_set()
 
+    @pytest.mark.asyncio
+    async def test_close_done_set_before_thread_join_await(self):
+        """Regression: _close_done.set() must run BEFORE the run_in_executor
+        thread-join await inside close()'s finally. If asyncio.CancelledError
+        fires at that await (anyio task-group teardown during shutdown), the
+        post-await set() would be skipped, and any concurrent close() caller
+        waiting on _close_done.wait() inside _close_lock would hold the lock
+        forever — reintroducing the same "hold forever" failure mode this
+        whole change was meant to fix.
+        """
+        from src.db.executor_pool import ExecutorPool
+
+        raw_pool = MagicMock()
+        raw_pool.close = AsyncMock()
+        wrapped = ExecutorPool(raw_pool)
+
+        # Probe the state of _close_done at the moment run_in_executor is
+        # called — i.e. immediately before the await. Then return a future
+        # that fails with CancelledError to simulate cancellation at the
+        # await. The fix's `except BaseException: pass` swallows it, but
+        # _close_done must already be set by that point.
+        loop = asyncio.get_running_loop()
+        original_run_in_executor = loop.run_in_executor
+        observed = {"close_done_set_at_await": None}
+
+        def probing_run_in_executor(executor, fn, *args):
+            # Bound-method `is` comparison would fail because `_thread.join`
+            # creates a fresh bound-method object on each attribute access.
+            # `==` compares (func, self) pair semantics, which is what we want.
+            if fn == wrapped._thread.join:
+                observed["close_done_set_at_await"] = wrapped._close_done.is_set()
+                f = loop.create_future()
+                f.set_exception(asyncio.CancelledError())
+                return f
+            return original_run_in_executor(executor, fn, *args)
+
+        loop.run_in_executor = probing_run_in_executor
+        try:
+            await wrapped.close()
+        finally:
+            loop.run_in_executor = original_run_in_executor
+
+        assert observed["close_done_set_at_await"] is True, (
+            "_close_done was NOT set before the run_in_executor thread-join "
+            "await. If that await is cancelled (anyio teardown), concurrent "
+            "close() callers waiting on _close_done.wait() inside _close_lock "
+            "would hang forever."
+        )
+        assert wrapped._close_done.is_set()
+
 
 # ============================================================================
 # Orphaned Connection Tests
@@ -534,3 +584,92 @@ class TestTransactionContextLeakSafety:
         with pytest.raises(RuntimeError, match="original txn-start failure"):
             async with backend.transaction():
                 pytest.fail("body should not execute when __aenter__ raises")
+
+
+class TestAcquireContextLeakSafety:
+    """Mirror of TestTransactionContextLeakSafety, for the parallel structure
+    in PostgresBackend.acquire(). Pre-fix: _AcquireContext.__aenter__ caught
+    only asyncio.TimeoutError, so any non-Timeout exception (CancelledError
+    from anyio teardown, RuntimeError from a future post-acquire await)
+    raised before returning would leak any partially-acquired connection.
+    Watcher fingerprint #3df34c78 flagged the gap at postgres_backend.py:226.
+    The fix adds a BaseException safety net matching the TransactionContext
+    pattern.
+    """
+
+    @pytest.mark.asyncio
+    async def test_acquire_cancelled_during_pool_acquire_propagates(self):
+        """CancelledError during pool.acquire() must propagate (not be
+        swallowed by the safety net) and must not call release on a None
+        connection."""
+        from src.db.postgres_backend import PostgresBackend
+
+        backend = PostgresBackend()
+        mock_pool = AsyncMock()
+        mock_pool.acquire = AsyncMock(side_effect=asyncio.CancelledError())
+        mock_pool.release = AsyncMock()
+        mock_pool.get_size = MagicMock(return_value=25)
+        mock_pool.get_max_size = MagicMock(return_value=25)
+        mock_pool.get_idle_size = MagicMock(return_value=0)
+
+        backend._pool = mock_pool
+
+        with pytest.raises(asyncio.CancelledError):
+            async with backend.acquire():
+                pytest.fail("body must not execute when __aenter__ raises")
+
+        # No conn was ever assigned, so no release call should happen.
+        mock_pool.release.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_acquire_runtime_error_during_pool_acquire_propagates(self):
+        """Non-Timeout, non-Cancel exceptions also propagate through the
+        safety net cleanly. Pre-fix this would also leak any partially-
+        acquired connection; the fix's BaseException catch covers all paths."""
+        from src.db.postgres_backend import PostgresBackend
+
+        backend = PostgresBackend()
+        mock_pool = AsyncMock()
+        mock_pool.acquire = AsyncMock(side_effect=RuntimeError("asyncpg internal failure"))
+        mock_pool.release = AsyncMock()
+        mock_pool.get_size = MagicMock(return_value=25)
+        mock_pool.get_max_size = MagicMock(return_value=25)
+        mock_pool.get_idle_size = MagicMock(return_value=0)
+
+        backend._pool = mock_pool
+
+        with pytest.raises(RuntimeError, match="asyncpg internal failure"):
+            async with backend.acquire():
+                pytest.fail("body must not execute when __aenter__ raises")
+
+        mock_pool.release.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_acquire_timeout_still_raises_connection_error(self):
+        """Regression: TimeoutError → ConnectionError translation must remain
+        intact. The new BaseException safety net is checked AFTER the
+        TimeoutError handler, so the user-facing ConnectionError doesn't
+        regress to a bare TimeoutError or CancelledError."""
+        from src.db.postgres_backend import PostgresBackend
+
+        backend = PostgresBackend()
+        mock_pool = AsyncMock()
+        mock_pool.acquire = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_pool.release = AsyncMock()
+        mock_pool.get_size = MagicMock(return_value=25)
+        mock_pool.get_max_size = MagicMock(return_value=25)
+        mock_pool.get_idle_size = MagicMock(return_value=0)
+
+        backend._pool = mock_pool
+
+        with pytest.raises(ConnectionError, match="pool exhausted"):
+            async with backend.acquire():
+                pytest.fail("body must not execute when __aenter__ raises")
+
+        mock_pool.release.assert_not_called()
+
+    # Note: a test for the "partial-acquire then post-acquire raise" path
+    # would require an injection point between `pool.acquire()` and
+    # `return ctx_self.conn`. Since the current implementation has no await
+    # there, that path is unreachable at unit level today. The safety net
+    # is defensive against future edits that introduce such an await.
