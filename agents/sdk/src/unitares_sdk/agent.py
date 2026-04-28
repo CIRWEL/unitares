@@ -452,9 +452,10 @@ class GovernanceAgent:
     def _save_session(self) -> None:
         """Persist session state to the anchor."""
         data: dict[str, Any] = {}
-        if self.client_session_id:
+        uuid_only_anchor = self.persistent and bool(os.environ.get("UNITARES_UDS_SOCKET"))
+        if self.client_session_id and not uuid_only_anchor:
             data["client_session_id"] = self.client_session_id
-        if self.continuity_token:
+        if self.continuity_token and not uuid_only_anchor:
             data["continuity_token"] = self.continuity_token
         if self.agent_uuid:
             data["agent_uuid"] = self.agent_uuid

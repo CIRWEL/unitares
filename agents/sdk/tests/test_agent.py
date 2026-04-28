@@ -251,6 +251,19 @@ class TestSessionPersistence:
         assert agent2.continuity_token == "tok-1"
         assert agent2.agent_uuid == "uuid-1"
 
+    def test_persistent_uds_agent_saves_uuid_only(self, tmp_path, monkeypatch):
+        """Substrate residents using UDS must not leave bearer tokens on disk."""
+        monkeypatch.setenv("UNITARES_UDS_SOCKET", "/tmp/governance.sock")
+        anchor = tmp_path / ".test_session"
+        agent = SimpleAgent(session_file=anchor, persistent=True)
+        agent.client_session_id = "sid-1"
+        agent.continuity_token = "tok-1"
+        agent.agent_uuid = "uuid-1"
+
+        agent._save_session()
+
+        assert json.loads(anchor.read_text()) == {"agent_uuid": "uuid-1"}
+
     def test_load_missing_file(self, tmp_path):
         agent = SimpleAgent(session_file=tmp_path / ".nope")
         agent._load_session()
