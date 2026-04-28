@@ -514,12 +514,19 @@ class TestGetDiscovery:
 
     @pytest.mark.asyncio
     async def test_returns_none_when_not_found(self):
-        """Should return None when graph_query returns empty results."""
+        """Should return None when neither AGE node nor SQL row exists.
+
+        After PR #223, get_discovery falls back to db.kg_get_discovery() when
+        the AGE MATCH returns nothing — so "not found" requires both layers
+        to be empty.
+        """
         kg, mock_db = make_kg_with_mock_db()
         mock_db.graph_query.return_value = []
+        mock_db.kg_get_discovery = AsyncMock(return_value=None)
 
         result = await kg.get_discovery("nonexistent")
         assert result is None
+        mock_db.kg_get_discovery.assert_awaited_once_with("nonexistent")
 
     @pytest.mark.asyncio
     async def test_returns_discovery_from_dict_result(self):
@@ -567,6 +574,7 @@ class TestGetDiscovery:
         """Should pass the correct discovery_id in the cypher params."""
         kg, mock_db = make_kg_with_mock_db()
         mock_db.graph_query.return_value = []
+        mock_db.kg_get_discovery = AsyncMock(return_value=None)
 
         await kg.get_discovery("test-id-123")
 
@@ -583,10 +591,15 @@ class TestGetResponseChain:
 
     @pytest.mark.asyncio
     async def test_returns_empty_when_graph_unavailable(self):
-        """Should fallback to single-node chain when graph unavailable."""
+        """Should return [] when graph unavailable and SQL has no row either.
+
+        After PR #223, the single-node fallback delegates to get_discovery,
+        which itself falls back to SQL. The chain is empty only when both
+        AGE and SQL are empty.
+        """
         kg, mock_db = make_kg_with_mock_db(graph_available=False)
-        # get_discovery will also use the same db
         mock_db.graph_query.return_value = []
+        mock_db.kg_get_discovery = AsyncMock(return_value=None)
 
         result = await kg.get_response_chain("disc-001")
         assert result == []
@@ -878,10 +891,17 @@ class TestUpdateDiscovery:
 
     @pytest.mark.asyncio
     async def test_returns_false_when_graph_unavailable(self):
-        """Should return False when graph is not available."""
+        """Should return False when graph unavailable AND SQL row is missing.
+
+        After PR #223, update_discovery falls back to _sql_update_discovery
+        when the graph is unavailable. The SQL fallback returns False iff
+        the UPDATE ... RETURNING id touches no row.
+        """
         kg, mock_db = make_kg_with_mock_db(graph_available=False)
+        mock_db._pool.fetchval = AsyncMock(return_value=None)
         result = await kg.update_discovery("disc-001", {"status": "resolved"})
         assert result is False
+        mock_db._pool.fetchval.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_updates_valid_fields(self):
@@ -929,21 +949,33 @@ class TestUpdateDiscovery:
 
     @pytest.mark.asyncio
     async def test_returns_false_on_error_result(self):
-        """Should return False when query returns error."""
+        """Should return False when AGE returns error AND SQL row is missing.
+
+        After PR #223, an AGE error result triggers SQL fallback for
+        SQL-only orphans. False is returned only when SQL also has no row.
+        """
         kg, mock_db = make_kg_with_mock_db()
         mock_db.graph_query.return_value = [{"error": "not found"}]
+        mock_db._pool.fetchval = AsyncMock(return_value=None)
 
         result = await kg.update_discovery("disc-001", {"status": "resolved"})
         assert result is False
+        mock_db._pool.fetchval.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_returns_false_on_empty_result(self):
-        """Should return False when query returns no results."""
+        """Should return False when AGE empty AND SQL row is missing.
+
+        After PR #223, an empty AGE result triggers SQL fallback. False is
+        returned only when SQL also has no row.
+        """
         kg, mock_db = make_kg_with_mock_db()
         mock_db.graph_query.return_value = []
+        mock_db._pool.fetchval = AsyncMock(return_value=None)
 
         result = await kg.update_discovery("disc-001", {"status": "resolved"})
         assert result is False
+        mock_db._pool.fetchval.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_returns_false_on_exception(self):
