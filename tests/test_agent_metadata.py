@@ -288,3 +288,80 @@ class TestAddRecentUpdate:
         assert len(meta.recent_update_timestamps) == len(meta.recent_decisions)
         for ts, decision in zip(meta.recent_update_timestamps, meta.recent_decisions):
             assert ts.replace("t", "") == decision.replace("a", "")
+
+
+# ============================================================================
+# S21-b §1 / §3: register_minted_agent_in_dict + mirror_status_to_dict
+# ============================================================================
+# These helpers close the H14 axiom-#3 gap surfaced by S21-a council pass-2.
+# Without them, freshly-minted core.identities rows are invisible to
+# require_registered_agent, and update_identity_status writes silently drift
+# the dict away from PG (live-verifier observed 67 active/archived inversions).
+
+
+class TestRegisterMintedAgentInDict:
+    def setup_method(self):
+        from src.agent_metadata_model import agent_metadata
+        agent_metadata.clear()
+
+    def test_inserts_new_entry(self):
+        from src.agent_metadata_persistence import register_minted_agent_in_dict
+        from src.agent_metadata_model import agent_metadata
+        uid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        added = register_minted_agent_in_dict(
+            uid,
+            label="claude_desktop-claude_aaaaaaaa",
+            public_agent_id="claude_desktop-claude-2026-04-27",
+            parent_agent_id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            spawn_reason="dispatch_auto_mint",
+        )
+        assert added is True
+        assert uid in agent_metadata
+        meta = agent_metadata[uid]
+        assert meta.status == "active"
+        assert meta.label == "claude_desktop-claude_aaaaaaaa"
+        assert meta.public_agent_id == "claude_desktop-claude-2026-04-27"
+        assert meta.spawn_reason == "dispatch_auto_mint"
+        assert meta.parent_agent_id == "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        assert meta.agent_uuid == uid
+
+    def test_does_not_clobber_existing(self):
+        # Existing entry (e.g., from bulk reload) wins. Mint helper is for
+        # the no-entry case only.
+        from src.agent_metadata_persistence import register_minted_agent_in_dict
+        from src.agent_metadata_model import agent_metadata, AgentMetadata
+        uid = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+        agent_metadata[uid] = AgentMetadata(
+            agent_id="prior", status="paused", created_at="2026-01-01",
+            last_update="2026-01-01", label="prior_label",
+        )
+        added = register_minted_agent_in_dict(
+            uid, label="overwrite_attempt", status="active",
+        )
+        assert added is False
+        # Existing meta unchanged.
+        assert agent_metadata[uid].label == "prior_label"
+        assert agent_metadata[uid].status == "paused"
+
+
+class TestMirrorStatusToDict:
+    def setup_method(self):
+        from src.agent_metadata_model import agent_metadata
+        agent_metadata.clear()
+
+    def test_updates_existing(self):
+        from src.agent_metadata_persistence import mirror_status_to_dict
+        from src.agent_metadata_model import agent_metadata, AgentMetadata
+        uid = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+        agent_metadata[uid] = AgentMetadata(
+            agent_id="X", status="active", created_at="2026-01-01",
+            last_update="2026-01-01",
+        )
+        ok = mirror_status_to_dict(uid, "archived")
+        assert ok is True
+        assert agent_metadata[uid].status == "archived"
+
+    def test_returns_false_when_missing(self):
+        from src.agent_metadata_persistence import mirror_status_to_dict
+        ok = mirror_status_to_dict("ffffffff-ffff-4fff-8fff-ffffffffffff", "deleted")
+        assert ok is False

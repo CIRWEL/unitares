@@ -899,6 +899,23 @@ async def resolve_session_identity(
                 metadata=identity_metadata,
             )
 
+            # S21-b §1: hydrate the in-memory dict so require_registered_agent
+            # sees this UUID in the same request that minted it. Without this,
+            # the caller's next tool call gets "not registered" until the next
+            # bulk reload (axiom-#3 violation H14, council pass-2).
+            try:
+                from src.agent_metadata_persistence import register_minted_agent_in_dict
+                register_minted_agent_in_dict(
+                    agent_uuid,
+                    status="active",
+                    label=label,
+                    public_agent_id=agent_id,
+                    parent_agent_id=parent_agent_id,
+                    spawn_reason=spawn_reason,
+                )
+            except Exception as e:
+                logger.warning(f"Eager dict hydration failed for {agent_uuid[:8]}: {e}")
+
             # Create session binding
             identity = await db.get_identity(agent_uuid)
             if identity:

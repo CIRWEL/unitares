@@ -300,6 +300,14 @@ async def update_agent(
     if status is not None:
         disabled_at = datetime.now(timezone.utc) if status in ("archived", "deleted") else None
         await db.update_identity_status(agent_id, status, disabled_at)
+        # S21-b §3: mirror PG status into the in-memory dict so the auth
+        # check doesn't return stale-positive (live-verifier's 67-row
+        # active/archived inversion class).
+        try:
+            from src.agent_metadata_persistence import mirror_status_to_dict
+            mirror_status_to_dict(agent_id, status)
+        except Exception as e:
+            logger.debug(f"Status mirror failed for {agent_id}: {e}")
 
     return True
 
@@ -397,6 +405,13 @@ async def archive_agent(
     if hasattr(db, "update_agent_fields"):
         await db.update_agent_fields(agent_id=agent_id, status="archived")
 
+    # S21-b §3
+    try:
+        from src.agent_metadata_persistence import mirror_status_to_dict
+        mirror_status_to_dict(agent_id, "archived")
+    except Exception as e:
+        logger.debug(f"Status mirror failed for archive {agent_id}: {e}")
+
     logger.info(f"Archived agent: {agent_id}")
     return True
 
@@ -417,6 +432,12 @@ async def delete_agent(agent_id: str) -> bool:
         status="deleted",
         disabled_at=datetime.now(timezone.utc),
     )
+    # S21-b §3
+    try:
+        from src.agent_metadata_persistence import mirror_status_to_dict
+        mirror_status_to_dict(agent_id, "deleted")
+    except Exception as e:
+        logger.debug(f"Status mirror failed for delete {agent_id}: {e}")
 
     if hasattr(db, "update_agent_fields"):
         await db.update_agent_fields(agent_id=agent_id, status="deleted")

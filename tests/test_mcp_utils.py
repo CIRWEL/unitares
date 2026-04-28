@@ -655,6 +655,128 @@ class TestRequireRegisteredAgent:
         u, e = require_registered_agent({"agent_id": "Bot"})
         assert u == "real-uuid" and e is None
 
+    # --- S21-b §3 status-check (council pass-2 stale-positive class) ---
+    # `update_identity_status` writes only PG, so the in-memory dict drifts
+    # (live-verifier observed 67 active/archived inversions). The auth check
+    # must gate on meta.status to refuse rows whose dict copy is stale-active.
+
+    @patch("src.mcp_handlers.validators.validate_agent_id_reserved_names",
+           return_value=("11111111-1111-4111-8111-111111111111", None))
+    @patch("src.mcp_handlers.validators.validate_agent_id_format",
+           return_value=("11111111-1111-4111-8111-111111111111", None))
+    @patch("src.mcp_handlers.context.get_context_agent_id", return_value=None)
+    @patch("src.mcp_handlers.shared.get_mcp_server")
+    def test_archived_agent_rejected(self, ms, mc, mf, mr):
+        uid = "11111111-1111-4111-8111-111111111111"
+        s = _mock_server({uid: _meta(status="archived", label="Old")})
+        s.ensure_metadata_loaded = MagicMock()
+        ms.return_value = s
+        with patch("src.mcp_handlers.support.agent_auth.compute_agent_signature",
+                   return_value={"uuid": None}):
+            u, e = require_registered_agent({"agent_id": uid})
+        assert u is None
+        err = _parse_tc(e)["error"]
+        assert "archived" in err.lower()
+
+    @patch("src.mcp_handlers.validators.validate_agent_id_reserved_names",
+           return_value=("22222222-2222-4222-8222-222222222222", None))
+    @patch("src.mcp_handlers.validators.validate_agent_id_format",
+           return_value=("22222222-2222-4222-8222-222222222222", None))
+    @patch("src.mcp_handlers.context.get_context_agent_id", return_value=None)
+    @patch("src.mcp_handlers.shared.get_mcp_server")
+    def test_deleted_agent_rejected(self, ms, mc, mf, mr):
+        uid = "22222222-2222-4222-8222-222222222222"
+        s = _mock_server({uid: _meta(status="deleted", label="Gone")})
+        s.ensure_metadata_loaded = MagicMock()
+        ms.return_value = s
+        with patch("src.mcp_handlers.support.agent_auth.compute_agent_signature",
+                   return_value={"uuid": None}):
+            u, e = require_registered_agent({"agent_id": uid})
+        assert u is None
+        err = _parse_tc(e)["error"]
+        assert "deleted" in err.lower()
+
+    @patch("src.mcp_handlers.validators.validate_agent_id_reserved_names",
+           return_value=("33333333-3333-4333-8333-333333333333", None))
+    @patch("src.mcp_handlers.validators.validate_agent_id_format",
+           return_value=("33333333-3333-4333-8333-333333333333", None))
+    @patch("src.mcp_handlers.context.get_context_agent_id", return_value=None)
+    @patch("src.mcp_handlers.shared.get_mcp_server")
+    def test_disabled_agent_rejected(self, ms, mc, mf, mr):
+        uid = "33333333-3333-4333-8333-333333333333"
+        s = _mock_server({uid: _meta(status="disabled", label="Off")})
+        s.ensure_metadata_loaded = MagicMock()
+        ms.return_value = s
+        with patch("src.mcp_handlers.support.agent_auth.compute_agent_signature",
+                   return_value={"uuid": None}):
+            u, e = require_registered_agent({"agent_id": uid})
+        assert u is None
+        err = _parse_tc(e)["error"]
+        assert "disabled" in err.lower()
+
+    @patch("src.mcp_handlers.validators.validate_agent_id_reserved_names",
+           return_value=("44444444-4444-4444-8444-444444444444", None))
+    @patch("src.mcp_handlers.validators.validate_agent_id_format",
+           return_value=("44444444-4444-4444-8444-444444444444", None))
+    @patch("src.mcp_handlers.context.get_context_agent_id", return_value=None)
+    @patch("src.mcp_handlers.shared.get_mcp_server")
+    def test_paused_agent_allowed(self, ms, mc, mf, mr):
+        # Paused is a recoverable state (council H6 — preserve binding).
+        uid = "44444444-4444-4444-8444-444444444444"
+        s = _mock_server({uid: _meta(status="paused", label="Wait")})
+        s.ensure_metadata_loaded = MagicMock()
+        ms.return_value = s
+        u, e = require_registered_agent({"agent_id": uid})
+        assert u == uid and e is None
+
+    @patch("src.mcp_handlers.validators.validate_agent_id_reserved_names",
+           return_value=("55555555-5555-4555-8555-555555555555", None))
+    @patch("src.mcp_handlers.validators.validate_agent_id_format",
+           return_value=("55555555-5555-4555-8555-555555555555", None))
+    @patch("src.mcp_handlers.context.get_context_agent_id", return_value=None)
+    @patch("src.mcp_handlers.shared.get_mcp_server")
+    def test_waiting_input_agent_allowed(self, ms, mc, mf, mr):
+        uid = "55555555-5555-4555-8555-555555555555"
+        s = _mock_server({uid: _meta(status="waiting_input", label="Q")})
+        s.ensure_metadata_loaded = MagicMock()
+        ms.return_value = s
+        u, e = require_registered_agent({"agent_id": uid})
+        assert u == uid and e is None
+
+    @patch("src.mcp_handlers.validators.validate_agent_id_reserved_names",
+           return_value=("66666666-6666-4666-8666-666666666666", None))
+    @patch("src.mcp_handlers.validators.validate_agent_id_format",
+           return_value=("66666666-6666-4666-8666-666666666666", None))
+    @patch("src.mcp_handlers.context.get_context_agent_id", return_value=None)
+    @patch("src.mcp_handlers.shared.get_mcp_server")
+    def test_unknown_status_rejected_fail_closed(self, ms, mc, mf, mr):
+        # Allowlist gate: any status outside {active,paused,waiting_input}
+        # fails closed (council pass-2 dialectic — blocklist was fail-open).
+        uid = "66666666-6666-4666-8666-666666666666"
+        s = _mock_server({uid: _meta(status="quarantined", label="Q")})
+        s.ensure_metadata_loaded = MagicMock()
+        ms.return_value = s
+        with patch("src.mcp_handlers.support.agent_auth.compute_agent_signature",
+                   return_value={"uuid": None}):
+            u, e = require_registered_agent({"agent_id": uid})
+        assert u is None
+        assert "quarantined" in _parse_tc(e)["error"].lower()
+
+    @patch("src.mcp_handlers.validators.validate_agent_id_reserved_names", return_value=("Old", None))
+    @patch("src.mcp_handlers.validators.validate_agent_id_format", return_value=("Old", None))
+    @patch("src.mcp_handlers.context.get_context_agent_id", return_value=None)
+    @patch("src.mcp_handlers.shared.get_mcp_server")
+    def test_archived_via_label_rejected(self, ms, mc, mf, mr):
+        # Same gate via label-based lookup path, not UUID.
+        s = _mock_server({"u-archived": _meta(status="archived", label="Old")})
+        s.ensure_metadata_loaded = MagicMock()
+        ms.return_value = s
+        with patch("src.mcp_handlers.support.agent_auth.compute_agent_signature",
+                   return_value={"uuid": None}):
+            u, e = require_registered_agent({"agent_id": "Old"})
+        assert u is None
+        assert "archived" in _parse_tc(e)["error"].lower()
+
 
 class TestVerifyAgentOwnership:
     @patch("src.mcp_handlers.shared.get_mcp_server")
