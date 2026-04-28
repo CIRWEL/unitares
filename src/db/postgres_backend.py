@@ -232,9 +232,9 @@ class PostgresBackend(
             async def __aenter__(ctx_self):
                 pool = await ctx_self.backend._ensure_pool()
                 ctx_self.acquired_pool = pool  # Store reference to THIS pool
+                acquire_timeout = ctx_self.timeout or 10.0
                 try:
                     # Use timeout to prevent hanging (default 10s)
-                    acquire_timeout = ctx_self.timeout or 10.0
                     ctx_self.conn = await pool.acquire(timeout=acquire_timeout)
                     return ctx_self.conn
                 except asyncio.TimeoutError:
@@ -244,6 +244,22 @@ class PostgresBackend(
                         f"Current pool: {pool.get_size()}/{pool.get_max_size()}. "
                         f"Try increasing DB_POSTGRES_MAX_CONN or check for connection leaks."
                     )
+                except BaseException:
+                    # Cancellation (anyio task-group teardown) or any other
+                    # exception after asyncpg has internally registered a
+                    # connection but before we return it would leak that
+                    # connection — the pool's checked-out set keeps a
+                    # reference, PG sees it idle, the app sees free=0. Watcher
+                    # fingerprint #3df34c78 flags this exact line range. Match
+                    # the pattern used in _TransactionContext.__aenter__.
+                    if ctx_self.conn is not None:
+                        try:
+                            await pool.release(ctx_self.conn)
+                        except Exception:
+                            pass
+                        ctx_self.conn = None
+                    ctx_self.acquired_pool = None
+                    raise
 
             async def __aexit__(ctx_self, exc_type, exc_val, exc_tb):
                 if ctx_self.conn and ctx_self.acquired_pool:

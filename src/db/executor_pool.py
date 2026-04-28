@@ -297,13 +297,20 @@ class ExecutorPool:
                 self._loop.call_soon_threadsafe(self._loop.stop)
             except Exception:
                 pass
+            # Set the done event BEFORE the thread-join await. If this task is
+            # cancelled at that await, _close_done.set() would be skipped, and
+            # any concurrent close() caller blocked on _close_done.wait() would
+            # hold _close_lock forever — reintroducing the same "hold forever"
+            # failure mode this whole change was meant to fix.
+            self._close_done.set()
             try:
                 await asyncio.get_event_loop().run_in_executor(
                     None, self._thread.join, THREAD_JOIN_TIMEOUT_SECONDS,
                 )
-            except Exception:
+            except BaseException:
+                # CancelledError is a BaseException since 3.8; catch widely
+                # so the thread-join best-effort doesn't strand callers.
                 pass
-            self._close_done.set()
 
         if _to_reraise is not None:
             raise _to_reraise
