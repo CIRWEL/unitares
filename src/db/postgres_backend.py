@@ -293,8 +293,29 @@ class PostgresBackend(
             async def __aenter__(ctx_self):
                 ctx_self._acquire_ctx = ctx_self.backend.acquire(timeout=ctx_self.timeout)
                 ctx_self.conn = await ctx_self._acquire_ctx.__aenter__()
-                ctx_self._txn = ctx_self.conn.transaction()
-                await ctx_self._txn.start()
+                # Connection acquired. If anything below raises before we
+                # return, __aexit__ will NOT run (async-CM protocol), so we
+                # must release the inner acquire ourselves. The realistic
+                # trigger is CancelledError when the executor wedges
+                # mid-txn-start (same wedge class this branch is fixing) —
+                # CancelledError is a BaseException in 3.8+, so catch
+                # broadly.
+                try:
+                    ctx_self._txn = ctx_self.conn.transaction()
+                    await ctx_self._txn.start()
+                except BaseException:
+                    inner = ctx_self._acquire_ctx
+                    ctx_self._acquire_ctx = None
+                    ctx_self.conn = None
+                    ctx_self._txn = None
+                    try:
+                        await inner.__aexit__(None, None, None)
+                    except Exception as release_err:
+                        logger.warning(
+                            f"Connection release after failed txn-start "
+                            f"raised (non-fatal): {release_err}"
+                        )
+                    raise
                 return ctx_self.conn
 
             async def __aexit__(ctx_self, exc_type, exc_val, exc_tb):

@@ -445,3 +445,92 @@ class TestOrphanedConnectionHandling:
         old_pool.release.assert_not_called()
         # Connection should have been closed directly
         mock_conn.close.assert_called_once()
+
+
+# ============================================================================
+# _TransactionContext Acquire-then-Fail Tests
+# ============================================================================
+
+class TestTransactionContextLeakSafety:
+    """Test that transaction() releases the underlying connection when
+    txn-start raises after the inner acquire succeeded. Pre-fix: __aenter__
+    raised before returning, so the outer 'async with' never invoked
+    __aexit__, and the connection was leaked until GC reclaimed it. Under
+    the wedged-executor symptom class this branch fixes, that contributed
+    to "Exceeded concurrency limit" warnings observed live 2026-04-27.
+    """
+
+    @pytest.mark.asyncio
+    async def test_txn_start_failure_releases_connection(self):
+        """If conn.transaction().start() raises, the inner acquire's
+        __aexit__ must run so the connection returns to the pool."""
+        from src.db.postgres_backend import PostgresBackend
+
+        backend = PostgresBackend()
+        mock_pool = AsyncMock()
+        mock_conn = AsyncMock()
+        mock_pool.acquire = AsyncMock(return_value=mock_conn)
+        mock_pool.release = AsyncMock()
+
+        # transaction() returns a Transaction whose start() raises.
+        failing_txn = MagicMock()
+        failing_txn.start = AsyncMock(side_effect=RuntimeError("server hangup"))
+        mock_conn.transaction = MagicMock(return_value=failing_txn)
+
+        backend._pool = mock_pool
+
+        with pytest.raises(RuntimeError, match="server hangup"):
+            async with backend.transaction():
+                pytest.fail("body should not execute when __aenter__ raises")
+
+        # The acquired connection MUST be released back to the pool.
+        mock_pool.release.assert_called_once_with(mock_conn)
+
+    @pytest.mark.asyncio
+    async def test_txn_start_cancelled_releases_connection(self):
+        """CancelledError is the realistic wedge trigger (BaseException in
+        3.8+). The fix catches BaseException, not just Exception, so the
+        conn is still released when start() is cancelled mid-flight."""
+        from src.db.postgres_backend import PostgresBackend
+
+        backend = PostgresBackend()
+        mock_pool = AsyncMock()
+        mock_conn = AsyncMock()
+        mock_pool.acquire = AsyncMock(return_value=mock_conn)
+        mock_pool.release = AsyncMock()
+
+        failing_txn = MagicMock()
+        failing_txn.start = AsyncMock(side_effect=asyncio.CancelledError())
+        mock_conn.transaction = MagicMock(return_value=failing_txn)
+
+        backend._pool = mock_pool
+
+        with pytest.raises(asyncio.CancelledError):
+            async with backend.transaction():
+                pytest.fail("body should not execute when __aenter__ raises")
+
+        mock_pool.release.assert_called_once_with(mock_conn)
+
+    @pytest.mark.asyncio
+    async def test_release_failure_does_not_mask_original_error(self):
+        """If conn release also fails after a txn-start failure, the
+        ORIGINAL txn-start error must still propagate — the release
+        warning is logged, not raised."""
+        from src.db.postgres_backend import PostgresBackend
+
+        backend = PostgresBackend()
+        mock_pool = AsyncMock()
+        mock_conn = AsyncMock()
+        mock_pool.acquire = AsyncMock(return_value=mock_conn)
+        mock_pool.release = AsyncMock(side_effect=RuntimeError("release failed"))
+
+        failing_txn = MagicMock()
+        failing_txn.start = AsyncMock(side_effect=RuntimeError("original txn-start failure"))
+        mock_conn.transaction = MagicMock(return_value=failing_txn)
+
+        backend._pool = mock_pool
+
+        # The ORIGINAL error wins; the release error is swallowed.
+        with pytest.raises(RuntimeError, match="original txn-start failure"):
+            async with backend.transaction():
+                pytest.fail("body should not execute when __aenter__ raises")
