@@ -306,3 +306,64 @@ async def test_acquire_timeout_passes_through_in_context_form():
         await wrapped.close()
 
     assert captured.get('timeout') == 5, f"timeout not forwarded: {captured}"
+
+
+# ============================================================================
+# Wedged-loop recovery (PR #226 followup #1)
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_close_is_idempotent():
+    """Second close() must be a no-op. Recovery path can issue concurrent
+    close() calls when multiple failed-health-check tasks race; without
+    idempotency the second one re-stops the (already-stopped) loop and
+    re-issues raw_pool.close which is undefined-behavior on asyncpg.
+    """
+    raw_pool = MagicMock()
+    raw_pool.close = AsyncMock()
+
+    wrapped = ExecutorPool(raw_pool)
+    await wrapped.close()
+    raw_pool.close.assert_called_once()
+
+    # Second call must not invoke raw_pool.close again.
+    await wrapped.close()
+    raw_pool.close.assert_called_once()
+    assert wrapped._closed_flag is True
+
+
+@pytest.mark.asyncio
+async def test_close_returns_when_raw_pool_close_hangs():
+    """If raw_pool.close() hangs forever (executor loop wedged scenario,
+    observed live 2026-04-27 → asyncpg "Pool.close() is taking over 60
+    seconds"), ExecutorPool.close() must still return within the bounded
+    timeout so the postgres backend's recovery path can release
+    _init_lock and proceed with slow-path recreate.
+    """
+    hang_started = threading.Event()
+
+    async def hung_close():
+        hang_started.set()
+        # Sleep "forever" — a wait_for-bounded close must terminate us.
+        await asyncio.sleep(3600)
+
+    raw_pool = MagicMock()
+    raw_pool.close = hung_close
+
+    wrapped = ExecutorPool(raw_pool)
+
+    # Shrink production 10s timeout to 0.5s for fast test.
+    import src.db.executor_pool as ep_mod
+    original_close_timeout = ep_mod.CLOSE_TIMEOUT_SECONDS
+    ep_mod.CLOSE_TIMEOUT_SECONDS = 0.5
+    try:
+        # close() must return within ~0.5s (close timeout) + 2s (thread
+        # join) + slack. If the wedge isn't bounded, this hangs.
+        await asyncio.wait_for(wrapped.close(), timeout=5.0)
+    finally:
+        ep_mod.CLOSE_TIMEOUT_SECONDS = original_close_timeout
+
+    assert wrapped._closed_flag is True
+    assert hang_started.is_set(), (
+        "raw_pool.close was never scheduled — wedged-loop test invalid"
+    )

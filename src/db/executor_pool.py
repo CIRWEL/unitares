@@ -16,8 +16,18 @@ Caller surface is unchanged: handlers still write
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# Bounded timeout for ExecutorPool.close(). If the executor loop is wedged
+# (asyncpg released connections but DISCARD ALL responses unread, observed
+# 2026-04-27), close() must still return so the postgres backend's recovery
+# path can release _init_lock and proceed. Module-level so tests can patch.
+CLOSE_TIMEOUT_SECONDS = 10.0
+THREAD_JOIN_TIMEOUT_SECONDS = 2.0
 
 
 async def _await_on_loop(target: Any, loop: asyncio.AbstractEventLoop) -> Any:
@@ -156,6 +166,13 @@ class ExecutorPool:
         # so the asyncpg pool is created on the executor loop — asyncpg
         # connections are loop-bound (architect's per-thread pinning).
         self._raw_pool = raw_pool
+        # Close coordination: lock serializes concurrent close() callers;
+        # done event lets the second caller AWAIT the first's completion
+        # rather than return prematurely while raw_pool.close() is still
+        # in flight (council-found bug pre-shipping).
+        self._close_lock = asyncio.Lock()
+        self._close_done = asyncio.Event()
+        self._closed_flag = False
         self._loop = asyncio.new_event_loop()
         self._loop_ready = threading.Event()
         self._thread = threading.Thread(
@@ -175,6 +192,9 @@ class ExecutorPool:
         means the pool and all its connections are bound to that loop.
         """
         instance = cls.__new__(cls)
+        instance._close_lock = asyncio.Lock()
+        instance._close_done = asyncio.Event()
+        instance._closed_flag = False
         instance._loop = asyncio.new_event_loop()
         instance._loop_ready = threading.Event()
         instance._thread = threading.Thread(
@@ -219,13 +239,94 @@ class ExecutorPool:
         return self._raw_pool.get_max_size()
 
     async def close(self) -> None:
-        # Teardown order matters (architect): close the raw pool ON the
-        # executor loop (asyncpg connections are loop-bound), THEN stop
-        # the loop, THEN join the thread.
+        # Concurrent close() callers must serialize, not race the
+        # check-then-set on _closed_flag. Recovery path is gated by
+        # postgres_backend._init_lock, but daemon-shutdown can call
+        # close() concurrently with recovery — that's the race the
+        # lock guards against. Second caller awaits the done-event so
+        # they see a fully-closed pool, not a half-closed one (council).
+        async with self._close_lock:
+            if self._closed_flag:
+                # Already closed (or close in progress and done). Wait
+                # for completion before returning so caller sees a
+                # consistent state.
+                await self._close_done.wait()
+                return
+            self._closed_flag = True
+
+        # Teardown order matters (architect): close the raw pool ON
+        # the executor loop (asyncpg connections are loop-bound),
+        # THEN stop the loop, THEN join the thread.
+        #
+        # Bounded wait: if the executor loop is wedged (asyncpg
+        # released connections but PG-side responses unread —
+        # observed 2026-04-27), _await_on_loop hangs. wait_for
+        # guarantees the caller (postgres_backend recovery path
+        # holding _init_lock) returns within CLOSE_TIMEOUT_SECONDS.
+        # If the loop never drains we cancel the orphaned task on
+        # the executor loop (CPython #105836: wait_for cancellation
+        # does NOT propagate across run_coroutine_threadsafe), then
+        # force-stop and abandon. Daemon thread dies with process.
+        _to_reraise: BaseException | None = None
         try:
-            await _await_on_loop(lambda: self._raw_pool.close(), self._loop)
-        finally:
-            self._loop.call_soon_threadsafe(self._loop.stop)
-            await asyncio.get_event_loop().run_in_executor(
-                None, self._thread.join, 5.0
+            await asyncio.wait_for(
+                _await_on_loop(
+                    lambda: self._raw_pool.close(), self._loop,
+                ),
+                timeout=CLOSE_TIMEOUT_SECONDS,
             )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "ExecutorPool.close() timed out — executor loop "
+                "wedged; cancelling orphan task and abandoning thread."
+            )
+            self._cancel_orphan_tasks_on_executor_loop()
+        except BaseException as e:
+            # BaseException (CancelledError, KeyboardInterrupt,
+            # GeneratorExit, Exception subclasses) must NOT bypass
+            # teardown — the loop thread would keep running. Log,
+            # capture, and fall through to finally. Re-raise after
+            # teardown so callers still see cancellation/Ctrl-C.
+            logger.warning(
+                f"ExecutorPool.close() interrupted: "
+                f"{type(e).__name__}: {e}"
+            )
+            _to_reraise = e
+        finally:
+            try:
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            except Exception:
+                pass
+            try:
+                await asyncio.get_event_loop().run_in_executor(
+                    None, self._thread.join, THREAD_JOIN_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                pass
+            self._close_done.set()
+
+        if _to_reraise is not None:
+            raise _to_reraise
+
+    def _cancel_orphan_tasks_on_executor_loop(self) -> None:
+        """Cancel any pending tasks on the executor loop without awaiting.
+
+        Called when wait_for(close()) timed out — wait_for cancels its
+        own outer awaitable but the run_coroutine_threadsafe-scheduled
+        coroutine on the executor loop keeps running (CPython #105836).
+        Without this, raw_pool.close() runs to completion (or hangs
+        forever) on a thread whose Python-side caller already moved on,
+        producing "Task was destroyed but it is pending" warnings on
+        eventual GC and tying up the executor thread.
+
+        Best-effort: posts cancel() calls; doesn't await them. The
+        finally block's loop.stop() will exit the loop after the
+        cancellations land or after the next iteration.
+        """
+        def _cancel_all():
+            for task in asyncio.all_tasks(self._loop):
+                task.cancel()
+        try:
+            self._loop.call_soon_threadsafe(_cancel_all)
+        except Exception:
+            pass
