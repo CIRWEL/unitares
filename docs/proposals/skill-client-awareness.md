@@ -6,9 +6,6 @@ author_session: agent-46187444-bd2 (Claude Opus 4.7 / claude_code)
 review_target: parallel dialectic-knowledge-architect + feature-dev:code-reviewer subagents
 unblocks: nothing — this is a structural addition, not a fix
 related: docs/ontology/s15-server-side-skills.md (canonical skill bundle), CLAUDE.md (per-client bootstrap)
-council_reviews:
-  - skill-client-awareness.dialectic-review.md (recommend_abandon w/ carve-out)
-  - skill-client-awareness.code-review.md (specification-gap, 5 findings)
 abandonment_basis: |
   Proposal §5 named the abandonment condition: "if §3.4 [what failure mode does this
   prevent] doesn't surface a concrete answer during council review, the right outcome
@@ -23,7 +20,7 @@ abandonment_basis: |
 
 # Proposal: `client-awareness` skill (ABANDONED)
 
-> **Status: ABANDONED 2026-04-25 per council reviews.** Both subagent reviews (`skill-client-awareness.dialectic-review.md` and `skill-client-awareness.code-review.md`) recommend against shipping. The proposal text below is preserved as-authored; do not revise in place. Future agents considering a similar skill should read both reviews first — particularly the dialectic reviewer's carve-out (incident-driven bootstrap enrichment + `tool_descriptions.json` extension), which is the cheap additive path the council endorsed in lieu of this skill.
+> **Status: ABANDONED 2026-04-25 per council reviews.** Both parallel subagent reviews (`dialectic-knowledge-architect` and `feature-dev:code-reviewer`) recommend against shipping. The proposal text below is preserved as-authored; do not revise in place. The dialectic reviewer's carve-out (incident-driven bootstrap enrichment + `tool_descriptions.json` extension) is the cheap additive path the council endorsed in lieu of this skill.
 
 ## 1. Why this exists
 
@@ -83,7 +80,7 @@ These need to be resolved before this skill ships:
 Run the parallel-subagent council pattern per `feedback_design-doc-council-review.md`:
 - `dialectic-knowledge-architect` reviews §3.1 and §3.3 specifically (authority overlap, asymmetric teaching).
 - `feature-dev:code-reviewer` checks §3.2 (drift class, freshness model) against actual maintenance cost of similar skills already in the bundle.
-- A second pass after the council writes companion `*.dialectic-review.md` and `*.code-review.md` files (matches the `compute-meter-v2*` proposal pattern).
+- A second pass after the council writes its parallel review notes (matches the `compute-meter-v2*` proposal pattern).
 - Only then: decide whether to add to `unitares/skills/`, to `tool_descriptions.json`, or to abandon.
 
 If §3.4 ("what failure mode does this prevent") doesn't surface a concrete answer during council review, the right outcome is **abandonment**, not implementation. Per the 2026-04-25 v6-paper-restraint memory and the §6-cure-narrows-S15-e empirical update: **default to reducing exposed claims, not adding**.

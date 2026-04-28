@@ -5,11 +5,6 @@ supersedes: docs/proposals/compute-meter-v2.md
 author: Kenny Wang (with Claude)
 date: 2026-04-25
 last_amended: 2026-04-25 (round-3 corrections inline)
-council_inputs:
-  - docs/proposals/compute-meter-v2.dialectic-review.md
-  - docs/proposals/compute-meter-v2.code-review.md
-  - docs/proposals/compute-meter-v2.1.dialectic-review.md
-  - docs/proposals/compute-meter-v2.1.code-review.md
 tags: [observability, calibration, ontology, EISV-adjacent]
 ---
 
@@ -409,14 +404,14 @@ Phase 0 ships in `discord-dispatch`. Phase 1 ships in `unitares`. If Phase 0 shi
 
 ### Round 2 → v2.1 (originally incorporated)
 
-From `compute-meter-v2.dialectic-review.md`:
+From the v2 dialectic review:
 - ✅ Firewall claim corrected: 3 layers + 1 future (was: 3 layers, claimed enforcement that didn't exist)
 - ✅ Action meter gating made explicit and stricter than compute meter
 - ✅ `complexity` demotion: falsifiable threshold + owning phase
 - ✅ Doctrine renamed "no cross-substrate combination"
 - ✅ Substrate-as-convenience acknowledged
 
-From `compute-meter-v2.code-review.md`:
+From the v2 code review:
 - ✅ Role-firewall claim dropped; replaced with 3 implementable layers
 - ✅ Partition maintenance functions + background task in Phase 1 (silent-data-loss fix)
 - ✅ `search_path` extended; schema-qualified convention documented
@@ -430,7 +425,7 @@ From `compute-meter-v2.code-review.md`:
 
 ### Round 3 → v2.1 amended (this revision)
 
-From `compute-meter-v2.1.dialectic-review.md`:
+From the v2.1 dialectic review:
 - ✅ Layer 3 honestly framed as audit-trail/marker, not enforcement
 - ✅ MAE threshold given a variance floor (≥30 distinct complexity values per agent) to exclude degenerate self-reporters
 - ✅ Doctrine clarified: cross-substrate aggregation forbidden on raw effort; permitted on dimensionless derived metrics
@@ -438,7 +433,7 @@ From `compute-meter-v2.1.dialectic-review.md`:
 - ✅ `agent_id` type: `TEXT` not `UUID` (matches `audit.outcome_events.agent_id`)
 - ✅ 18-month embarrassment vector (within-substrate ranking PR) named and accepted as policy-controlled
 
-From `compute-meter-v2.1.code-review.md`:
+From the v2.1 code review:
 - ✅ `asyncio.wait_for` (pattern 3) replaces incorrect `run_in_executor + sync DB client` claim — no sync DB client exists in codebase
 - ✅ `TOOLS_NEEDING_SESSION_INJECTION` added as 4th registration file (schema inheritance does NOT drive injection — name-based lookup)
 - ✅ Vigil substrate corrected to `python` (no LLM dispatch in agents/vigil/agent.py); `mixed` reserved for future capability

@@ -1,7 +1,6 @@
 # Refined Phase-5 Evidence Contract
 
 **Status:** Draft v2 (2026-04-26)
-**Companion docs:** `refined-phase-5-evidence-contract.dialectic-review.md`, `.code-review.md`, `.live-verification.md`, `.gpt-review.md`
 **Predecessor:** Calibration "honest absence" PR — surfaced the signal-starvation problem this spec resolves the supply side of.
 
 ## Revisions

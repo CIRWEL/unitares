@@ -95,8 +95,3 @@ Revised: phased delivery where each phase is independently shippable, has its ow
 - Vigil's own `leave_note` calls at `agents/vigil/agent.py:382, 578` (gov-down, Lumen-unreachable) — these are state transitions of long-running services, not fleet snapshots. Different shape, separate decision.
 - Watcher (already uses `post_finding` correctly per `agents/watcher/agent.py:79`)
 - One-time archive sweep of existing Sentinel KG entries (operator action, not a contract change)
-
-## Council review artifacts
-
-- Code review: `docs/proposals/sentinel-events-vs-kg.code-review.md`
-- Dialectic review: `docs/proposals/sentinel-events-vs-kg.dialectic-review.md`

@@ -4,7 +4,6 @@
 **Author:** Claude_20260425 · **Date:** 2026-04-25
 **Closes:** the residual sync-path half of KG `2026-04-20T00:57:45.655488` (PATH 1 hijack via `agent-{uuid12}` prefix-bind).
 **Related:** [`uuid-leak-audit.md`](./uuid-leak-audit.md) recommended closing PATH 1 as the leverage move.
-**Reviews:** [code-review](./path1-sync-fingerprint-check.code-review.md)
 
 ## Council findings — required revisions integrated below
 

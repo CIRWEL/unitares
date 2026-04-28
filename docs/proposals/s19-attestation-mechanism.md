@@ -2,7 +2,7 @@
 
 **Status:** Reviewer gate satisfied for **mechanism selection** (council pass 2026-04-25). Implementation correctness is a separate gate that lives in the implementation row's tests + adversary regression suite.
 **Companion to:** `docs/ontology/plan.md` row S19; `docs/ontology/identity.md` "Pattern — Substrate-Earned Identity"
-**Reviews:** `s19-attestation-mechanism.code-review.md` (`feature-dev:code-architect`); `s19-attestation-mechanism.adversary-review.md` (`feature-dev:code-reviewer`).
+**Reviewers:** `feature-dev:code-architect` (mechanism review); `feature-dev:code-reviewer` (adversary review). Both 2026-04-25.
 **v1 → v2 changes:** scope narrowed to 3 residents (Watcher excluded), binary-path verification added to registry + runtime check, PID start-time mitigation made required not optional, operator pre-seed enrollment confirmed as default, launchctl backend pinned to subprocess (no PyObjC).
 
 ---
@@ -180,7 +180,7 @@ Each step is single-concern; ships in order. Total scope ≈ 6 PRs. Watcher excl
 
 ## Reviewer gate state
 
-- **Mechanism selection: SATISFIED 2026-04-25.** M3-v2 is the chosen mechanism. Council pass produced two review docs in this directory (`*.code-review.md`, `*.adversary-review.md`). All Q1-Q5 forcing questions answered. All adversary-reviewer critical issues addressed in v2 (binary-path constraint added; PID-reuse mitigation made required; Watcher excluded; operator pre-seed default). All architect verdict constraints addressed in v2 (Watcher split → exclusion; pre-seed enrollment; step 2a PID-reuse mitigation now step 3 sub-7 in sequencing).
+- **Mechanism selection: SATISFIED 2026-04-25.** M3-v2 is the chosen mechanism. Council pass produced parallel architect + adversary reviews. All Q1-Q5 forcing questions answered. All adversary-reviewer critical issues addressed in v2 (binary-path constraint added; PID-reuse mitigation made required; Watcher excluded; operator pre-seed default). All architect verdict constraints addressed in v2 (Watcher split → exclusion; pre-seed enrollment; step 2a PID-reuse mitigation now step 3 sub-7 in sequencing).
 - **Implementation correctness: NOT YET GATED.** That gate lives in the implementation row's regression suite (§Sequencing step 7) and a follow-up adversary-test run on the actual implementation. Implementation row may now open.
 
 ## Implementation row authorization

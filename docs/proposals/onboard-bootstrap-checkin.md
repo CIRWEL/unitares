@@ -5,9 +5,6 @@ amended: 2026-04-25
 ack_passed: 2026-04-25
 author_session: agent-b9b3e789-9c7 (Claude Opus 4.7 / claude_code, parent 14d4a73c)
 review_target: dialectic-knowledge-architect + feature-dev:code-reviewer (parallel, 2026-04-25)
-council_reviews:
-  - onboard-bootstrap-checkin.dialectic-review.md (recommend_proceed_with_caveats, 5 caveats)
-  - onboard-bootstrap-checkin.code-review.md (implementable-with-amendments, 6 findings)
 amendment_basis: |
   v2 (initial amendment): both reviewers converged on "proceed, but tighten" — neither
   flagged the §7.1 council trigger as worth escalating; both surfaced bounded,
@@ -38,7 +35,7 @@ related:
 
 # Proposal: Bootstrap check-in on `onboard` (v2)
 
-> **Status: AMENDED 2026-04-25 after council pass.** Both reviewers (`*.dialectic-review.md`, `*.code-review.md`) recommended proceeding with bounded fixes; neither escalated to full council. Six amendments folded in below. Per `feedback_design-doc-council-review.md`, a lightweight reviewer-ack against the diff is the right next step before code, not a second council pass.
+> **Status: AMENDED 2026-04-25 after council pass.** Both parallel council subagents (`dialectic-knowledge-architect`, `feature-dev:code-reviewer`) recommended proceeding with bounded fixes; neither escalated to full council. Six amendments folded in below. Per `feedback_design-doc-council-review.md`, a lightweight reviewer-ack against the diff is the right next step before code, not a second council pass.
 
 ## 1. Problem
 

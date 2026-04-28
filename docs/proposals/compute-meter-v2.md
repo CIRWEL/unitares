@@ -4,9 +4,6 @@ status: draft
 supersedes: docs/proposals/compute-receipt-sidecar.md
 author: Kenny Wang (with Claude)
 date: 2026-04-25
-council_inputs:
-  - docs/proposals/compute-receipt-sidecar.dialectic-review.md
-  - docs/proposals/compute-receipt-sidecar.code-review.md
 tags: [observability, calibration, ontology, EISV-adjacent]
 ---
 
@@ -239,14 +236,14 @@ For Lumen specifically: the embodied substrate stops being structurally invisibl
 
 ## Council inputs incorporated
 
-From `compute-receipt-sidecar.dialectic-review.md`:
+From the dialectic review of the v1 (compute-receipt-sidecar) draft:
 - ✅ "Receipt → meter" reframe
 - ✅ Phase 2 dropped (check-in receipts perverse)
 - ✅ `complexity` demoted to prediction validated by meter (not promoted)
 - ✅ Firewall made architectural (schema + role + contract test)
 - ✅ "Distributions, not rankings" — dashboard pane per substrate, never cross-summed
 
-From `compute-receipt-sidecar.code-review.md`:
+From the code review of the v1 (compute-receipt-sidecar) draft:
 - ✅ FK dropped; soft join via `(outcome_id, outcome_ts)` plain columns
 - ✅ Dispatch usage parser promoted to Phase 0 explicit work
 - ✅ `epoch` column added
