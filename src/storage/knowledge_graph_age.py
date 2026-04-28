@@ -493,9 +493,12 @@ class KnowledgeGraphAGE:
         """
         
         results = await db.graph_query(cypher, {"discovery_id": discovery_id})
-        
+
         if not results:
-            return None
+            # No AGE node — fall back to the SQL source-of-truth so SQL-only
+            # orphans (written while backend was postgres) are still readable.
+            row = await db.kg_get_discovery(discovery_id)
+            return self._dict_to_discovery(row)
 
         # Parse result (AGE returns agtype, need to convert)
         # graph_query returns parsed agtype directly
@@ -713,6 +716,34 @@ class KnowledgeGraphAGE:
 
         return parsed
 
+    def _dict_to_discovery(self, d: Optional[Dict[str, Any]]) -> Optional[DiscoveryNode]:
+        """Convert a knowledge.discoveries SQL row to DiscoveryNode."""
+        if not d:
+            return None
+        response_to = None
+        if d.get("response_to_id") and d.get("response_type"):
+            response_to = ResponseTo(
+                discovery_id=d["response_to_id"],
+                response_type=d["response_type"],
+            )
+        return DiscoveryNode(
+            id=d["id"],
+            agent_id=d["agent_id"],
+            type=d["type"],
+            summary=d["summary"],
+            details=d.get("details", ""),
+            tags=d.get("tags", []),
+            severity=d.get("severity"),
+            timestamp=d.get("timestamp", d.get("created_at", "")),
+            status=d.get("status", "open"),
+            related_to=d.get("related_to", []),
+            response_to=response_to,
+            references_files=d.get("references_files", []),
+            resolved_at=d.get("resolved_at"),
+            updated_at=d.get("updated_at"),
+            provenance=d.get("provenance"),
+        )
+
     def _node_to_discovery(self, node_data: Dict[str, Any]) -> Optional[DiscoveryNode]:
         """Convert AGE node data to DiscoveryNode."""
         if not node_data or "id" not in node_data:
@@ -764,17 +795,54 @@ class KnowledgeGraphAGE:
             provenance_chain=metadata.get("provenance_chain"),
         )
 
+    async def _sql_update_discovery(self, discovery_id: str, updates: Dict[str, Any]) -> bool:
+        """SQL UPDATE fallback for SQL-only discoveries that have no AGE node."""
+        from src.knowledge_graph import normalize_tags
+        db = await self._get_db()
+
+        set_parts: List[str] = []
+        params: List[Any] = []
+
+        for key in ("status", "severity", "type", "summary", "details", "last_referenced"):
+            if key in updates:
+                params.append(updates[key])
+                set_parts.append(f"{key} = ${len(params)}")
+
+        for key in ("resolved_at", "updated_at"):
+            if key in updates:
+                params.append(self._parse_optional_datetime(updates[key]))
+                set_parts.append(f"{key} = ${len(params)}")
+
+        if "tags" in updates:
+            tag_list = updates["tags"]
+            params.append(normalize_tags(tag_list) if isinstance(tag_list, list) else tag_list)
+            set_parts.append(f"tags = ${len(params)}")
+
+        if not set_parts:
+            return True
+
+        params.append(discovery_id)
+        result = await db._pool.fetchval(
+            f"UPDATE knowledge.discoveries SET {', '.join(set_parts)} WHERE id = ${len(params)} RETURNING id",
+            *params,
+        )
+        if result is not None and "tags" in updates:
+            async with db._pool.acquire() as conn:
+                await self._sync_discovery_tags(conn, discovery_id, updates.get("tags") or [])
+        return result is not None
+
     async def update_discovery(self, discovery_id: str, updates: Dict[str, Any]) -> bool:
         """Update discovery fields in AGE graph.
 
         Supports updating: status, resolved_at, updated_at, tags, severity, type,
         summary, details, and last_referenced.
+        Falls back to direct SQL UPDATE when the discovery has no AGE node.
         """
         db = await self._get_db()
 
         if not await db.graph_available():
-            logger.warning("AGE graph not available for update")
-            return False
+            logger.warning("AGE graph not available for update; falling back to SQL")
+            return await self._sql_update_discovery(discovery_id, updates)
 
         # Build SET clauses for Cypher
         set_parts = []
@@ -809,7 +877,8 @@ class KnowledgeGraphAGE:
             async with db.transaction() as conn:
                 result = await db.graph_query(cypher, params, conn=conn)
                 if not result or (isinstance(result[0], dict) and "error" in result[0]):
-                    return False
+                    # No AGE node — fall back to SQL for SQL-only orphans.
+                    return await self._sql_update_discovery(discovery_id, updates)
                 await self._sync_updated_discovery_row(conn, discovery_id, updates)
             if "summary" in updates or "details" in updates:
                 await self._refresh_embedding(discovery_id)
