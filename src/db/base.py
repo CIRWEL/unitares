@@ -149,6 +149,26 @@ class DatabaseBackend(ABC):
         pass
 
     @abstractmethod
+    async def list_recently_active_identities(
+        self,
+        cutoff: datetime,
+        limit: int = 500,
+    ) -> List[IdentityRecord]:
+        """List active identities whose last_activity_at is after cutoff,
+        ordered by last_activity_at DESC.
+
+        Distinct from list_identities(status='active') in that the ordering
+        + filter happen server-side on last_activity_at, so old-but-active
+        substrate-anchored agents (Lumen and other long-lived residents)
+        are not pushed off the result by a flood of newly-created
+        ephemeral sessions. This is the query EventDetector seeding
+        depends on — using list_identities's created_at DESC ordering
+        re-fires `agent_new` for substrate agents on every restart once
+        ephemeral session creation outpaces the seed limit.
+        """
+        pass
+
+    @abstractmethod
     async def update_identity_status(
         self,
         agent_id: str,

@@ -203,6 +203,118 @@ class TestIdentityOperations:
         assert page1[0].agent_id != page2[0].agent_id
 
     @pytest.mark.asyncio
+    async def test_list_recently_active_keeps_old_but_active_agent(self, backend):
+        """The production scenario: a substrate-anchored agent (Lumen) was
+        created months ago but is checked-in every few minutes. A flood of
+        newly-created ephemeral sessions should NOT push it off the seed
+        list — list_identities's created_at DESC ordering does that, which
+        is why every governance-mcp restart was firing a spurious
+        agent_new for Lumen (observed live 2026-04-27).
+
+        Mirroring production timing: substrate agent checks in often (most
+        recent activity), ephemerals were created later but their activity
+        timestamp is stale (one-shot session that ran once a few hours ago).
+        """
+        # Substrate agent: created 60d ago, activity 30s ago (Lumen's cadence).
+        substrate_id, _ = await _create_identity_with_agent(backend)
+        await backend.update_identity_metadata(
+            substrate_id, {"label": "Lumen"}, merge=True
+        )
+        async with backend.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE core.identities
+                SET created_at = $2, last_activity_at = $3
+                WHERE agent_id = $1
+                """,
+                substrate_id,
+                _now() - timedelta(days=60),
+                _now() - timedelta(seconds=30),
+            )
+
+        # Flood: 6 freshly-created ephemerals, each with stale activity
+        # (one-shot session ran once ~6h ago and never came back).
+        ephemeral_ids = []
+        for _ in range(6):
+            eid, _ = await _create_identity_with_agent(backend)
+            ephemeral_ids.append(eid)
+        async with backend.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE core.identities
+                SET last_activity_at = $2
+                WHERE agent_id = ANY($1)
+                """,
+                ephemeral_ids,
+                _now() - timedelta(hours=6),
+            )
+
+        cutoff = _now() - timedelta(days=7)
+
+        # Sanity: under list_identities + a tight limit, the old substrate
+        # agent is excluded — this is the production bug.
+        legacy = await backend.list_identities(status="active", limit=3)
+        assert substrate_id not in [r.agent_id for r in legacy], (
+            "test premise broken: substrate agent should be pushed off "
+            "by created_at DESC ordering when limit < total"
+        )
+
+        # Fix: list_recently_active_identities orders by last_activity_at DESC,
+        # so the substrate agent (activity 30s ago) is FIRST and survives the
+        # tight limit.
+        result = await backend.list_recently_active_identities(cutoff, limit=3)
+        assert len(result) == 3
+        assert result[0].agent_id == substrate_id, (
+            f"substrate agent (activity 30s ago) should be first, "
+            f"got {result[0].agent_id}"
+        )
+        # All ephemerals are within cutoff but ranked behind substrate;
+        # only the freshest (== oldest of the 6h-stale ones) make it.
+        assert all(r.last_activity_at >= cutoff for r in result)
+
+    @pytest.mark.asyncio
+    async def test_list_recently_active_excludes_stale(self, backend):
+        """Agents whose last_activity_at predates the cutoff must be excluded."""
+        stale_id, _ = await _create_identity_with_agent(backend)
+        active_id, _ = await _create_identity_with_agent(backend)
+
+        # Backdate stale agent's activity to 30 days ago.
+        async with backend.acquire() as conn:
+            await conn.execute(
+                "UPDATE core.identities SET last_activity_at = $2 WHERE agent_id = $1",
+                stale_id, _now() - timedelta(days=30),
+            )
+            await conn.execute(
+                "UPDATE core.identities SET last_activity_at = $2 WHERE agent_id = $1",
+                active_id, _now() - timedelta(minutes=5),
+            )
+
+        cutoff = _now() - timedelta(days=7)
+        result = await backend.list_recently_active_identities(cutoff, limit=10)
+        ids = [r.agent_id for r in result]
+        assert active_id in ids
+        assert stale_id not in ids
+
+    @pytest.mark.asyncio
+    async def test_list_recently_active_excludes_archived(self, backend):
+        """Archived/disabled identities must be excluded even if recently active."""
+        archived_id, _ = await _create_identity_with_agent(backend)
+        active_id, _ = await _create_identity_with_agent(backend)
+
+        async with backend.acquire() as conn:
+            await conn.execute(
+                "UPDATE core.identities SET last_activity_at = now() WHERE agent_id = ANY($1)",
+                [archived_id, active_id],
+            )
+        await backend.update_identity_status(archived_id, "archived")
+
+        cutoff = _now() - timedelta(days=7)
+        result = await backend.list_recently_active_identities(cutoff, limit=10)
+        ids = [r.agent_id for r in result]
+        assert active_id in ids
+        assert archived_id not in ids
+
+    @pytest.mark.asyncio
     async def test_update_identity_status(self, backend):
         agent_id, _ = await _create_identity_with_agent(backend)
         result = await backend.update_identity_status(agent_id, "disabled", disabled_at=_now())
