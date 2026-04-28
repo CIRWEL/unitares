@@ -1036,6 +1036,14 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
                 api_key=ctx.api_key or "",
                 status='active',
             )
+            # S21-b §1: hydrate dict so require_registered_agent sees the new
+            # row immediately (axiom-#3 H14). Self-healing path: this branch
+            # fires when record_agent_state finds no PG row for this agent_id.
+            try:
+                from src.agent_metadata_persistence import register_minted_agent_in_dict
+                register_minted_agent_in_dict(agent_id, status='active')
+            except Exception as hyd_err:
+                logger.debug(f"Phase eager hydration failed for {agent_id}: {hyd_err}")
             await agent_storage.record_agent_state(
                 agent_id=agent_id,
                 E=ctx.metrics_dict.get('E', 0.7),

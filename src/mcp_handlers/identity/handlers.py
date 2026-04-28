@@ -1417,6 +1417,14 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                     try:
                         db = get_db()
                         await db.update_agent_fields(agent_uuid, status="active")
+                        # S21-b §3: also write core.identities.status. The pre-S21-b
+                        # auto-unarchive only touched core.agents, generating the
+                        # 88-row identity='archived'/agent='active' inversion class
+                        # the reconciler has to clean up. Mirror both surfaces here.
+                        try:
+                            await db.update_identity_status(agent_uuid, "active", None)
+                        except Exception as _us_err:
+                            logger.warning(f"[ONBOARD] Could not sync core.identities.status: {_us_err}")
                         try:
                             srv = get_mcp_server()
                             if agent_uuid in srv.agent_metadata:

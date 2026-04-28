@@ -329,6 +329,33 @@ def require_registered_agent(arguments: Dict[str, Any]) -> Tuple[str, Optional[T
                 display_name = getattr(meta, 'display_name', None) or getattr(meta, 'label', None)
                 label = getattr(meta, 'label', None)
 
+        # S21-b §2: gate on meta.status. update_identity_status writes only PG,
+        # so the in-memory dict can hold a stale-active row for an agent that
+        # core.identities has marked archived/deleted/disabled. Without this
+        # gate, a stale-positive caller passes auth and writes against a row
+        # that downstream lifecycle code treats as terminal — the 67-row
+        # active/archived inversion observed in council pass-2 (live-verifier).
+        #
+        # Allowlist (not blocklist) so a future status value not enumerated
+        # below fails closed instead of silently passing through (council
+        # pass-2 dialectic finding #1: blocklist is fail-open on unknown).
+        if agent_found and actual_uuid in mcp_server.agent_metadata:
+            agent_status = getattr(
+                mcp_server.agent_metadata[actual_uuid], "status", "active"
+            )
+            if agent_status not in ("active", "paused", "waiting_input"):
+                # Map to the inferer's keyword so error_code lands in the
+                # right category (AGENT_ARCHIVED / AGENT_DELETED / etc.).
+                return None, error_response(
+                    f"Agent '{agent_id}' is {agent_status} and cannot accept calls.",
+                    recovery={
+                        "error_type": f"agent_{agent_status}",
+                        "agent_status": agent_status,
+                        "action": "Onboard a fresh identity with parent_agent_id set to this UUID to declare lineage.",
+                        "related_tools": ["onboard"],
+                    },
+                )
+
         if not agent_found:
             from .naming_helpers import (
                 detect_interface_context,

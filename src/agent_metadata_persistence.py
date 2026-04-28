@@ -406,3 +406,71 @@ def get_or_create_metadata(agent_id: str, **kwargs) -> AgentMetadata:
 
 # Alias for cleaner naming (backward compatible)
 register_agent = get_or_create_metadata
+
+
+def register_minted_agent_in_dict(
+    agent_uuid: str,
+    *,
+    status: str = "active",
+    label: str | None = None,
+    public_agent_id: str | None = None,
+    structured_id: str | None = None,
+    parent_agent_id: str | None = None,
+    spawn_reason: str | None = None,
+    api_key: str = "",
+) -> bool:
+    """Hydrate `agent_metadata` immediately after a fresh `core.identities` mint.
+
+    S21-b §1: closes the H14 axiom-#3 gap where freshly-minted identities
+    were invisible to `require_registered_agent` until the next bulk reload.
+    Any path that performs `db.upsert_identity` for a new UUID should call
+    this so the auth check sees the row in the same request that created it.
+
+    Returns True if a new entry was added, False if the UUID was already
+    present (no overwrite — `_load_metadata_from_postgres_async` and
+    label-update paths own existing entries).
+
+    Keying note: pass whatever string was used as the `agent_id` in the
+    preceding `db.upsert_agent` / `db.upsert_identity` call — that string
+    becomes the `core.agents.id` PK and is what `_load_metadata_from_postgres_async`
+    will key the dict by. Most call sites pass a UUID; the phases.py
+    self-healing path may pass a label. Consistency is per-callsite, not
+    enforced here.
+    """
+    if agent_uuid in agent_metadata:
+        return False
+    now = datetime.now(timezone.utc).isoformat()
+    agent_metadata[agent_uuid] = AgentMetadata(
+        agent_id=public_agent_id or label or agent_uuid,
+        status=status,
+        created_at=now,
+        last_update=now,
+        label=label,
+        public_agent_id=public_agent_id,
+        structured_id=structured_id,
+        agent_uuid=agent_uuid,
+        parent_agent_id=parent_agent_id,
+        spawn_reason=spawn_reason,
+        api_key=api_key,
+    )
+    return True
+
+
+def mirror_status_to_dict(agent_uuid: str, status: str) -> bool:
+    """Mirror a `core.identities.status` write into the in-memory dict.
+
+    S21-b §3: `db.update_identity_status` writes only PG. Without this
+    mirror, the in-memory copy stays at the prior status and
+    `require_registered_agent` returns stale-positive (live-verifier
+    observed 67 active/archived inversions).
+
+    Returns True if the in-memory entry was updated, False if the UUID
+    is not currently in the dict (nothing to mirror — the next bulk
+    reload will pick up the PG state).
+    """
+    meta = agent_metadata.get(agent_uuid)
+    if meta is None:
+        return False
+    meta.status = status
+    meta.last_update = datetime.now(timezone.utc).isoformat()
+    return True
