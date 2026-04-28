@@ -102,6 +102,7 @@ def _isolate_db_backend(monkeypatch):
     mock_backend.upsert_agent.return_value = True
     mock_backend.update_agent_fields.return_value = True
     mock_backend.list_identities.return_value = []
+    mock_backend.list_recently_active_identities.return_value = []
     mock_backend.update_identity_status.return_value = True
     mock_backend.update_identity_metadata.return_value = True
     mock_backend.verify_api_key.return_value = True

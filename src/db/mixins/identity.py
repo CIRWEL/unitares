@@ -128,6 +128,25 @@ class IdentityMixin:
                 )
             return [self._row_to_identity(r) for r in rows]
 
+    async def list_recently_active_identities(
+        self,
+        cutoff,
+        limit: int = 500,
+    ) -> List[IdentityRecord]:
+        async with self.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT identity_id, agent_id, api_key_hash, created_at, updated_at,
+                       status, parent_agent_id, spawn_reason, disabled_at, last_activity_at, metadata
+                FROM core.identities
+                WHERE status = 'active' AND last_activity_at > $1
+                ORDER BY last_activity_at DESC
+                LIMIT $2
+                """,
+                cutoff, limit,
+            )
+            return [self._row_to_identity(r) for r in rows]
+
     async def update_identity_status(
         self,
         agent_id: str,

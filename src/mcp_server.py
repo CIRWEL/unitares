@@ -680,15 +680,21 @@ async def main():
     else:
         logger.warning(continuity_message)
 
-    # Seed event detector with known agents so restarts don't fire false agent_new
+    # Seed event detector with known agents so restarts don't fire false agent_new.
+    # Uses list_recently_active_identities (server-side filter on last_activity_at,
+    # ordered DESC) rather than list_identities — the latter orders by created_at
+    # DESC, so old-but-active substrate-anchored agents (Lumen) get pushed off the
+    # seed once ephemeral session creation outpaces the limit, and every restart
+    # re-fires agent_new for them. Each governance-mcp restart in the
+    # wedge-symptom window produced one spurious "New Agent: Lumen" alert per
+    # cycle — three within ~90min observed live 2026-04-27.
     try:
         from src.event_detector import event_detector
-        identities = await db.list_identities(status="active", limit=200)
         cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        identities = await db.list_recently_active_identities(cutoff, limit=500)
         recent = [
             (ident.agent_id, ident.metadata.get("label") or ident.agent_id[:12])
             for ident in identities
-            if ident.last_activity_at and ident.last_activity_at > cutoff
         ]
         seeded = event_detector.seed_known_agents(recent)
         if seeded:
