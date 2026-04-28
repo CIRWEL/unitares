@@ -283,7 +283,6 @@ graph LR
 | [Getting Started](docs/guides/START_HERE.md) | Setup, workflows, tool modes |
 | [MCP Clients](docs/integration/MCP_CLIENTS.md) | Cursor / Claude Code / Claude Desktop config |
 | [Architecture](docs/UNIFIED_ARCHITECTURE.md) | Pipeline, verdicts, recovery, storage |
-| [Case Study](docs/CASE_STUDY.md) | Project summary and context |
 | [Troubleshooting](docs/guides/TROUBLESHOOTING.md) | Common issues |
 | [Dashboard](dashboard/README.md) | Web UI |
 | [Database](docs/operations/database_architecture.md) | PostgreSQL + AGE |

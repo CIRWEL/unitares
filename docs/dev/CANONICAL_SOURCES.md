@@ -74,7 +74,6 @@ These are useful, but they are not runtime authority:
 
 | Artifact | Status | Intended use |
 |-----|--------|--------------|
-| `docs/CASE_STUDY.md` | specialized project framing | Evaluate project scope and evidence quickly without treating it as a behavior spec |
 | Paper / preprint snapshots | versioned research framing | Explain a dated architecture and deployment snapshot; not the live canonical system description |
 | `docs/CHANGELOG.md` | release history | Track what changed over time; not a substitute for current runtime semantics |
 
