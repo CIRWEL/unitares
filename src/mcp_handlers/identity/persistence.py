@@ -115,11 +115,11 @@ async def _cache_session(
         existing_uuid = binding.get("bound_agent_id") or binding.get("agent_uuid")
         if mint_guard and existing_uuid and existing_uuid != agent_uuid:
             session_slot = session_key
+            # S21-a intentionally logs bounded non-secret session/UUID prefixes.
+            # lgtm[py/clear-text-logging-sensitive-data]
             logger.warning(
                 "[S21A_OVERWRITE_BLOCKED] in-memory session slot=%s... "
                 "existing=%s... attempted=%s... — refusing PATH 3 overwrite",
-                # S21-a intentionally logs bounded non-secret session/UUID prefixes.
-                # codeql[py/clear-text-logging-sensitive-data]
                 session_slot[:20], str(existing_uuid)[:8], agent_uuid[:8],
             )
             in_memory_blocked = True
@@ -143,7 +143,7 @@ async def _cache_session(
     except Exception as e:
         session_slot = session_key
         # S21-a intentionally logs a bounded non-secret session prefix.
-        # codeql[py/clear-text-logging-sensitive-data]
+        # lgtm[py/clear-text-logging-sensitive-data]
         logger.debug(f"In-memory session cache update failed for {session_slot[:20]}...: {e}")
 
     # If the in-memory guard fired, skip the Redis write too — the slot for
@@ -210,7 +210,7 @@ async def _cache_session(
             # WARNING level (v2.5.7): Cache failures can cause identity loss
             session_slot = session_key
             # S21-a intentionally logs a bounded non-secret session prefix.
-            # codeql[py/clear-text-logging-sensitive-data]
+            # lgtm[py/clear-text-logging-sensitive-data]
             logger.warning(f"Redis cache write failed for session {session_slot[:20]}...: {e}")
 
 
@@ -342,21 +342,21 @@ async def _redis_slot_blocks_overwrite(redis, redis_slot: str, agent_uuid: str) 
         existing_id = existing_data.get("agent_id") if isinstance(existing_data, dict) else None
         if existing_id and existing_id != agent_uuid:
             existing_prefix = existing_id[:8] if isinstance(existing_id, str) else "?"
+            # S21-a intentionally logs bounded non-secret Redis-slot/UUID prefixes.
+            # lgtm[py/clear-text-logging-sensitive-data]
             logger.warning(
                 "[S21A_OVERWRITE_BLOCKED] redis slot=%s existing=%s... attempted=%s... "
                 "— refusing PATH 3 overwrite",
-                # S21-a intentionally logs bounded non-secret Redis-slot/UUID prefixes.
-                # codeql[py/clear-text-logging-sensitive-data]
                 redis_slot, existing_prefix, agent_uuid[:8],
             )
             return True
     except Exception as e:
         fail_closed = _nx_fail_closed_enabled()
+        # S21-a intentionally logs bounded non-secret Redis-slot/UUID prefixes.
+        # lgtm[py/clear-text-logging-sensitive-data]
         logger.warning(
             "[S21A_REDIS_GUARD_READ_FAILED] redis slot=%s attempted=%s... "
             "fail_closed=%s error=%s",
-            # S21-a intentionally logs bounded non-secret Redis-slot/UUID prefixes.
-            # codeql[py/clear-text-logging-sensitive-data]
             redis_slot, agent_uuid[:8],
             fail_closed,
             e,
@@ -376,11 +376,11 @@ async def _session_cache_blocks_overwrite(session_cache, session_slot: str, agen
             existing_id = existing.get("agent_id")
             if existing_id and existing_id != agent_uuid:
                 existing_prefix = existing_id[:8] if isinstance(existing_id, str) else "?"
+                # S21-a intentionally logs bounded non-secret session/UUID prefixes.
+                # lgtm[py/clear-text-logging-sensitive-data]
                 logger.warning(
                     "[S21A_OVERWRITE_BLOCKED] session_cache slot=%s... "
                     "existing=%s... attempted=%s... — refusing PATH 3 overwrite",
-                    # S21-a intentionally logs bounded non-secret session/UUID prefixes.
-                    # codeql[py/clear-text-logging-sensitive-data]
                     session_slot[:20], existing_prefix, agent_uuid[:8],
                 )
                 return True
