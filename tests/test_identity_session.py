@@ -278,6 +278,71 @@ class TestUnifiedDeriveSessionKey:
         assert result == "explicit-123:gpt"
 
     @pytest.mark.asyncio
+    async def test_explicit_client_session_id_is_stripped(self):
+        """Leading/trailing whitespace is not part of the explicit key."""
+        from src.mcp_handlers.identity.handlers import derive_session_key
+        from src.mcp_handlers.context import SessionSignals
+
+        signals = SessionSignals(mcp_session_id="mcp-abc")
+        result = await derive_session_key(
+            signals,
+            {"client_session_id": "  explicit-123  "},
+        )
+        assert result == "explicit-123"
+
+    @pytest.mark.asyncio
+    async def test_whitespace_only_client_session_id_falls_through(self):
+        """Whitespace-only client_session_id is not an explicit proof signal."""
+        from src.mcp_handlers.identity.handlers import derive_session_key
+        from src.mcp_handlers.context import get_session_resolution_source, SessionSignals
+
+        args = {"client_session_id": "\n\n\t  "}
+        signals = SessionSignals(mcp_session_id="mcp-abc")
+        result = await derive_session_key(signals, args)
+        assert result == "mcp:mcp-abc"
+        assert "client_session_id" not in args
+        assert get_session_resolution_source() == "mcp_session_id"
+
+    @pytest.mark.asyncio
+    async def test_oversized_client_session_id_is_bounded(self):
+        """Overlong explicit IDs are truncated before cache/DB key use."""
+        from src.mcp_handlers.identity.handlers import derive_session_key
+        from src.mcp_handlers.context import SessionSignals
+
+        result = await derive_session_key(
+            SessionSignals(),
+            {"client_session_id": "a" * 300},
+        )
+        assert result == "a" * 256
+
+    @pytest.mark.asyncio
+    async def test_control_chars_in_client_session_id_are_sanitized(self):
+        """Control characters are reduced to inert key text."""
+        from src.mcp_handlers.identity.handlers import derive_session_key
+        from src.mcp_handlers.context import SessionSignals
+
+        result = await derive_session_key(
+            SessionSignals(),
+            {"client_session_id": "session\x00key\nnext"},
+        )
+        assert result == "session_key_next"
+
+    @pytest.mark.asyncio
+    async def test_path_traversal_client_session_id_is_sanitized(self):
+        """Path traversal shapes are not preserved as path-like keys."""
+        from src.mcp_handlers.identity.handlers import derive_session_key
+        from src.mcp_handlers.context import SessionSignals
+
+        result = await derive_session_key(
+            SessionSignals(),
+            {"client_session_id": "../../etc/passwd"},
+        )
+        assert "/" not in result
+        assert "\\" not in result
+        assert ".." not in result
+        assert "etc_passwd" in result
+
+    @pytest.mark.asyncio
     async def test_priority_2_mcp_session_id(self):
         """mcp_session_id from signals is second priority."""
         from src.mcp_handlers.identity.handlers import derive_session_key
@@ -1292,6 +1357,37 @@ class TestCacheSession:
             assert _fallback_cache["sess-rich"]["agent_id"] == "uuid-rich"
             assert _fallback_cache["sess-rich"]["display_agent_id"] == "Claude_20260206"
             assert _fallback_cache["sess-rich"]["label"] == "RichLabel"
+        finally:
+            _fallback_cache.clear()
+
+    @pytest.mark.asyncio
+    async def test_cache_with_spawn_reason_uses_rich_payload(self, mock_raw_redis):
+        """Lineage metadata should survive Redis/fallback cache hydration."""
+        from src.mcp_handlers.identity.handlers import _cache_session
+        from src.cache.session_cache import _fallback_cache
+
+        mock_cache = AsyncMock()
+
+        async def _get_raw():
+            return mock_raw_redis
+
+        _fallback_cache.clear()
+        try:
+            with patch("src.mcp_handlers.identity.persistence._redis_cache", None), \
+                 patch("src.cache.get_session_cache", return_value=mock_cache), \
+                 patch("src.cache.redis_client.get_redis", new=_get_raw):
+                await _cache_session(
+                    "sess-spawn",
+                    "uuid-spawn",
+                    display_agent_id="uuid-spawn",
+                    spawn_reason="dispatch_auto_mint",
+                )
+
+            mock_raw_redis.setex.assert_called_once()
+            stored_data = json.loads(mock_raw_redis.setex.call_args[0][2])
+            assert stored_data["agent_id"] == "uuid-spawn"
+            assert stored_data["spawn_reason"] == "dispatch_auto_mint"
+            assert _fallback_cache["sess-spawn"]["spawn_reason"] == "dispatch_auto_mint"
         finally:
             _fallback_cache.clear()
 

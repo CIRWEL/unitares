@@ -30,6 +30,46 @@ from config.governance_config import GovernanceConfig
 logger = get_logger(__name__)
 
 
+def _created_identity_outcome(*, force_new: bool, spawn_reason: Optional[str]) -> str:
+    """Classify a successful PATH 3 mint separately from the input lane."""
+    if spawn_reason in {"dispatch_auto_mint", "auto_onboard_no_session"}:
+        return "minted_after_resume_miss"
+    if force_new:
+        return "minted_force_new"
+    return "minted_fresh"
+
+
+def _audit_session_resolve_miss(
+    *,
+    session_key: str,
+    reason: str,
+    resume: bool,
+    force_new: bool,
+    token_agent_uuid: Optional[str],
+    client_hint: Optional[str],
+    model_type: Optional[str],
+) -> None:
+    try:
+        from src.audit_log import audit_logger as _audit
+        try:
+            from ..context import get_session_resolution_source
+            resolution_source = get_session_resolution_source()
+        except Exception:
+            resolution_source = None
+        _audit.log_session_resolve_miss_observed(
+            session_key=session_key,
+            resolution_source=resolution_source,
+            reason=reason,
+            resume=resume,
+            force_new=force_new,
+            token_agent_uuid_present=bool(token_agent_uuid),
+            client_hint=client_hint,
+            model_type=model_type,
+        )
+    except Exception as e:
+        logger.debug(f"[PATH2_RESUME_MISS] audit write failed (non-fatal): {e}")
+
+
 # =============================================================================
 # AGENT ID GENERATION (model+date format)
 # =============================================================================
@@ -583,6 +623,7 @@ async def resolve_session_identity(
                                 "archived": is_archived,
 
                                 "source": "redis",
+                                "identity_resolution_outcome": "resumed",
 
                                 "trajectory_verified": traj_result.get("verified"),
 
@@ -634,6 +675,15 @@ async def resolve_session_identity(
                     "[PATH2_RESUME_MISS] session_key=%s... no PG session "
                     "row, refusing silent PATH 3 fall-through (S21-a)",
                     session_key[:20],
+                )
+                _audit_session_resolve_miss(
+                    session_key=session_key,
+                    reason="pg_session_missing",
+                    resume=resume,
+                    force_new=force_new,
+                    token_agent_uuid=token_agent_uuid,
+                    client_hint=client_hint,
+                    model_type=model_type,
                 )
                 return {
                     "resume_failed": True,
@@ -721,6 +771,7 @@ async def resolve_session_identity(
                     "archived": is_archived,
 
                     "source": "postgres",
+                    "identity_resolution_outcome": "resumed",
 
                     "trajectory_verified": traj_result.get("verified"),
 
@@ -741,6 +792,15 @@ async def resolve_session_identity(
             # force_new=True from the caller. Same token-bearing carve-out
             # as the no-row branch — let PATH 2.8 try the rebind.
             if resume and not token_agent_uuid:
+                _audit_session_resolve_miss(
+                    session_key=session_key,
+                    reason="pg_lookup_exception",
+                    resume=resume,
+                    force_new=force_new,
+                    token_agent_uuid=token_agent_uuid,
+                    client_hint=client_hint,
+                    model_type=model_type,
+                )
                 return {
                     "resume_failed": True,
                     "error": "session_resolve_miss",
@@ -853,6 +913,7 @@ async def resolve_session_identity(
                         "created": False,
                         "persisted": True,
                         "source": "token_rebind",
+                        "identity_resolution_outcome": "resumed",
                     }
                 else:
                     logger.info(f"[TOKEN_REBIND] Agent {token_agent_uuid[:8]}... is {status}, not resumable")
@@ -970,6 +1031,7 @@ async def resolve_session_identity(
             # existing live binding for the same session_key (S21-a).
             await _cache_session(
                 session_key, agent_uuid, display_agent_id=agent_id,
+                spawn_reason=spawn_reason,
                 mint_guard=True,
             )
 
@@ -984,6 +1046,11 @@ async def resolve_session_identity(
                 "created": True,
                 "persisted": True,
                 "source": "created",
+                "spawn_reason": spawn_reason,
+                "identity_resolution_outcome": _created_identity_outcome(
+                    force_new=force_new,
+                    spawn_reason=spawn_reason,
+                ),
             }
             return result
 
@@ -996,6 +1063,7 @@ async def resolve_session_identity(
     # existing live binding for the same session_key (S21-a).
     await _cache_session(
         session_key, agent_uuid, display_agent_id=agent_id, label=label,
+        spawn_reason=spawn_reason,
         mint_guard=True,
     )
     logger.debug(f"Created new agent (lazy): {agent_id} (uuid: {agent_uuid[:8]}...) label={label}")
@@ -1009,6 +1077,11 @@ async def resolve_session_identity(
         "created": True,
         "persisted": False,
         "source": "memory_only",
+        "spawn_reason": spawn_reason,
+        "identity_resolution_outcome": _created_identity_outcome(
+            force_new=force_new,
+            spawn_reason=spawn_reason,
+        ),
     }
     return result
 

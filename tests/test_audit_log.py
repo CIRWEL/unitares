@@ -66,6 +66,7 @@ class TestAuditEntry:
         assert entry.confidence == 0.85
         assert entry.details == {"threshold": 0.9}
         assert entry.metadata is None
+        assert entry.session_id is None
 
     def test_with_metadata(self):
         from src.audit_log import AuditEntry
@@ -165,6 +166,40 @@ class TestLogIdentityResolutionObserved:
         assert d["pin_match_scope"] == "client_model"
         assert d["token_iat"] is None
         assert d["token_exp"] is None
+
+
+# ===========================================================================
+# log_session_resolve_miss_observed
+# ===========================================================================
+class TestLogSessionResolveMissObserved:
+    def test_writes_queryable_session_miss_event(self, tmp_path):
+        logger = _make_logger(tmp_path)
+        logger.log_session_resolve_miss_observed(
+            session_key="agent-no-row-test",
+            resolution_source="explicit_client_session_id",
+            reason="pg_session_missing",
+            resume=True,
+            force_new=False,
+            token_agent_uuid_present=False,
+            client_hint="codex",
+            model_type="gpt-5-codex",
+        )
+
+        entries = _read_jsonl(logger.log_file)
+        assert len(entries) == 1
+        e = entries[0]
+        assert e["event_type"] == "session_resolve_miss_observed"
+        assert e["agent_id"] is None
+        assert e["session_id"] == "agent-no-row-test"
+        d = e["details"]
+        assert d["session_key_prefix"] == "agent-no-row-test"
+        assert d["resolution_source"] == "explicit_client_session_id"
+        assert d["reason"] == "pg_session_missing"
+        assert d["resume"] is True
+        assert d["force_new"] is False
+        assert d["token_agent_uuid_present"] is False
+        assert d["client_hint"] == "codex"
+        assert d["model_type"] == "gpt-5-codex"
 
 
 # ===========================================================================

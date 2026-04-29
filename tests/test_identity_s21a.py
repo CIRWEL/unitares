@@ -186,10 +186,13 @@ class TestS21APath2FailClosed:
         with patch("src.mcp_handlers.identity.persistence._redis_cache", False), \
              patch("src.mcp_handlers.identity.resolution.get_db", return_value=db), \
              patch("src.mcp_handlers.identity.persistence.get_db", return_value=db), \
-             patch("src.mcp_handlers.identity.handlers.get_db", return_value=db):
+             patch("src.mcp_handlers.identity.handlers.get_db", return_value=db), \
+             patch("src.audit_log.audit_logger.log_session_resolve_miss_observed") as log_miss:
             result = await resolve_session_identity(
                 session_key="agent-no-row-test",
                 resume=True,
+                client_hint="codex",
+                model_type="gpt-5-codex",
             )
 
         assert result.get("resume_failed") is True, (
@@ -201,6 +204,15 @@ class TestS21APath2FailClosed:
         # No silent mint
         assert result.get("created") is not True
         assert not result.get("agent_uuid")
+        log_miss.assert_called_once()
+        miss_kwargs = log_miss.call_args.kwargs
+        assert miss_kwargs["session_key"] == "agent-no-row-test"
+        assert miss_kwargs["reason"] == "pg_session_missing"
+        assert miss_kwargs["resume"] is True
+        assert miss_kwargs["force_new"] is False
+        assert miss_kwargs["token_agent_uuid_present"] is False
+        assert miss_kwargs["client_hint"] == "codex"
+        assert miss_kwargs["model_type"] == "gpt-5-codex"
 
     @pytest.mark.asyncio
     async def test_resume_true_pg_exception_returns_resume_failed(self):
@@ -220,7 +232,8 @@ class TestS21APath2FailClosed:
 
         with patch("src.mcp_handlers.identity.persistence._redis_cache", False), \
              patch("src.mcp_handlers.identity.resolution.get_db", return_value=db), \
-             patch("src.mcp_handlers.identity.persistence.get_db", return_value=db):
+             patch("src.mcp_handlers.identity.persistence.get_db", return_value=db), \
+             patch("src.audit_log.audit_logger.log_session_resolve_miss_observed") as log_miss:
             result = await resolve_session_identity(
                 session_key="agent-pg-blip",
                 resume=True,
@@ -229,6 +242,9 @@ class TestS21APath2FailClosed:
         assert result.get("resume_failed") is True
         assert result.get("error") == "session_resolve_miss"
         assert result.get("created") is not True
+        log_miss.assert_called_once()
+        assert log_miss.call_args.kwargs["session_key"] == "agent-pg-blip"
+        assert log_miss.call_args.kwargs["reason"] == "pg_lookup_exception"
 
     @pytest.mark.asyncio
     async def test_dispatch_retry_declares_dispatch_auto_mint(self):
@@ -389,3 +405,58 @@ class TestS21AFollowupSpawnReason:
             f"every session_resolve_miss-driven onboard mint persists with NULL "
             f"spawn_reason and the no-lineage ghost-fork rate doesn't move."
         )
+
+
+class TestS21BSpawnReasonPlumbing:
+
+    @pytest.mark.asyncio
+    async def test_cache_session_records_spawn_reason_in_memory(self):
+        """S21-b: session binding cache must preserve fork lineage."""
+        from src.mcp_handlers.identity.persistence import _cache_session
+
+        session_key = "agent-s21b-cache"
+        agent_uuid = "33333333-3333-4333-8333-333333333333"
+        in_memory = {}
+
+        with patch("src.mcp_handlers.identity.persistence._redis_cache", False), \
+             patch("src.mcp_handlers.identity.shared._session_identities", in_memory):
+            await _cache_session(
+                session_key,
+                agent_uuid,
+                display_agent_id=agent_uuid,
+                spawn_reason="dispatch_auto_mint",
+                mint_guard=True,
+            )
+
+        assert in_memory[session_key]["bound_agent_id"] == agent_uuid
+        assert in_memory[session_key]["spawn_reason"] == "dispatch_auto_mint"
+
+    @pytest.mark.asyncio
+    async def test_force_new_lazy_persist_uses_cached_spawn_reason(self):
+        """S21-b: middleware PATH-3 mints must keep lineage when persisted."""
+        from src.mcp_handlers.identity.handlers import resolve_session_identity
+        from src.mcp_handlers.identity.persistence import ensure_agent_persisted
+
+        db = _make_db_no_session()
+        in_memory = {}
+
+        with patch("src.mcp_handlers.identity.persistence._redis_cache", False), \
+             patch("src.mcp_handlers.identity.shared._session_identities", in_memory), \
+             patch("src.mcp_handlers.identity.resolution.get_db", return_value=db), \
+             patch("src.mcp_handlers.identity.persistence.get_db", return_value=db):
+            result = await resolve_session_identity(
+                session_key="agent-s21b-force-new",
+                force_new=True,
+                spawn_reason="dispatch_auto_mint",
+            )
+            await ensure_agent_persisted(
+                result["agent_uuid"],
+                "agent-s21b-force-new",
+            )
+
+        assert result["created"] is True
+        assert result["spawn_reason"] == "dispatch_auto_mint"
+        assert result["identity_resolution_outcome"] == "minted_after_resume_miss"
+        assert db.upsert_agent.call_args.kwargs["spawn_reason"] == "dispatch_auto_mint"
+        assert db.upsert_identity.call_args.kwargs["spawn_reason"] == "dispatch_auto_mint"
+        assert in_memory["agent-s21b-force-new"]["spawn_reason"] == "dispatch_auto_mint"

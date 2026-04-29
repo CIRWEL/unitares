@@ -29,6 +29,13 @@ async def run_tool_dispatch_pipeline(
 
     ctx = DispatchContext()
 
+    # Normalize wrappers at the runner boundary so identity/continuity logic
+    # sees explicit inputs regardless of how a caller orders pre_steps.
+    if "kwargs" in arguments:
+        from src.mcp_handlers.middleware.params_step import unwrap_kwargs
+
+        name, arguments, ctx = await unwrap_kwargs(name, arguments, ctx)
+
     for step in pre_steps:
         result = await step(name, arguments, ctx)
         if isinstance(result, list):

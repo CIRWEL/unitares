@@ -20,6 +20,7 @@ def build_identity_response_data(
     resumed: Optional[bool],
     session_continuity: Optional[Dict[str, Any]],
     verbose: bool,
+    identity_resolution_outcome: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build the identity() response payload."""
     response_data = {
@@ -36,6 +37,8 @@ def build_identity_response_data(
             "display_name": display_name,
         },
     }
+    if identity_resolution_outcome:
+        response_data["identity_resolution_outcome"] = identity_resolution_outcome
     # S1-a: surface ownership_proof_version at top level (see build_onboard_response_data).
     if continuity_support.get("ownership_proof_version") is not None:
         response_data["ownership_proof_version"] = continuity_support["ownership_proof_version"]
@@ -88,6 +91,7 @@ def build_identity_diag_payload(
     continuity_support: Dict[str, Any],
     continuity_token: Optional[str],
     identity_status: str,
+    identity_resolution_outcome: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build the lightweight identity diagnostic payload used by fast-return paths."""
     payload = {
@@ -104,6 +108,8 @@ def build_identity_diag_payload(
             "display_name": display_name,
         },
     }
+    if identity_resolution_outcome:
+        payload["identity_resolution_outcome"] = identity_resolution_outcome
     if continuity_token:
         payload["continuity_token"] = continuity_token
     return payload
@@ -128,6 +134,7 @@ def build_onboard_response_data(
     continuity_token: Optional[str],
     system_activity: Optional[dict],
     tool_mode_info: Optional[dict],
+    identity_resolution_outcome: Optional[str] = None,
 ) -> dict:
     """Build the onboard() response payload."""
     next_calls = [
@@ -215,6 +222,8 @@ def build_onboard_response_data(
         "date_context": {"date": datetime.now().strftime("%Y-%m-%d"), "source": "mcp-server"},
         "next_step": "Call process_agent_update with response_text describing your work",
     }
+    if identity_resolution_outcome:
+        result["identity_resolution_outcome"] = identity_resolution_outcome
     # S1-a (2026-04-24): surface ownership_proof_version at top level so log
     # consumers and dashboards don't have to dig into the token payload or
     # rely on verbose=True. See docs/ontology/s1-continuity-token-retirement.md §4.5.

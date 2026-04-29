@@ -513,6 +513,7 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
         client_session_id=client_session_id,
         agent_id=bound_agent_id,
         client_hint=client_hint,
+        spawn_reason=identity_result.get("spawn_reason") if identity_result else None,
     )
 
     logger.info(

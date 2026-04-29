@@ -13,6 +13,7 @@ import hashlib
 import base64
 import hmac
 import json
+import re
 import time
 
 from src.logging_utils import get_logger
@@ -31,6 +32,55 @@ _PIN_REDIS_TIMEOUT = 0.5
 # A′ (PID/nonce binding) is the follow-on for actual earned process-scope.
 _CONTINUITY_TTL = 3600  # 1 hour
 _OWNERSHIP_PROOF_VERSION = 1  # bump to 2 when A′ lands; to 3 when R1-composite ships
+_MAX_CLIENT_SESSION_ID_LENGTH = 256
+_CLIENT_SESSION_ID_SAFE_RE = re.compile(r"[^A-Za-z0-9_.:@-]")
+_CLIENT_SESSION_ID_HAS_ALNUM_RE = re.compile(r"[A-Za-z0-9]")
+
+
+def normalize_client_session_id(value: Any) -> Optional[str]:
+    """Return a bounded, safe explicit client session id or None.
+
+    Explicit IDs are caller-controlled and can reach cache/database keys before
+    deeper identity resolution. Keep derivation honest: whitespace-only values
+    are not proof signals, overlong values are bounded, and path/control shapes
+    are reduced to inert key text.
+    """
+    if value is None:
+        return None
+
+    explicit = str(value).strip()
+    if not explicit:
+        return None
+
+    if len(explicit) > _MAX_CLIENT_SESSION_ID_LENGTH:
+        logger.warning(
+            "[SECURITY] client_session_id too long (%s chars), truncating",
+            len(explicit),
+        )
+        explicit = explicit[:_MAX_CLIENT_SESSION_ID_LENGTH]
+
+    sanitized = _CLIENT_SESSION_ID_SAFE_RE.sub("_", explicit)
+    sanitized = re.sub(r"\.{2,}", "_", sanitized)
+    if not _CLIENT_SESSION_ID_HAS_ALNUM_RE.search(sanitized):
+        return None
+
+    if sanitized != explicit:
+        logger.warning(
+            "[SECURITY] client_session_id sanitized: %s... -> %s...",
+            explicit[:30],
+            sanitized[:30],
+        )
+    return sanitized
+
+
+def normalize_client_session_id_argument(arguments: Dict[str, Any]) -> Optional[str]:
+    """Normalize ``arguments['client_session_id']`` in place."""
+    normalized = normalize_client_session_id(arguments.get("client_session_id"))
+    if normalized:
+        arguments["client_session_id"] = normalized
+    else:
+        arguments.pop("client_session_id", None)
+    return normalized
 
 
 def continuity_token_support_status() -> Dict[str, Any]:
@@ -562,28 +612,31 @@ async def _derive_session_key_impl(
 
     # 2. Explicit from arguments
     if arguments.get("client_session_id"):
-        explicit = str(arguments["client_session_id"])
-        # agent-{uuid} IDs are globally unique by construction — skip model-
-        # family scoping.  Appending ":claude" creates a key mismatch between
-        # REST-onboarded sessions (curl UA → no suffix) and MCP lookups
-        # (Claude UA → ":claude" suffix), breaking bind_session.
-        if explicit.startswith("agent-"):
-            _mark("explicit_client_session_id")
-            return explicit
-        explicit_model = _normalize_pin_model_type(
-            arguments.get("model_type"),
-            signals.user_agent if signals else None,
-        )
-        # Harden against cross-model identity bleed when a caller reuses the
-        # same client_session_id across multiple model families.
-        if explicit_model:
-            if explicit.endswith(f":{explicit_model}"):
+        explicit = normalize_client_session_id_argument(arguments)
+        if not explicit:
+            logger.warning("[SECURITY] Ignoring invalid client_session_id")
+        else:
+            # agent-{uuid} IDs are globally unique by construction — skip model-
+            # family scoping.  Appending ":claude" creates a key mismatch between
+            # REST-onboarded sessions (curl UA → no suffix) and MCP lookups
+            # (Claude UA → ":claude" suffix), breaking bind_session.
+            if explicit.startswith("agent-"):
                 _mark("explicit_client_session_id")
                 return explicit
-            _mark("explicit_client_session_id_scoped")
-            return f"{explicit}:{explicit_model}"
-        _mark("explicit_client_session_id")
-        return explicit
+            explicit_model = _normalize_pin_model_type(
+                arguments.get("model_type"),
+                signals.user_agent if signals else None,
+            )
+            # Harden against cross-model identity bleed when a caller reuses the
+            # same client_session_id across multiple model families.
+            if explicit_model:
+                if explicit.endswith(f":{explicit_model}"):
+                    _mark("explicit_client_session_id")
+                    return explicit
+                _mark("explicit_client_session_id_scoped")
+                return f"{explicit}:{explicit_model}"
+            _mark("explicit_client_session_id")
+            return explicit
 
     # 3. MCP protocol session ID (stable, no pin needed)
     if signals and signals.mcp_session_id:

@@ -185,10 +185,11 @@ class TestEphemeralIdentityMarking:
 
     @pytest.mark.asyncio
     async def test_kwargs_wrapped_knowledge_store_uses_continuity_token(self, mock_db, monkeypatch):
-        """kwargs-wrapped calls must unwrap before identity resolution."""
+        """kwargs-wrapped calls must unwrap before identity/alias logic."""
         monkeypatch.setenv("UNITARES_CONTINUITY_TOKEN_SECRET", "test-secret")
         from src.mcp_handlers.identity.session import create_continuity_token
-        from src.mcp_handlers.middleware import PRE_DISPATCH_STEPS
+        from src.mcp_handlers.middleware.identity_step import resolve_identity
+        from src.mcp_handlers.middleware.params_step import unwrap_kwargs
         from src.services.tool_dispatch_service import run_tool_dispatch_pipeline
 
         agent_uuid = "11111111-1111-4111-8111-111111111111"
@@ -198,8 +199,15 @@ class TestEphemeralIdentityMarking:
             "persisted": True,
             "source": "token_test",
         })
+        alias_probe_args = {}
+        handler_args = {}
+
+        async def alias_probe(name, arguments, ctx):
+            alias_probe_args.update(arguments)
+            return name, arguments, ctx
 
         async def fake_handler(arguments):
+            handler_args.update(arguments)
             return [TextContent(type="text", text="ok")]
 
         patches = [
@@ -221,7 +229,10 @@ class TestEphemeralIdentityMarking:
                         "continuity_token": token,
                     }
                 },
-                pre_steps=PRE_DISPATCH_STEPS,
+                # Put unwrap after identity/alias probes on purpose: the
+                # pipeline runner must pre-normalize kwargs before any
+                # continuity-sensitive step can inspect the request.
+                pre_steps=[resolve_identity, alias_probe, unwrap_kwargs],
                 post_steps=[],
             )
         finally:
@@ -230,3 +241,7 @@ class TestEphemeralIdentityMarking:
 
         assert result[0].text == "ok"
         assert resolve_mock.await_args.kwargs["token_agent_uuid"] == agent_uuid
+        assert alias_probe_args["continuity_token"] == token
+        assert alias_probe_args["action"] == "store"
+        assert "kwargs" not in handler_args
+        assert handler_args["continuity_token"] == token

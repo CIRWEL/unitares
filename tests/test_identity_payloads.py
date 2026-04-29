@@ -15,6 +15,7 @@ def test_build_identity_response_data_verbose_includes_continuity_context():
         continuity_support={"enabled": True},
         continuity_token="token-abc",
         identity_status="resumed",
+        identity_resolution_outcome="resumed",
         model_type="gpt",
         resumed=True,
         session_continuity=None,
@@ -22,6 +23,7 @@ def test_build_identity_response_data_verbose_includes_continuity_context():
     )
 
     assert payload["agent_id"] == "agent-123"
+    assert payload["identity_resolution_outcome"] == "resumed"
     assert payload["continuity_token"] == "token-abc"
     assert payload["session_continuity"]["continuity_token"] == "token-abc"
     assert payload["quick_reference"]["for_strong_resume"] == "token-abc"
@@ -87,6 +89,7 @@ def test_build_onboard_response_data_includes_thread_and_workflow_when_verbose()
         },
         verbose=True,
         continuity_source="continuity_token",
+        identity_resolution_outcome="minted_after_resume_miss",
         continuity_support={"enabled": True},
         continuity_token="token-abc",
         system_activity={"agents": {"active": 1}},
@@ -94,6 +97,7 @@ def test_build_onboard_response_data_includes_thread_and_workflow_when_verbose()
     )
 
     assert payload["continuity_token"] == "token-abc"
+    assert payload["identity_resolution_outcome"] == "minted_after_resume_miss"
     assert payload["thread_context"]["thread_id"] == "thread-1234567890"
     assert payload["workflow"]["step_1"] == "Copy client_session_id from above"
     assert payload["tool_mode"]["current_mode"] == "lite"

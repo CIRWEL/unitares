@@ -28,6 +28,7 @@ class AuditEntry:
     confidence: float
     details: Dict
     metadata: Optional[Dict] = None
+    session_id: Optional[str] = None
 
 
 class AuditLogger:
@@ -439,6 +440,45 @@ class AuditLogger:
         )
         self._write_entry(entry)
 
+    def log_session_resolve_miss_observed(
+        self,
+        *,
+        session_key: str,
+        resolution_source: Optional[str],
+        reason: str,
+        resume: bool,
+        force_new: bool,
+        token_agent_uuid_present: bool,
+        client_hint: Optional[str] = None,
+        model_type: Optional[str] = None,
+    ) -> None:
+        """Record PATH 2 fail-closed misses as structured audit telemetry.
+
+        S21-b/M7: the log line is useful for operators watching one process,
+        but audit reconstruction needs a queryable event keyed to the rejected
+        session. This event is intentionally separate from
+        concurrent_session_binding_observed: a missing session row is not, by
+        itself, evidence of a concurrent binding.
+        """
+        entry = AuditEntry(
+            timestamp=datetime.now().isoformat(),
+            agent_id=None,
+            event_type="session_resolve_miss_observed",
+            confidence=1.0,
+            session_id=session_key,
+            details={
+                "session_key_prefix": session_key[:20],
+                "resolution_source": resolution_source,
+                "reason": reason,
+                "resume": resume,
+                "force_new": force_new,
+                "token_agent_uuid_present": token_agent_uuid_present,
+                "client_hint": client_hint,
+                "model_type": model_type,
+            },
+        )
+        self._write_entry(entry)
+
     def log_continuity_token_deprecated_accept(
         self,
         *,
@@ -689,4 +729,3 @@ class AuditLogger:
 
 # Global audit logger instance
 audit_logger = AuditLogger()
-

@@ -44,6 +44,8 @@ from .session import (
     resolve_continuity_token,
     extract_token_agent_uuid,
     extract_token_iat,
+    normalize_client_session_id,
+    normalize_client_session_id_argument,
     continuity_token_support_status,
     build_token_deprecation_block,
 )
@@ -449,6 +451,7 @@ async def handle_identity_v2(
         "persisted": persisted,
         "source": identity.get("source"),
         "created": identity.get("created", False),
+        "identity_resolution_outcome": identity.get("identity_resolution_outcome"),
         "message": f"Identity: {display_name or agent_id}",
     }
 
@@ -464,6 +467,7 @@ def _build_identity_diag_payload_for_request(
     agent_id: str,
     label: Optional[str],
     status: str,
+    identity_resolution_outcome: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build the standard identity-success diag payload for `arguments` + `model_type`.
 
@@ -494,6 +498,7 @@ def _build_identity_diag_payload_for_request(
         continuity_support=continuity_support,
         continuity_token=continuity_token,
         identity_status=status,
+        identity_resolution_outcome=identity_resolution_outcome,
     )
 
 
@@ -658,6 +663,7 @@ async def _try_resume_by_agent_uuid_direct(
                 agent_id=_direct_uuid,
                 label=None,
                 status="resumed",
+                identity_resolution_outcome="resumed",
             )
             payload.update({
                 "resumed": True,
@@ -702,6 +708,7 @@ async def _try_resume_by_agent_uuid_direct(
         agent_id=agent_id,
         label=label,
         status="resumed",
+        identity_resolution_outcome="resumed",
     )
     payload.update({
         "resumed": True,
@@ -776,6 +783,7 @@ async def _try_resume_by_session_key(
             agent_id=agent_id,
             label=label,
             status="archived",
+            identity_resolution_outcome=existing_identity.get("identity_resolution_outcome") or "resumed",
         )
         payload.update({
             "archived": True,
@@ -803,6 +811,7 @@ async def _try_resume_by_session_key(
         agent_id=agent_id,
         label=label,
         status="resumed",
+        identity_resolution_outcome=existing_identity.get("identity_resolution_outcome") or "resumed",
     )
     payload.update({
         "resumed": True,
@@ -839,6 +848,7 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
       3. Finisher — fall through to handle_identity_v2 + persist + response
     """
     arguments = arguments or {}
+    normalize_client_session_id_argument(arguments)
 
     # S13 v2-ontology gate: arg-less identity() from a fresh process-instance
     # with no proof signal mints fresh by default per identity.md §"Layered
@@ -1013,6 +1023,16 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
 
     verbose = coerce_bool(arguments.get("verbose"), default=False) if arguments else False
     identity_status = "created" if result.get("created") else "resumed"
+    identity_resolution_outcome = result.get("identity_resolution_outcome")
+    if (
+        result.get("created")
+        and existing_identity
+        and existing_identity.get("error") == "session_resolve_miss"
+    ):
+        identity_resolution_outcome = "minted_after_resume_miss"
+        result["identity_resolution_outcome"] = identity_resolution_outcome
+    elif not identity_resolution_outcome:
+        identity_resolution_outcome = "minted_fresh" if result.get("created") else "resumed"
     auto_bind = coerce_bool(arguments.get("auto_bind", True))
     if auto_bind and not (existing_identity and existing_identity.get("archived")):
         try:
@@ -1034,6 +1054,7 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
         continuity_support=continuity_support,
         continuity_token=continuity_token,
         identity_status=identity_status,
+        identity_resolution_outcome=identity_resolution_outcome,
         model_type=model_type,
         resumed=False if result.get("created") else (True if result.get("source") else None),
         session_continuity=result.get("session_continuity"),
@@ -1137,6 +1158,7 @@ async def handle_bind_session(arguments: Dict[str, Any]) -> Sequence[TextContent
     startup hook context.
     """
     arguments = arguments or {}
+    normalize_client_session_id_argument(arguments)
     strict = coerce_bool(arguments.get("strict"))
     resume_requested = coerce_bool(arguments.get("resume"))
 
@@ -1157,11 +1179,11 @@ async def handle_bind_session(arguments: Dict[str, Any]) -> Sequence[TextContent
     if not client_session_id and arguments.get("continuity_token"):
         from ..context import get_session_signals
         token_signals = get_session_signals()
-        client_session_id = resolve_continuity_token(
+        client_session_id = normalize_client_session_id(resolve_continuity_token(
             str(arguments.get("continuity_token")),
             model_type=arguments.get("model_type"),
             user_agent=token_signals.user_agent if token_signals else None,
-        )
+        ))
     if not client_session_id:
         return error_response("client_session_id or continuity_token is required")
     if strict and not expected_agent_id:
@@ -1270,6 +1292,7 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             logger.warning(f"[KWARGS] Failed to parse: {e}")
 
     arguments = arguments or {}
+    normalize_client_session_id_argument(arguments)
 
     # S13 v2-ontology gate: arg-less onboard from a fresh process-instance
     # mints fresh by default per identity.md §"Layered taxonomy of continuity".
@@ -1823,6 +1846,20 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     except Exception:
         pass
     response_agent_id = public_agent_id or structured_id or f"agent_{agent_uuid[:8]}"
+    identity_resolution_outcome = (
+        identity.get("identity_resolution_outcome")
+        if isinstance(identity, dict)
+        else None
+    )
+    if not identity_resolution_outcome:
+        if is_new and _spawn_reason in {"dispatch_auto_mint", "auto_onboard_no_session"}:
+            identity_resolution_outcome = "minted_after_resume_miss"
+        elif is_new and force_new:
+            identity_resolution_outcome = "minted_force_new"
+        elif is_new:
+            identity_resolution_outcome = "minted_fresh"
+        else:
+            identity_resolution_outcome = "resumed"
 
     tool_mode_info = None
     if verbose:
@@ -1857,6 +1894,7 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         continuity_source=continuity_source,
         continuity_support=continuity_support,
         continuity_token=continuity_token,
+        identity_resolution_outcome=identity_resolution_outcome,
         system_activity=_get_system_evidence() if verbose else None,
         tool_mode_info=tool_mode_info,
     )

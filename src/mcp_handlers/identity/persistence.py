@@ -71,6 +71,7 @@ async def _cache_session(
     display_agent_id: str = None,
     trajectory_required: bool = False,
     label: str = None,
+    spawn_reason: Optional[str] = None,
     *,
     mint_guard: bool = False,
 ) -> None:
@@ -81,6 +82,8 @@ async def _cache_session(
             trajectory genesis. Lets PATH 1 skip the get_trajectory_status()
             call on subsequent hits (optimization hint).
         label: Auto-generated or user-set label to store alongside the binding.
+        spawn_reason: Lineage reason for this binding, if the session was
+            created by an explicit fork/mint path.
         mint_guard: Set True at PATH 3 mint sites only. When True, this
             function refuses to overwrite an existing in-memory or Redis
             binding for the same session_key whose agent_uuid differs from
@@ -118,6 +121,7 @@ async def _cache_session(
                 "public_agent_id": display_agent_id or agent_uuid,
                 "display_agent_id": display_agent_id,
                 "agent_label": label or binding.get("agent_label"),
+                "spawn_reason": spawn_reason or binding.get("spawn_reason"),
                 "created_at": binding.get("created_at") or datetime.now(timezone.utc).isoformat(),
                 "bound_at": datetime.now(timezone.utc).isoformat(),
                 "bind_count": bind_count,
@@ -172,6 +176,7 @@ async def _cache_session(
                     display_agent_id,
                     trajectory_required,
                     label,
+                    spawn_reason,
                     bind_ip_ua,
                     mint_guard=mint_guard,
                 ),
@@ -199,6 +204,7 @@ async def _cache_session_redis_write(
     display_agent_id: Optional[str],
     trajectory_required: bool,
     label: Optional[str],
+    spawn_reason: Optional[str],
     bind_ip_ua: Optional[str],
     *,
     mint_guard: bool = False,
@@ -213,8 +219,17 @@ async def _cache_session_redis_write(
     whose agent_id differs from the one being written. See S21-a for the
     incident this guards against.
     """
-    # Store both UUID and display agent_id if provided
-    if display_agent_id and display_agent_id != agent_uuid:
+    # Store a richer payload whenever the binding carries metadata that
+    # SessionCache.bind() cannot represent. S21-b: spawn_reason must survive
+    # across cache hydration or lazy persistence writes NULL lineage.
+    needs_rich_payload = bool(
+        (display_agent_id and display_agent_id != agent_uuid)
+        or label
+        or spawn_reason
+        or bind_ip_ua
+        or trajectory_required
+    )
+    if needs_rich_payload:
         # Get raw Redis client for custom write
         from src.cache.redis_client import get_redis
         redis = await get_redis()
@@ -227,12 +242,16 @@ async def _cache_session_redis_write(
 
             data = {
                 "agent_id": agent_uuid,
-                "display_agent_id": display_agent_id,
                 "bound_at": datetime.now(timezone.utc).isoformat(),
                 "trajectory_required": trajectory_required,
             }
+            if display_agent_id:
+                data["display_agent_id"] = display_agent_id
+                data["public_agent_id"] = display_agent_id
             if label:
                 data["label"] = label
+            if spawn_reason:
+                data["spawn_reason"] = spawn_reason
             if bind_ip_ua:
                 data["bind_ip_ua"] = bind_ip_ua
             await redis.setex(key, GovernanceConfig.SESSION_TTL_SECONDS, json.dumps(data))
@@ -254,11 +273,17 @@ async def _cache_session_redis_write(
                 existing = _session_cache_mod._fallback_cache.get(session_key, {})
                 data = {
                     "agent_id": agent_uuid,
-                    "display_agent_id": display_agent_id,
-                    "public_agent_id": display_agent_id,
                     "bound_at": existing.get("bound_at") or datetime.now(timezone.utc).isoformat(),
                     "bind_count": existing.get("bind_count", 0),
+                    "spawn_reason": spawn_reason or existing.get("spawn_reason"),
                 }
+                if display_agent_id:
+                    data["display_agent_id"] = display_agent_id
+                    data["public_agent_id"] = display_agent_id
+                if trajectory_required:
+                    data["trajectory_required"] = trajectory_required
+                if bind_ip_ua:
+                    data["bind_ip_ua"] = bind_ip_ua
                 if label:
                     data["label"] = label
                 _session_cache_mod._fallback_cache[session_key] = data
@@ -448,7 +473,7 @@ async def ensure_agent_persisted(
         except Exception:
             pass
 
-        if not public_agent_id or not label:
+        if not public_agent_id or not label or not spawn_reason:
             session_cache = _get_redis()
             if session_cache:
                 try:
@@ -459,9 +484,11 @@ async def ensure_agent_persisted(
                             public_agent_id = display_agent_id
                         if not label:
                             label = cached.get("label")
+                        if not spawn_reason:
+                            spawn_reason = cached.get("spawn_reason")
                 except Exception as e:
                     logger.debug(f"Could not hydrate identity handles from session cache: {e}")
-        if not public_agent_id or not label:
+        if not public_agent_id or not label or not spawn_reason:
             try:
                 from .shared import _session_identities
 
@@ -472,6 +499,8 @@ async def ensure_agent_persisted(
                         public_agent_id = display_agent_id
                     if not label:
                         label = cached.get("agent_label") or cached.get("label")
+                    if not spawn_reason:
+                        spawn_reason = cached.get("spawn_reason")
             except Exception as e:
                 logger.debug(f"Could not hydrate identity handles from in-memory session cache: {e}")
 
@@ -528,6 +557,7 @@ async def ensure_agent_persisted(
                 agent_id=agent_uuid,
                 api_key_hash="",
                 parent_agent_id=parent_agent_id,
+                spawn_reason=spawn_reason,
                 metadata=identity_metadata,
             )
             identity = await db.get_identity(agent_uuid)

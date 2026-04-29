@@ -956,6 +956,7 @@ class TestHandleIdentityAdapter:
         assert "session_resolution_source" in data
         assert "continuity_token_supported" in data
         assert data["identity_status"] == "created"
+        assert data["identity_resolution_outcome"] == "minted_after_resume_miss"
         assert data["bound_identity"]["uuid"] == data["uuid"]
         assert data["bound_identity"]["agent_id"] == data["agent_id"]
         # identity_summary, quick_reference, session_continuity moved behind verbose=true
@@ -1043,6 +1044,7 @@ class TestHandleIdentityAdapter:
         assert data["success"] is True
         assert data["uuid"] == test_uuid
         assert data.get("resumed") is True
+        assert data["identity_resolution_outcome"] == "resumed"
         assert "agent_signature" not in data
 
     @pytest.mark.asyncio
@@ -1669,6 +1671,7 @@ class TestHandleOnboardV2:
 
         assert data["success"] is True
         assert data["is_new"] is True
+        assert data["identity_resolution_outcome"] == "minted_after_resume_miss"
         assert "uuid" in data
         assert "client_session_id" in data
         assert "session_resolution_source" in data
@@ -1868,6 +1871,7 @@ class TestHandleOnboardV2:
         assert data["success"] is True
         assert data["is_new"] is False
         assert data["uuid"] == existing_uuid
+        assert data["identity_resolution_outcome"] == "resumed"
 
     @pytest.mark.asyncio
     async def test_onboard_then_identity_with_stable_session_id_keeps_same_uuid(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):

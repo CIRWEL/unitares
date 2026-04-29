@@ -57,7 +57,7 @@ TOOLS_NEEDING_SESSION_INJECTION = {
 | Module | Purpose |
 |--------|---------|
 | `decorators.py` | `@mcp_tool` decorator, `ToolDefinition` dataclass, action-router helper, unified `_TOOL_DEFINITIONS` registry |
-| `middleware.py` | 8-step dispatch pipeline: identity → trajectory → kwargs → alias → inject → validate → rate limit → patterns |
+| `middleware/` | 8-step dispatch pipeline: kwargs → identity → trajectory → alias → inject → validate → rate limit → patterns |
 | `consolidated.py` | Consolidated tools built declaratively via the action-router helper |
 | `response_formatter.py` | Response mode filtering (auto/minimal/compact/standard/full) for `process_agent_update` |
 | `__init__.py` | Dispatch entrypoint orchestrates the middleware pipeline and calls handlers |
@@ -75,10 +75,12 @@ The auto-registration function in `mcp_server.py`:
 
 ### Dispatch Pipeline
 
-When a tool is called, the dispatch entrypoint runs it through middleware steps defined in `middleware.py`:
+When a tool is called, the dispatch entrypoint runs it through middleware steps defined in `middleware/`.
+The pipeline runner first normalizes MCP `kwargs` wrappers so identity and
+continuity inputs are visible before any session resolution or alias logic runs:
 
 ```
-resolve_identity → verify_trajectory → unwrap_kwargs → resolve_alias → inject_identity → validate_params
+unwrap_kwargs → resolve_identity → verify_trajectory → resolve_alias → inject_identity → validate_params
     ↓ (handler lookup)
 check_rate_limit → track_patterns → handler()
 ```

@@ -270,6 +270,7 @@ def _get_identity_record_sync(session_id: Optional[str] = None, arguments: Optio
                 _session_identities[key] = {
                     "bound_agent_id": full_uuid,
                     "api_key": getattr(meta, 'api_key', None),
+                    "spawn_reason": getattr(meta, "spawn_reason", None),
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     "bind_count": 0,
                 }
@@ -294,6 +295,7 @@ def _get_identity_record_sync(session_id: Optional[str] = None, arguments: Optio
                 _session_identities[key] = {
                     "bound_agent_id": agent_uuid,
                     "api_key": getattr(meta, 'api_key', None),
+                    "spawn_reason": getattr(meta, "spawn_reason", None),
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     "bind_count": 0,
                 }

@@ -132,6 +132,8 @@ Live probe via `mcp__unitares-governance__identity` with whitespace-only input: 
 
 **Fix:** sanitize/reject whitespace-only and over-length `client_session_id` in `derive_session_key`. Per pass-1 plan, the `arguments.get("client_session_id")` extraction at `session.py:564` should `.strip()` and reject empty-after-strip. Add adversarial-shape regression tests covering empty, whitespace-only, oversized, control-character, and path-traversal inputs.
 
+**Status:** Implemented in `src/mcp_handlers/identity/session.py` via `normalize_client_session_id()`, with handler proof gates normalizing `client_session_id` before deciding whether a caller supplied a proof signal. Whitespace-only IDs now fall through instead of marking `explicit_client_session_id`; overlong IDs are bounded; control/path-traversal shapes are sanitized to inert key text. Regression coverage lives in `tests/test_identity_session.py`.
+
 ### H12. 38 ghosts have `core.sessions` rows; NX cannot dislodge them
 Of the 2032 30d ghosts, **38** have at least one row in `core.sessions` — i.e., they minted *and* bound a session_key in PG. The NX guard refuses to overwrite these from PATH 3. They are blast-resistant to S21-a as merged. Operators have no tool to clear them.
 
@@ -156,6 +158,8 @@ If `SessionCache.get()` touches TTL on hit (common pattern), every PATH 1 read a
 
 ### M7. Audit event absent on PATH 2 fail-closed return
 `resolution.py:595–610` logs `[PATH2_RESUME_MISS]` at INFO but emits no structured `concurrent_session_binding_observed` event. The fail-closed path is precisely the moment that event is most useful. Cheap addition; pure additive change.
+
+**Status:** Implemented as `session_resolve_miss_observed` in `src/audit_log.py` and emitted from the PATH 2 no-row / PG-exception fail-closed branches. The event carries top-level `session_id` for PostgreSQL audit indexing plus structured details (`reason`, `resolution_source`, `resume`, `force_new`, token presence). It intentionally uses a dedicated event type rather than overloading `concurrent_session_binding_observed`, because a missing session row is not itself evidence of concurrent binding.
 
 ### M8. continuity_token + client_session_id PATH 2.8 silent reroute (existing behavior, but now invisible)
 When a caller passes both, `derive_session_key` returns the token-derived `session_key`; the explicit `client_session_id` is silently ignored. PATH 2.8 may bind the token's UUID to the token-derived key. Not a S21-a regression, but the new fail-closed gate (`if not token_agent_uuid`) makes this carve-out invisible. Document or surface in response.
