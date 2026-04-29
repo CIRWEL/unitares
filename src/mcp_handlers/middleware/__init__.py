@@ -41,9 +41,9 @@ class DispatchContext:
 
 # Steps that must succeed (short-circuit on error)
 PRE_DISPATCH_STEPS = [
+    unwrap_kwargs,
     resolve_identity,
     verify_trajectory,
-    unwrap_kwargs,
     resolve_alias,
     inject_identity,
     validate_params,

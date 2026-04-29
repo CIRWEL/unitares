@@ -17,6 +17,7 @@ import pytest
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock, AsyncMock
+from mcp.types import TextContent
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -181,3 +182,51 @@ class TestEphemeralIdentityMarking:
         assert ctx.bound_agent_id is None
         assert ctx.identity_result is identity_result
         mock_db.update_session_activity.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_kwargs_wrapped_knowledge_store_uses_continuity_token(self, mock_db, monkeypatch):
+        """kwargs-wrapped calls must unwrap before identity resolution."""
+        monkeypatch.setenv("UNITARES_CONTINUITY_TOKEN_SECRET", "test-secret")
+        from src.mcp_handlers.identity.session import create_continuity_token
+        from src.mcp_handlers.middleware import PRE_DISPATCH_STEPS
+        from src.services.tool_dispatch_service import run_tool_dispatch_pipeline
+
+        agent_uuid = "11111111-1111-4111-8111-111111111111"
+        token = create_continuity_token(agent_uuid, "agent-stable-session")
+        resolve_mock = AsyncMock(return_value={
+            "agent_uuid": agent_uuid,
+            "persisted": True,
+            "source": "token_test",
+        })
+
+        async def fake_handler(arguments):
+            return [TextContent(type="text", text="ok")]
+
+        patches = [
+            patch("src.mcp_handlers.context.get_session_signals", return_value=None),
+            patch("src.mcp_handlers.identity.handlers.derive_session_key", new_callable=AsyncMock, return_value="agent-stable-session"),
+            patch("src.mcp_handlers.identity.handlers.resolve_session_identity", resolve_mock),
+            patch("src.db.get_db", return_value=mock_db),
+            patch.dict("src.mcp_handlers.TOOL_HANDLERS", {"knowledge": fake_handler}),
+        ]
+        for p in patches:
+            p.start()
+        try:
+            result = await run_tool_dispatch_pipeline(
+                name="knowledge",
+                arguments={
+                    "kwargs": {
+                        "action": "store",
+                        "summary": "Token should survive kwargs wrapping",
+                        "continuity_token": token,
+                    }
+                },
+                pre_steps=PRE_DISPATCH_STEPS,
+                post_steps=[],
+            )
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+        assert result[0].text == "ok"
+        assert resolve_mock.await_args.kwargs["token_agent_uuid"] == agent_uuid

@@ -78,6 +78,15 @@ class _Transaction:
             lambda: self._raw.__aexit__(exc_type, exc_val, exc_tb), self._loop
         )
 
+    async def start(self) -> Any:
+        return await _await_on_loop(lambda: self._raw.start(), self._loop)
+
+    async def commit(self) -> Any:
+        return await _await_on_loop(lambda: self._raw.commit(), self._loop)
+
+    async def rollback(self) -> Any:
+        return await _await_on_loop(lambda: self._raw.rollback(), self._loop)
+
 
 class _Connection:
     """Wraps an asyncpg Connection, dispatching all calls to the executor loop."""

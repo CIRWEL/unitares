@@ -191,7 +191,7 @@ async def dispatch_tool(name: str, arguments: Optional[Dict[str, Any]]) -> Seque
     """
     Dispatch tool call to appropriate handler.
 
-    Pipeline: identity → trajectory → kwargs → alias → inject → validate → rate limit → patterns → execute.
+    Pipeline: kwargs → identity → trajectory → alias → inject → validate → rate limit → patterns → execute.
     Each step is defined in middleware.py for testability.
     """
     from .middleware import PRE_DISPATCH_STEPS, POST_VALIDATION_STEPS

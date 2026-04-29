@@ -134,6 +134,50 @@ async def test_transaction_context_manager_round_trips():
 
 
 @pytest.mark.asyncio
+async def test_transaction_start_commit_rollback_methods_round_trip():
+    """PostgresBackend.transaction() calls start/commit/rollback directly."""
+    caller_tid = threading.get_ident()
+    start_tid = []
+    commit_tid = []
+    rollback_tid = []
+
+    mock_txn = MagicMock()
+
+    async def start_impl():
+        start_tid.append(threading.get_ident())
+
+    async def commit_impl():
+        commit_tid.append(threading.get_ident())
+
+    async def rollback_impl():
+        rollback_tid.append(threading.get_ident())
+
+    mock_txn.start = MagicMock(side_effect=start_impl)
+    mock_txn.commit = MagicMock(side_effect=commit_impl)
+    mock_txn.rollback = MagicMock(side_effect=rollback_impl)
+
+    def transaction_impl():
+        return mock_txn
+
+    wrapped, _ = _make_pool_with_conn({"transaction": transaction_impl})
+    try:
+        async with wrapped.acquire() as conn:
+            txn = conn.transaction()
+            await txn.start()
+            await txn.commit()
+
+            txn = conn.transaction()
+            await txn.start()
+            await txn.rollback()
+    finally:
+        await wrapped.close()
+
+    assert start_tid and all(tid != caller_tid for tid in start_tid)
+    assert commit_tid == [commit_tid[0]] and commit_tid[0] != caller_tid
+    assert rollback_tid == [rollback_tid[0]] and rollback_tid[0] != caller_tid
+
+
+@pytest.mark.asyncio
 async def test_handler_cancellation_propagates_to_executor_task():
     """
     LOAD-BEARING: when the caller's await is cancelled, the asyncpg-side
