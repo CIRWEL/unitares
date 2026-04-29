@@ -4,9 +4,9 @@
 --
 -- Bakes `WHERE synthetic = false` into the core.mv_latest_agent_states
 -- definition itself so the matview rowset never contains bootstrap rows.
--- Migration 018 added the `synthetic` column projection so the rows could
--- be filtered at query time; this migration goes further and makes the
--- matview measured-only by definition.
+-- Migration 022 already creates this measured-only definition in the
+-- renumbered drift-repair path; this migration preserves the original phase
+-- boundary and registry marker while confirming the same terminal shape.
 --
 -- Why: a reader who never expects synthetic rows in the matview can't
 -- accidentally introduce a bug by writing a SELECT that omits the filter.
@@ -16,8 +16,7 @@
 -- Rollback shape: DROP MATERIALIZED VIEW + recreate without the WHERE
 -- clause (i.e. revert to migration 022's projection).
 
--- Drop the prior matview (recreated by migration 022 with synthetic projection
--- but no row-level filter).
+-- Drop the prior matview and recreate the same measured-only terminal shape.
 DROP MATERIALIZED VIEW IF EXISTS core.mv_latest_agent_states;
 
 -- Measured-only: DISTINCT ON identity, latest measured row only. Bootstrap

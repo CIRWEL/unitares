@@ -37,9 +37,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_state_one_bootstrap_per_identity
     ON core.agent_state (identity_id)
     WHERE synthetic = true;
 
--- 4. Rebuild the dashboard materialized view to project the new column.
---    The existing fallback at src/db/mixins/state.py:103 covers the brief
---    drop/create window (try/except falls through to a base-table query).
+-- 4. Rebuild the dashboard materialized view to project the new column and
+--    keep bootstrap rows out of the rowset. This intentionally matches the
+--    terminal measured-only definition so a failed/manual stop before 023
+--    cannot expose synthetic rows through the matview. The existing fallback
+--    at src/db/mixins/state.py:103 covers the brief drop/create window
+--    (try/except falls through to a base-table query).
 DROP MATERIALIZED VIEW IF EXISTS core.mv_latest_agent_states;
 
 CREATE MATERIALIZED VIEW core.mv_latest_agent_states AS
@@ -49,6 +52,7 @@ SELECT DISTINCT ON (s.identity_id)
        s.regime, s.coherence, s.state_json, s.synthetic
 FROM core.agent_state s
 JOIN core.identities i ON i.identity_id = s.identity_id
+WHERE s.synthetic = false
 ORDER BY s.identity_id, s.recorded_at DESC;
 
 -- Unique index required for REFRESH CONCURRENTLY.

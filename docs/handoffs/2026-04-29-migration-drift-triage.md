@@ -89,16 +89,16 @@ This unblocked hydration but left the registry and source tree out of sync.
   1. `ALTER TABLE core.agent_state ADD COLUMN IF NOT EXISTS synthetic BOOLEAN NOT NULL DEFAULT false` — **no-op on prod** (hot-fix applied this already)
   2. `CREATE INDEX IF NOT EXISTS idx_agent_state_synthetic_partial` — **no-op on prod** (hot-fix applied this already)
   3. `CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_state_one_bootstrap_per_identity` — likely missing; will create
-  4. `DROP MATERIALIZED VIEW IF EXISTS core.mv_latest_agent_states` + `CREATE MATERIALIZED VIEW` + two `CREATE INDEX` — drops the matview (from migration 008, which lacks the `synthetic` column), then rebuilds it with `synthetic` projected but **without** a row-level filter
+  4. `DROP MATERIALIZED VIEW IF EXISTS core.mv_latest_agent_states` + `CREATE MATERIALIZED VIEW` + two `CREATE INDEX` — drops the matview (from migration 008, which lacks the `synthetic` column), then rebuilds it with `synthetic` projected and `WHERE synthetic = false` baked in. This matches the terminal measured-only definition so a failed/manual stop before 023 cannot expose bootstrap rows through the matview.
 - **Idempotent:** The ALTER + partial index are. The matview DROP/CREATE is destructive but the fallback at `src/db/mixins/state.py:103` covers the brief drop window. The two post-CREATE indexes lack `IF NOT EXISTS` but that is safe because they target the freshly-created matview (the DROP cascades their predecessors).
 - **Dependencies:** `core.agent_state.synthetic` column (exists via hot-fix)
 - **Risk:** Medium. The matview rebuild is the main action. Brief window where the matview is absent — existing fallback handles this.
 
 ### 023_matview_measured_only.sql (renumbered from 019, this PR)
-- **DDL:** Drop + recreate `core.mv_latest_agent_states` with `WHERE synthetic = false` baked into the definition, plus the same two indexes.
+- **DDL:** Drop + recreate `core.mv_latest_agent_states` with the same measured-only `WHERE synthetic = false` definition, plus the same two indexes.
 - **Idempotent:** Same notes as 022: DROP IF EXISTS is safe; CREATE indexes are safe on a fresh matview.
-- **Dependencies:** `synthetic` column must exist (it does, from hot-fix); must run **after** 022 (so the matview is in the 022 state before 023 rebuilds it).
-- **Risk:** Medium. Same brief matview-absent window; same fallback covers it. This is the desired terminal state of the matview.
+- **Dependencies:** `synthetic` column must exist (it does, from hot-fix); must run **after** 022 to preserve registry/order semantics.
+- **Risk:** Medium. Same brief matview-absent window; same fallback covers it. 022 already creates the desired terminal rowset, so 023 is a confirming rebuild plus registry marker.
 
 ---
 
@@ -133,12 +133,11 @@ Connect as the governance DB owner, then:
 -- Step 4: bootstrap_synthetic_state (renumbered 022)
 --   - ALTER TABLE and partial index are no-ops (hot-fix applied them)
 --   - creates uq_agent_state_one_bootstrap_per_identity unique index
---   - rebuilds matview with synthetic column projected
+--   - rebuilds matview with WHERE synthetic = false baked in
 \i db/postgres/migrations/022_bootstrap_synthetic_state.sql
 
 -- Step 5: matview_measured_only (renumbered 023)
---   - rebuilds matview with WHERE synthetic = false baked in
---   - this is the terminal schema state
+--   - confirming rebuild of the same measured-only terminal schema state
 \i db/postgres/migrations/023_matview_measured_only.sql
 ```
 
