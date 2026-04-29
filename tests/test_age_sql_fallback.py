@@ -11,6 +11,7 @@ KG bug ID: 2026-04-25T21:33:15.971499
 from __future__ import annotations
 
 import sys
+import types
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,33 +25,52 @@ import pytest
 # which pulls in src/mcp_handlers/__init__.py → mcp.types → pydantic.RootModel.
 # On Python 3.14 + pydantic < 3.x, RootModel class creation fails with
 # "TypeError: _eval_type() got an unexpected keyword argument 'prefer_fwd_module'".
-# Stubbing at module level is safe because conftest.py does not import mcp.types.
+# Keep these stubs temporary so this test does not poison later test modules.
 # ---------------------------------------------------------------------------
-_limits_stub = MagicMock()
-_limits_stub.EMBED_DETAILS_WINDOW = 200
-sys.modules.setdefault("src.mcp_handlers.knowledge.limits", _limits_stub)
-sys.modules.setdefault("src.mcp_handlers.knowledge", MagicMock())
-_mcp_types_stub = MagicMock()
-_mcp_types_stub.TextContent = MagicMock
-sys.modules.setdefault("mcp.types", _mcp_types_stub)
-sys.modules.setdefault("mcp.server", MagicMock())
-sys.modules.setdefault("mcp.server.fastmcp", MagicMock())
-_mcp_stub = MagicMock()
-_mcp_stub.types = _mcp_types_stub
-sys.modules.setdefault("mcp", _mcp_stub)
+_STUBBED_MODULES: list[str] = []
 
-# Only stub src.mcp_handlers if it has not already been imported as the real module.
-# (Avoids overwriting a partially-initialised real module that another conftest fixture
-# may have set up; our test doesn't call any handler code anyway.)
-if "src.mcp_handlers" not in sys.modules:
-    _mcp_handlers_stub = MagicMock()
-    _mcp_handlers_stub.knowledge = MagicMock()
-    sys.modules["src.mcp_handlers"] = _mcp_handlers_stub
+
+def _install_import_stub(name: str, module: object) -> None:
+    if name not in sys.modules:
+        sys.modules[name] = module
+        _STUBBED_MODULES.append(name)
+
+
+_limits_stub = types.ModuleType("src.mcp_handlers.knowledge.limits")
+_limits_stub.EMBED_DETAILS_WINDOW = 200
+_knowledge_stub = types.ModuleType("src.mcp_handlers.knowledge")
+_knowledge_stub.__path__ = []  # mark as package for importlib
+_mcp_types_stub = types.ModuleType("mcp.types")
+_mcp_types_stub.TextContent = MagicMock
+_mcp_server_stub = types.ModuleType("mcp.server")
+_fastmcp_stub = types.ModuleType("mcp.server.fastmcp")
+_mcp_stub = types.ModuleType("mcp")
+_mcp_stub.types = _mcp_types_stub
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.storage.knowledge_graph_age import KnowledgeGraphAGE  # noqa: E402
-from src.knowledge_graph import DiscoveryNode, ResponseTo  # noqa: E402
+try:
+    _install_import_stub("src.mcp_handlers.knowledge.limits", _limits_stub)
+    _install_import_stub("src.mcp_handlers.knowledge", _knowledge_stub)
+    _install_import_stub("mcp.types", _mcp_types_stub)
+    _install_import_stub("mcp.server", _mcp_server_stub)
+    _install_import_stub("mcp.server.fastmcp", _fastmcp_stub)
+    _install_import_stub("mcp", _mcp_stub)
+
+    from src.storage.knowledge_graph_age import KnowledgeGraphAGE  # noqa: E402
+    from src.knowledge_graph import DiscoveryNode, ResponseTo  # noqa: E402
+finally:
+    for _parent_name, _attr_name, _stub in (
+        ("src.mcp_handlers", "knowledge", _knowledge_stub),
+        ("mcp", "types", _mcp_types_stub),
+        ("mcp", "server", _mcp_server_stub),
+        ("mcp.server", "fastmcp", _fastmcp_stub),
+    ):
+        _parent = sys.modules.get(_parent_name)
+        if _parent is not None and getattr(_parent, _attr_name, None) is _stub:
+            delattr(_parent, _attr_name)
+    for _name in reversed(_STUBBED_MODULES):
+        sys.modules.pop(_name, None)
 
 
 # ---------------------------------------------------------------------------
