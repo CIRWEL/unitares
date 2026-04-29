@@ -1042,6 +1042,47 @@ class TestHandleDetectAnomalies:
             # Audit write count should not have increased
             assert mock_audit._write_entry.call_count == first_audit_count
 
+    @pytest.mark.asyncio
+    async def test_anomaly_event_payload_includes_agent_name_and_message(self):
+        """Anomaly broadcast payloads carry display data for Discord embeds."""
+        id1 = "aaaaaaaa-bbbb-cccc-dddd-111111111111"
+        metadata = {id1: _make_metadata(id1, label="Iris")}
+        server = _build_mock_server(agent_ids=[id1], metadata_dict=metadata)
+        recorded = []
+
+        anomaly_data = {
+            "anomalies": [
+                {
+                    "type": "coherence_drop",
+                    "severity": "high",
+                    "description": "Coherence dropped from 0.48 to 0.36 (0.12 change)",
+                },
+            ]
+        }
+
+        with patch(_PATCH_SERVER, server), \
+             patch(_PATCH_CTX, return_value=None), \
+             patch(
+                 "src.pattern_analysis.analyze_agent_patterns",
+                 return_value=anomaly_data,
+             ), \
+             patch(
+                 "src.event_detector.event_detector.record_event",
+                 side_effect=lambda event: recorded.append(event) or event,
+             ), \
+             patch("src.audit_log.audit_logger"):
+            from src.mcp_handlers.observability.handlers import handle_detect_anomalies
+            result = await handle_detect_anomalies({"agent_ids": [id1]})
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert recorded
+        assert recorded[0]["agent_id"] == id1
+        assert recorded[0]["agent_name"] == "Iris"
+        assert recorded[0]["message"] == (
+            "Iris: Coherence dropped from 0.48 to 0.36 (0.12 change)"
+        )
+
 
 # ---------------------------------------------------------------------------
 # handle_aggregate_metrics

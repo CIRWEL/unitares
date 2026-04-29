@@ -15,6 +15,19 @@ logger = get_logger(__name__)
 
 # Import from mcp_server_std module (using shared utility)
 
+
+def _agent_display_name(agent_id: str) -> str | None:
+    """Best-effort display label for event payloads."""
+    meta = mcp_server.agent_metadata.get(agent_id)
+    if meta is None:
+        return None
+    for attr in ("display_name", "label", "structured_id", "public_agent_id", "agent_id"):
+        value = getattr(meta, attr, None)
+        if value:
+            return str(value)
+    return None
+
+
 @mcp_tool("observe_agent", timeout=15.0, register=False)
 async def handle_observe_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Observe another agent's governance state with pattern analysis"""
@@ -582,11 +595,14 @@ async def handle_detect_anomalies(arguments: Dict[str, Any]) -> Sequence[TextCon
             
             # Filter anomalies by type and severity
             agent_anomalies = []
+            agent_name = _agent_display_name(agent_id)
             for anomaly in analysis.get("anomalies", []):
                 if anomaly["type"] in anomaly_types:
                     anomaly_severity_level = severity_levels.get(anomaly.get("severity", "low"), 0)
                     if anomaly_severity_level >= min_severity_level:
                         anomaly["agent_id"] = agent_id
+                        if agent_name:
+                            anomaly["agent_name"] = agent_name
                         agent_anomalies.append(anomaly)
             return agent_anomalies
         return []
@@ -626,6 +642,12 @@ async def handle_detect_anomalies(arguments: Dict[str, Any]) -> Sequence[TextCon
                 "type": a.get("type"),
                 "severity": a.get("severity"),
                 "agent_id": a.get("agent_id"),
+                "agent_name": a.get("agent_name"),
+                "message": (
+                    f"{a.get('agent_name')}: {a.get('description')}"
+                    if a.get("agent_name") and a.get("description")
+                    else a.get("description", "")
+                ),
                 "description": a.get("description", ""),
                 "source": "detect_anomalies",
             })
