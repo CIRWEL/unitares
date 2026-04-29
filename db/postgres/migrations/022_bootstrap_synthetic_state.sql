@@ -1,4 +1,4 @@
--- 018_bootstrap_synthetic_state.sql
+-- 022_bootstrap_synthetic_state.sql  (renumbered from 018)
 --
 -- Phase 1 of onboard-bootstrap-checkin.md (v2.1).
 --
@@ -60,6 +60,10 @@ CREATE INDEX idx_mv_latest_states_agent
     ON core.mv_latest_agent_states (agent_id);
 
 -- Register the migration.
+-- NOTE: renumbered 018→022. Slot 18 is occupied in prod by the phantom
+-- 'progress flat telemetry tables' entry (commit f7f71723, out-of-band apply).
+-- The synthetic column was hot-fixed inline on 2026-04-26; the ALTER TABLE
+-- and CREATE INDEX IF NOT EXISTS below are safe no-ops on prod.
 INSERT INTO core.schema_migrations (version, name, applied_at)
-VALUES (18, 'bootstrap_synthetic_state', NOW())
+VALUES (22, 'bootstrap_synthetic_state', NOW())
 ON CONFLICT (version) DO NOTHING;

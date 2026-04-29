@@ -1,4 +1,4 @@
--- 019_matview_measured_only.sql
+-- 023_matview_measured_only.sql  (renumbered from 019)
 --
 -- Phase 3a of onboard-bootstrap-checkin.md (v2.1).
 --
@@ -14,9 +14,9 @@
 -- explicit WHERE clause because it queries the base table directly.
 --
 -- Rollback shape: DROP MATERIALIZED VIEW + recreate without the WHERE
--- clause (i.e. revert to migration 018's projection).
+-- clause (i.e. revert to migration 022's projection).
 
--- Drop the prior matview (recreated by migration 018 with synthetic projection
+-- Drop the prior matview (recreated by migration 022 with synthetic projection
 -- but no row-level filter).
 DROP MATERIALIZED VIEW IF EXISTS core.mv_latest_agent_states;
 
@@ -41,6 +41,7 @@ CREATE INDEX idx_mv_latest_states_agent
     ON core.mv_latest_agent_states (agent_id);
 
 -- Register the migration.
+-- NOTE: renumbered 019→023 to enforce correct apply order after 022.
 INSERT INTO core.schema_migrations (version, name, applied_at)
-VALUES (19, 'matview_measured_only', NOW())
+VALUES (23, 'matview_measured_only', NOW())
 ON CONFLICT (version) DO NOTHING;
