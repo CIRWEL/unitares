@@ -76,7 +76,13 @@ def compute_agent_signature(
         context_bound_id = get_context_agent_id()
         bound_id = agent_id or context_bound_id
 
-        logger.debug(f"compute_agent_signature: agent_id={agent_id}, context={context_bound_id}, final={bound_id}")
+        logger.debug(
+            "compute_agent_signature resolved identity "
+            "(explicit=%s, context=%s, final=%s)",
+            agent_id is not None,
+            context_bound_id is not None,
+            bound_id is not None,
+        )
 
         if not bound_id:
             return {"uuid": None}
@@ -123,7 +129,7 @@ def compute_agent_signature(
         return signature
 
     except Exception as e:
-        logger.debug(f"compute_agent_signature error: {e}")
+        logger.debug("compute_agent_signature error: %s", type(e).__name__)
         return {"uuid": None}
 
 
@@ -207,10 +213,13 @@ def require_agent_id(arguments: Dict[str, Any]) -> Tuple[str, Optional[TextConte
             bound_id = get_context_agent_id()
             if bound_id:
                 agent_id = bound_id
-                logger.debug(f"Using session-bound identity UUID: {agent_id}")
+                logger.debug("Using session-bound identity UUID")
                 arguments["agent_id"] = agent_id
         except Exception as e:
-            logger.debug(f"Could not retrieve session-bound identity: {e}")
+            logger.debug(
+                "Could not retrieve session-bound identity: %s",
+                type(e).__name__,
+            )
 
     # Canonical ID resolution when both explicit agent_id and a session binding exist.
     #
@@ -240,18 +249,15 @@ def require_agent_id(arguments: Dict[str, Any]) -> Tuple[str, Optional[TextConte
                         public_agent_id = getattr(meta, 'public_agent_id', None)
                         if explicit_agent_id in (label, public_agent_id, structured_id):
                             # Case 1: alias of the bound agent — rewrite to UUID.
-                            logger.debug(
-                                f"Explicit agent_id '{explicit_agent_id}' is an alias "
-                                f"of bound UUID '{bound_uuid[:8]}...'; using UUID."
-                            )
+                            logger.debug("Explicit agent_id is a bound identity alias; using UUID")
                             agent_id = bound_uuid
                             arguments["agent_id"] = agent_id
                         else:
                             # Case 2: cross-agent reference — honor the explicit
                             # value; ownership verification runs downstream.
                             logger.debug(
-                                f"Explicit agent_id '{explicit_agent_id}' differs from "
-                                f"bound UUID '{bound_uuid[:8]}...'; honoring explicit value."
+                                "Explicit agent_id differs from bound UUID; "
+                                "honoring explicit value"
                             )
                 except Exception:
                     pass
@@ -284,7 +290,7 @@ def require_agent_id(arguments: Dict[str, Any]) -> Tuple[str, Optional[TextConte
         short_uuid = str(uuid.uuid4())[:8]
         agent_id = f"auto_{timestamp}_{short_uuid}"
         arguments["agent_id"] = agent_id
-        logger.info(f"Auto-generated agent_id: {agent_id}")
+        logger.info("Auto-generated agent_id")
 
     # Validate format and reserved names
     from ..validators import validate_agent_id_format
