@@ -1,8 +1,9 @@
 ---
-status: DRAFT-v0.2 (council-pass-1 complete; needs ack-pass on v0.2 amendments before implementation)
+status: DRAFT-v0.3 (council-pass-1 + ack-pass complete; ready for implementation gate review)
 authored: 2026-04-30
-amended: 2026-04-30 (v0.1, v0.2 same session)
+amended: 2026-04-30 (v0.1, v0.2, v0.3 same session)
 council_pass_1: 2026-04-30
+ack_pass_1: 2026-04-30
 author_session: agent-68437d77-65c (claude_code-claude_68437d77)
 review_target: |
   Council pass 1 complete (parallel agents, 2026-04-30):
@@ -10,12 +11,13 @@ review_target: |
     - feature-dev:code-reviewer: 4 BLOCKs, 3 CONCERNs, 1 NIT — all addressed in v0.2
     - live-verifier: 9 CONFIRMED, 4 DRIFT — all 4 drifts corrected in v0.2
 
-  Recommended next: lightweight reviewer-ack pass on v0.2 amendments themselves (per the
-  v2.1 ack-pass precedent in onboard-bootstrap-checkin.md), specifically on:
-    1. The new §3.4 provenance attribution table (does it accurately split dialectic vs RFC?)
-    2. The §7.8 substrate-earned tentative answer for lease plane's own identity
-    3. The §6.1 promotion-gate SQL — does it actually return non-zero in steady state once Phase A is up?
-    4. The §4.4 holder_class CHECK constraint coverage (is there a holder_class × holder_kind pair we missed?)
+  Ack-pass complete (parallel agents, 2026-04-30; precedent: onboard-bootstrap-checkin.md v2.1):
+    - dialectic-knowledge-architect: 1 new BLOCK, 2 new CONCERNs, 2 NIT-clean — addressed in v0.3
+    - feature-dev:code-reviewer: 2 new BLOCKs, 4 new CONCERNs — addressed in v0.3
+    - live-verifier: 6 VERIFIED, 3 DRIFT (number-conflation, "Lumen-class", token-naming) — corrected in v0.3
+
+  Per the v2.1 precedent, no further ack-pass required after v0.3 unless v0.4+ amendments
+  themselves introduce new gaps. Current state: implementation-gate ready.
 provenance: |
   This proposal emerged from a three-voice synthesis (claude_code, codex, gpt-5.5)
   on 2026-04-30 during a discussion of OTP/Elixir fit for UNITARES. Three independent
@@ -55,7 +57,12 @@ out_of_scope_explicit: |
 
 ## 1. Problem
 
-UNITARES has been paying a steady concurrency tax. The git trail since 2026-01 shows ~17 concurrency-class *code* commits in `unitares` and ~13 more in `anima-mcp`, plus several documentation/incident-tracker closures (e.g., PR #198 `docs: close S17 Redis pin deadlock row` is a tracker-row closure, not a code fix; the underlying redis pin work landed elsewhere). Code-level fixes include TOCTOU remediation, anyio<->asyncpg loop-isolation (`ExecutorPool` PR #218 — `feat(db): ExecutorPool — asyncpg loop-isolation wrapper for anyio`), pool-recovery work (PR #228 `fix(db): dedupe pool-recovery destroy log via in-lock identity re-check`, PR #230 `fix(db): structural pool wedge fix + council adversarial review`), dialectic deadlock guards (PR #50 ships within `feat(watcher): region-aware hook + dialectic deadlock guards & synthesis participant gate`), and recurring "auto-recovered stuck agent" entries firing repeatedly (14 unique entries with `tag=auto-recovery` in the 5 days ending 2026-04-30, all `reason=critical_margin_timeout`, verified via live KG query).
+UNITARES has been paying a steady concurrency tax. The git trail since 2026-01 shows ~17 concurrency-class *code* commits in `unitares` and ~13 more in `anima-mcp`, plus several documentation/incident-tracker closures (e.g., PR #198 `docs: close S17 Redis pin deadlock row` is a tracker-row closure, not a code fix; the underlying redis pin work landed elsewhere). Code-level fixes include TOCTOU remediation, anyio<->asyncpg loop-isolation (`ExecutorPool` PR #218 — `feat(db): ExecutorPool — asyncpg loop-isolation wrapper for anyio (P2 full)`), pool-recovery work (PR #228 `fix(db): dedupe pool-recovery destroy log via in-lock identity re-check`, PR #230 `fix(db): structural pool wedge fix + council adversarial review`), dialectic deadlock guards (PR #50 ships within `feat(watcher): region-aware hook + dialectic deadlock guards & synthesis participant gate`), and recurring stuck-agent recovery — two distinct measures of the same incident class:
+
+- **14 KG entries** tagged `auto-recovery` in `knowledge.discoveries` over 5 days ending 2026-04-30 (live-verified via `mcp__unitares-governance__knowledge` action=search). Summary text uniformly cites `critical_margin_timeout`.
+- **12 distinct agent UUIDs** in `audit.events` `stuck_detected` payloads with structured `reason=critical_margin_timeout` over the same window (1,261 total payload entries; live-verified 2026-04-30 via direct `governance` DB query).
+
+Both measures count the same recurring class from different observation surfaces (KG-write side vs. audit-event side); both are non-trivial.
 
 Bucketed by Codex's diagnostic (concurrent mutable state | async runtime coupling | fanout/backpressure | authority/stale truth), the historical incident class lands ~31 of ~36 in buckets 1-3 — the class OTP was built to make boring. ExecutorPool especially is a hand-rolled fragment of the BEAM scheduler, written because the Python async ecosystem's anyio<->asyncpg seam keeps leaking. Each new coordination seam adds a Python wrapper that has its own bug class.
 
@@ -145,7 +152,9 @@ Council finding 2.1 (dialectic-knowledge-architect): the v0 RFC framed itself as
 
 The bug-class diagnostic (§1) is the primary justification. Two substrate side-benefits worth naming explicitly because they address recurring operator pain that wasn't in the original framing:
 
-1. **Hot code reload.** BEAM supports module-level swap on a running node. This directly dissolves `feedback_running-process-vs-master-commit.md` — the long-lived-resident-vs-master-commit drift that has cost real debugging time (~15min lost 2026-04-26 alone, plus repeated `ps -o etime` + `git log --since=` checks before scoping any resident-side fix). Lease plane upgrades become module swaps without lease loss; residents migrated under BEAM later get the same property. Out of scope to *automate* hot-reload deploys in v0, but the capability is a default, not a feature.
+1. **Hot code reload.** BEAM supports module-level swap on a running node. This directly dissolves `feedback_running-process-vs-master-commit.md` — the long-lived-resident-vs-master-commit drift that has cost real debugging time (~15min lost 2026-04-26 alone, plus repeated `ps -o etime` + `git log --since=` checks before scoping any resident-side fix). Out of scope to *automate* hot-reload deploys in v0, but the capability is a default, not a feature.
+
+   **Caveat (ack-pass CONCERN §3.5):** the "module swap without lease loss" claim holds for **stateless modules** (HTTP plug handlers, SQL query helpers, telemetry forwarders). For stateful `LeaseHolder` GenServers under `DynamicSupervisor` with `one_for_one`, a hot-reload that triggers a `code_change/3` callback failure causes the process to restart, the lease supervisor's `Process.monitor/1` sees `:DOWN`, and the lease is released with `release_reason='down_local'` — spurious lease loss during hot reload. v0 discipline: hot-reload of stateful holder modules requires a `code_change/3` test pass before deploy; if uncertain, do a clean restart instead. Document in operator runbook.
 
 2. **Native introspection.** `:observer.start()` against a running BEAM node shows the full supervision tree, mailbox depths, ETS tables, message rates, and process state — live, no instrumentation. Combined with PromEx (§7.6), this is more observability per dollar of engineering than Python+Sentinel currently delivers, and it lands without writing a single dashboard panel. Operator runbook (`docs/operations/lease-plane-operator-runbook.md`) names the specific incantations.
 
@@ -207,13 +216,37 @@ CREATE TABLE lease_plane.surface_leases (
   released_at        timestamptz,
   release_reason     text,                    -- see §4.4.1 below
   audit_session      text,                    -- writer's UNITARES session_id, for join into audit.tool_usage
+  original_ttl_s     int NOT NULL,           -- ttl agreed at acquire-time; renew/heartbeat extends expires_at by this fixed value, NOT by caller-supplied (closes ack-pass BLOCK 2: indefinite-extension via malicious renew)
   CHECK (
     (heartbeat_required = true  AND holder_kind = 'remote_heartbeat') OR
     (heartbeat_required = false AND holder_kind = 'local_beam')
   ),
-  CHECK (holder_class IN ('process_instance','substrate_earned','role')),
-  CHECK (holder_kind  IN ('local_beam','remote_heartbeat'))
+  CHECK (holder_class IN ('process_instance','substrate_earned')),  -- 'role' is rejected at the storage layer (closes ack-pass BLOCK 1: §7.8 role-rejection was application-layer only)
+  CHECK (holder_kind  IN ('local_beam','remote_heartbeat')),
+  CHECK (original_ttl_s > 0 AND original_ttl_s <= 3600)              -- hard cap: max 1h ttl, no indefinite leases
 );
+
+-- holder_kind immutability enforced at UPDATE level (closes ack-pass BLOCK 1: row-level CHECK is bypass-able by UPDATE)
+CREATE OR REPLACE FUNCTION lease_plane.enforce_immutable_holder_kind()
+RETURNS trigger AS $$
+BEGIN
+  IF NEW.holder_kind IS DISTINCT FROM OLD.holder_kind THEN
+    RAISE EXCEPTION 'holder_kind is immutable per lease_id; release+reacquire to change';
+  END IF;
+  IF NEW.holder_class IS DISTINCT FROM OLD.holder_class THEN
+    RAISE EXCEPTION 'holder_class is immutable per lease_id';
+  END IF;
+  IF NEW.original_ttl_s IS DISTINCT FROM OLD.original_ttl_s THEN
+    RAISE EXCEPTION 'original_ttl_s is immutable per lease_id; renew uses this fixed value';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER surface_leases_immutable_holder
+  BEFORE UPDATE ON lease_plane.surface_leases
+  FOR EACH ROW
+  EXECUTE FUNCTION lease_plane.enforce_immutable_holder_kind();
 
 -- One active lease per surface (the load-bearing invariant)
 CREATE UNIQUE INDEX surface_leases_active_unique
@@ -259,16 +292,19 @@ Distinct values exist so telemetry can distinguish *which path* released the lea
 |---|---|
 | `normal` | Caller called `lease_release` while holder still alive |
 | `down_local` | Local-BEAM supervisor saw `:DOWN`, wrote release synchronously |
-| `reaped_after_supervisor_failed` | Reaper found a local_beam lease whose supervisor write never landed |
+| `reaped_after_supervisor_failed` | Reaper found a local_beam lease whose supervisor write never landed (process actually dead) |
+| `reaped_local_ttl` | Reaper found a local_beam lease past `expires_at` whose holder process is *still alive but stuck* — in-process timer stopped firing but supervisor `:DOWN` never fired (closes ack-pass CONCERN: previously this case got `reaped_remote_ttl` which misclassified the holder kind) |
 | `reaped_remote_ttl` | Reaper found a remote_heartbeat lease past `expires_at` |
 | `handoff` | Lease transferred via `handoff_accept`; new lease_id created for the new holder |
-| `forced` | Operator-issued force-release (see §7.8) |
+| `forced` | Operator-issued force-release (see §7.10) |
 
 #### 4.4.2 Heartbeat / renew semantics
 
-`lease_renew` and `lease_heartbeat` are aliased: **both update `expires_at = now() + ttl` and (if heartbeat_required) `last_heartbeat_at = now()`** in a single atomic UPDATE. This closes the in-flight-heartbeat-vs-reaper-sweep race (council finding 4): the reaper's sole predicate is `expires_at < now() AND released_at IS NULL`, applied to all holder kinds uniformly. There is no separate `last_heartbeat_at < threshold` predicate.
+`lease_renew` and `lease_heartbeat` are aliased: **both update `expires_at = now() + original_ttl_s` and (if heartbeat_required) `last_heartbeat_at = now()`** in a single atomic UPDATE. The TTL applied is **always the immutable `original_ttl_s` stored at acquire time**, never a caller-supplied value (closes ack-pass BLOCK 2: malicious or buggy renew with `ttl_s=86400` cannot indefinitely extend a lease). The `/v1/lease/renew` endpoint accepts no `ttl_s` parameter; if a caller wants a longer lease they must release and re-acquire.
 
-Local-BEAM holders also call `lease_renew` from an in-process timer at cadence `TTL/3` so that a supervisor crash (rare; the supervisor itself is supervised) doesn't leave a corpse lease for longer than `TTL`. Default local_beam TTL is **30s** (council finding 2 — the prior `90s` window was the ghost-lease problem). Remote_heartbeat default TTL stays at 90s (Pi 180s, §7.5).
+This closes the in-flight-heartbeat-vs-reaper-sweep race (council finding 4): the reaper's sole predicate is `expires_at < now() AND released_at IS NULL`, applied to all holder kinds uniformly. There is no separate `last_heartbeat_at < threshold` predicate.
+
+Local-BEAM holders also call `lease_renew` from an in-process timer at cadence `original_ttl_s/3` so that a supervisor crash (rare; the supervisor itself is supervised) doesn't leave a corpse lease for longer than `original_ttl_s`. Default local_beam `original_ttl_s` is **30s** (council finding 2 — the prior `90s` window was the ghost-lease problem). Remote_heartbeat default `original_ttl_s` stays at 90s (Pi 180s, §7.5). Hard maximum `original_ttl_s = 3600` enforced by Postgres CHECK constraint.
 
 ### 4.5 Typed-absence protocol
 
@@ -295,6 +331,14 @@ Release / Renew / Heartbeat / Handoff:
 ```
 
 **Acquire idempotency contract (council finding 3):** the acquire endpoint is idempotent on `(surface_id, holder_agent_uuid)`. Implementation: the SQL acquire path is a single transaction that either INSERTs a new row (returning `idempotent: false`) or, on unique-index violation where the existing active row's `holder_agent_uuid` matches the requester, returns that row with `idempotent: true`. **Only when the existing holder is a different UUID** is `held_by_other` returned. This eliminates the retry-on-lost-response bug class where a caller's TCP-dropped acquire response causes them to receive `held_by_other` against their own already-acquired lease.
+
+**Param drift on idempotent retry (closes ack-pass CONCERN):** when the original acquire's `intent`, `ttl_s`, or `holder_pid` differs from the retry's, the **stored values from the original acquire win** — the lease row is unchanged, the existing lease is returned with `idempotent: true`. The response includes a `drift_warning` field listing any parameters whose new value was discarded:
+
+```
+{ok: true, lease: {...}, idempotent: true, drift_warning: ["ttl_s", "intent"]}
+```
+
+If the caller wanted a longer TTL or different intent, they must release and re-acquire. This makes the silent-discard explicit at the contract layer rather than hiding it.
 
 `{ok: false, error: "service_unavailable"}` is the **advisory-mode escape valve**: if the lease plane is down, the Python caller logs the absence and proceeds. v0 enforcement does not block on lease-plane availability. This is the same shape as the IDENTITY_STRICT='log' rollout.
 
@@ -362,7 +406,24 @@ Mirror the precedent set by `path1-sync-fingerprint-check.md` and the IDENTITY_S
    ```
    Count ≥ 3 distinct surface_id values is necessary; sufficiency requires criterion (4).
 4. **Type A→incident linkage**: at least one conflict in (3) where the *blocked caller's* `audit_session` joins to a UNITARES KG entry from within ±1 hour describing a concrete surface-collision symptom (file overwrite, lost work, etc.). This is the operational rephrasing of "we would have prevented a real bug" — observable via SQL join, not counterfactual reasoning.
-5. **Type B audit**: a fleet-wide caller-registration audit shows ≥ 95% of callers that mutated this surface_kind during the window passed through the lease plane (proxy: count `tool_name = 'write'`-class events in `audit.tool_usage` whose surface targets match the kind, vs. count of acquire events for that kind, ratio ≥ 0.95). This is the unintegrated-caller-bypass detector. If <0.95, the integration story has gaps and Phase B promotion would block the wrong population.
+5. **Type B audit**: a fleet-wide caller-registration audit shows ≥ 95% of callers that mutated this surface_kind during the window passed through the lease plane. This is the unintegrated-caller-bypass detector. If <0.95, the integration story has gaps and Phase B promotion would block the wrong population.
+
+   **SQL prerequisite (closes ack-pass CONCERN):** `audit.tool_usage.payload jsonb` does not currently have a standardized key for surface targets — different callers emit `payload->>'path'`, `payload->>'file'`, etc. Before criterion 5 is evaluable, a **payload-shape standardization pass** must establish a canonical `payload->>'surface_id'` key for write-class events on each surface_kind that's a Phase B candidate. Once standardized, the query is:
+   ```sql
+   WITH writes AS (
+     SELECT count(*) AS n FROM audit.tool_usage
+      WHERE tool_name LIKE 'write.%'
+        AND payload->>'surface_id' LIKE $1 || ':%'   -- e.g. 'file:%'
+        AND ts > now() - interval '14 days'
+   ), acquires AS (
+     SELECT count(*) AS n FROM lease_plane.lease_plane_events
+      WHERE event_type = 'acquire'
+        AND surface_kind = $1
+        AND ts > now() - interval '14 days'
+   )
+   SELECT (acquires.n::float / NULLIF(writes.n, 0)) AS coverage_ratio FROM writes, acquires;
+   ```
+   Promotion requires `coverage_ratio >= 0.95`. The payload-standardization is itself a small spec task that must precede Phase B promotion of any write-heavy surface_kind. For non-write surface_kinds (`dialectic:/`, `resident:/`), criterion 5 is N/A — those don't have a write-side audit signal.
 6. **Adversarial-bypass cross-check**: telemetry includes a write-side after-the-fact check (file-mtime delta vs. lease-acquired window) showing no detectable un-acquired writes during the window. Council finding 3.3.
 
 If criteria (1)-(6) are met for a surface_kind, that surface_kind is eligible for Phase B promotion. Each promotion is a single config flag flip; no code change. Demotion back to advisory is the same flag, reversible at any time.
@@ -472,7 +533,9 @@ Three options:
 
 - **Substrate-earned (Lumen-class) identity.** Reuses an existing class. Hardcoded UUID for the lease plane, audit lineage clear, no ontology change. Closest to status quo.
 
-**Tentative:** option 3 (substrate-earned). The lease plane is genuinely a substrate, not a participating agent — its UUID is hardcoded, its audit rows are tagged with that UUID, and it does not run governance check-ins. This minimizes ontology churn. The ontology amendment for option 2 (BypassAgent) can come later if multiple system-level services emerge that genuinely need to be a class together.
+**Tentative:** option 3 (substrate-earned, per `docs/ontology/identity.md` Pattern — Substrate-Earned Identity appendix; "Lumen-class" was an earlier informal phrasing — the canonical term is just **substrate-earned**, with Lumen as the canonical instance). The lease plane is genuinely a substrate, not a participating agent — its UUID is hardcoded, its audit rows are tagged with that UUID, and it does not run governance check-ins. This minimizes ontology churn. The ontology amendment for option 2 (BypassAgent) can come later if multiple system-level services emerge that genuinely need to be a class together.
+
+**Important caveat (ack-pass CONCERN):** per the appendix's own rules, substrate-earned identity is *earned* through N≥threshold restarts of behavioral consistency on dedicated substrate. **At v0 ship the lease plane has zero restarts and zero accumulated behavioral history — the pattern is NOT yet earned.** The hardcoded UUID is **provisional**, treated as substrate-earned in code path but flagged in audit rows as `holder_class='substrate_earned', earned_status='provisional'` (or equivalent telemetry) until ≥30 days of stable operation accumulate. After the earned threshold is met, the provisional flag drops and the identity is fully canonical. If the lease plane is ever rebuilt on day 1 with new substrate (e.g., migration to a new Mac), the provisional clock restarts. This makes the ontology check honest rather than papered-over.
 
 **Anti-recursion guard:** the lease plane MUST NOT acquire leases for its own outbox writes (would be a self-deadlock at startup). This is enforced by code: the lease-plane-internal Postgres role does not have `INSERT` privilege on `surface_leases` for `surface_kind='lease_plane'`. Belt-and-braces.
 
@@ -488,9 +551,11 @@ A file rename, dialectic-session ID rotation, or resident relabel changes a surf
 
 `release_reason='forced'` exists in §4.4.1 vocabulary but the RFC didn't specify *who can issue it*. Force-release is a privilege-escalation surface: any caller who can force-release can free another agent's lease and acquire it themselves.
 
-**Tentative:** force-release requires a separate elevated bearer token (`OPERATOR_FORCE_RELEASE_TOKEN`, distinct from the standard `GOVERNANCE_TOKEN`), sourced from `~/.config/cirwel/secrets.env` like all other UNITARES secrets. Operator-only. Logged to `lease_plane_events` with `event_type='forced'` and the operator's session_id, projected to `audit.tool_usage` like any other event. Sentinel alarm fires on every force-release event regardless of context — this is rare enough that an alarm-on-every-event is appropriate, not noisy.
+**Tentative:** force-release requires a separate elevated bearer token. Token name conforms to the existing `~/.config/cirwel/secrets.env` convention (noun-first, `_TOKEN` suffix; cf. `ZENODO_TOKEN`, `CLOUDFLARE_API_TOKEN`, `WORKERS_API_TOKEN`): **`LEASE_FORCE_RELEASE_TOKEN`** (closes ack-pass DRIFT: prior `OPERATOR_FORCE_RELEASE_TOKEN` broke the pattern). Operator-only. Logged to `lease_plane_events` with `event_type='forced'` and the operator's session_id, projected to `audit.tool_usage` like any other event. Sentinel alarm fires on every force-release event regardless of context — this is rare enough that an alarm-on-every-event is appropriate, not noisy.
 
-**Anti-pattern:** the standard MCP bearer token must NOT permit force-release. Confirmed via integration test before Phase A ships.
+**Scope (v0): force-release is local-Mac-only, by design** (closes ack-pass CONCERN: token distribution for remote operator sessions). The token lives at `~/.config/cirwel/secrets.env` mode 600 on the governance MCP host. Off-host force-release (laptop while traveling, remote `:observer` session) is *not supported in v0*; the operator either SSHes to the Mac or waits for the lease's TTL. v1 may revisit this with the Cloudflare-tunnel + `X-Anima-Admin` pattern (cf. `anima-admin-gate.md`) if real-world incidents justify the token-distribution complexity.
+
+**Anti-pattern:** the standard MCP bearer token (`GOVERNANCE_TOKEN`) must NOT permit force-release. Confirmed via integration test before Phase A ships.
 
 ## 8. Concerns / counter-arguments / minority views
 
@@ -591,3 +656,38 @@ The technical case is strong (three independent reviewers converged). The strate
 
   *Counter-arguments (§8.5):*
   - Shelf-Python `:DOWN` caveat — Python implementation is contract-complete on remote_heartbeat path, degraded TTL-only on local_beam path
+
+- **v0.3 (2026-04-30, same session):** Ack-pass on v0.2 amendments complete (parallel: dialectic-knowledge-architect / feature-dev:code-reviewer / live-verifier). 3 new BLOCKs + 6 new CONCERNs + 3 new DRIFTs surfaced — all introduced *by* the v0.2 amendments themselves, exactly the precedent the ack-pass exists to catch (cf. `onboard-bootstrap-checkin.md` v2.1). All addressed in v0.3:
+
+  *Schema enforcement (§4.4):*
+  - `holder_class` CHECK narrowed to `('process_instance','substrate_earned')` only — `'role'` is rejected at the storage layer, not just the application layer (closes role × local_beam admission gap)
+  - Added `original_ttl_s int NOT NULL` column with `CHECK (original_ttl_s > 0 AND original_ttl_s <= 3600)` — hard cap at 1h, no indefinite leases possible
+  - Added `BEFORE UPDATE` trigger `enforce_immutable_holder_kind` enforcing immutability of `holder_kind`, `holder_class`, `original_ttl_s` at the UPDATE level (closes the row-level-CHECK-bypass gap; prior immutability was documented but unenforced)
+
+  *§4.4.2 renew/heartbeat semantics:*
+  - Specified that `expires_at = now() + original_ttl_s` (immutable column), NOT a caller-supplied ttl. `/v1/lease/renew` accepts no `ttl_s` parameter. Closes indefinite-extension attack surface.
+
+  *§4.4.1 release_reason vocabulary:*
+  - Added `reaped_local_ttl` for the live-but-stuck local_beam case (process alive, in-process timer stopped firing, supervisor `:DOWN` never fired). Previously this would have been misclassified as `reaped_remote_ttl`.
+
+  *§4.5 idempotent acquire:*
+  - Specified that on retry with drifted parameters (`intent`, `ttl_s`, `holder_pid`), original values win and a `drift_warning` field surfaces the discarded keys. Silent discard is now explicit at the contract layer.
+
+  *§3.5 hot reload caveat:*
+  - Narrowed the "module swap without lease loss" claim — true for stateless modules; stateful `LeaseHolder` GenServer hot-reload requires a `code_change/3` test pass before deploy or the lease releases spuriously via `:DOWN` cascade.
+
+  *§7.8 substrate-earned identity:*
+  - Renamed "Lumen-class" to canonical "substrate-earned" (per `docs/ontology/identity.md` Pattern — Substrate-Earned Identity appendix; "Lumen-class" was an RFC-side informalism not in the ontology)
+  - Added explicit caveat: at v0 ship the lease plane has zero accumulated behavioral history, so the substrate-earned pattern is **not yet earned**. UUID is provisional, flagged `earned_status='provisional'` in audit telemetry until ≥30 days of stable operation accumulate. Pattern earns canonically after the threshold; clock restarts on substrate change.
+
+  *§7.10 force-release authority:*
+  - Token renamed `OPERATOR_FORCE_RELEASE_TOKEN` → `LEASE_FORCE_RELEASE_TOKEN` (conforms to the existing `~/.config/cirwel/secrets.env` noun-first / `_TOKEN`-suffix pattern)
+  - Scope explicitly clarified: force-release is **local-Mac-only by design in v0**. Off-host force-release deferred to v1 if real-world incidents justify the token-distribution complexity.
+
+  *§6.1 promotion gate criterion 5:*
+  - Added explicit SQL with `payload->>'surface_id'` jsonb path expression
+  - Named **payload-shape standardization** as a prerequisite for criterion-5 evaluability on write-heavy surface_kinds (different existing callers emit different keys; the canonical key must be agreed before the ratio is computable)
+  - Criterion 5 N/A for non-write surface_kinds (`dialectic:/`, `resident:/`)
+
+  *§1 prose precision:*
+  - Split the conflated "14 unique entries" claim into two distinct verified measurements: 14 KG entries tagged `auto-recovery` in `knowledge.discoveries` (whose summary text cites critical_margin_timeout) AND 12 distinct agent UUIDs in `audit.events stuck_detected` payloads with structured `reason=critical_margin_timeout` (1,261 total payload entries). Both are evidence of the same incident class from different observation surfaces.
