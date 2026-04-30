@@ -89,7 +89,7 @@ RESOLVED (shipped or accepted)
   S1-a     ✅ 2026-04-29  full chain — TTL shrink + opv field + dep block + audit event + clock-skew tolerance wired across onboard/identity/bind_session via shared helper; HTTP REST inherits transitively. Operator pairs ship with secret rotation per §11.7.
 
 OPEN — actionable
-  R6       harness-substrate plurality dogfood track — draft landed at docs/ontology/harness-substrate-plurality.md; first H1-H5 pass recorded at docs/ontology/r6-h1-h5-dogfood-20260429.md (H4/H5 direct, H2 evidence-backed, H1/H3 require controlled fresh process/profile runs); decide response-shape promotions
+  R6       harness-substrate plurality dogfood track — draft landed at docs/ontology/harness-substrate-plurality.md; first H1-H5 pass recorded at docs/ontology/r6-h1-h5-dogfood-20260429.md (H4/H5 direct, H2 evidence-backed, H1/H3 require controlled fresh process/profile runs); April 30 Hermes episode-fork observation added: same UUID + fresh episode needs explicit episode-fork vs identity-lineage-fork provenance; decide response-shape promotions
   R7       BEAM coordination kernel — draft landed at docs/ontology/beam-coordination-kernel.md; next gate is Phase 1 in-memory OTP lease server spike (acquire/conflict/expiry) after repo-placement decision
   S1-b     onboard-helper + CLI startup-path migration to force_new + parent_agent_id (plugin + unitares)
   S7       KG provenance migration (R3 audit done; lineage-chain schema decision open)

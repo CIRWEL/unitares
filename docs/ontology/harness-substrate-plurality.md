@@ -253,6 +253,8 @@ client_session_id     # logical UNITARES/Hermes session binding
 session_resolution_source # direct UUID, continuity token, fingerprint fallback, middleware, etc.
 thread_id             # logical conversation/history thread, when available; not lineage ancestry
 episode_id            # local interaction span (e.g. Discord thread, CLI conversation, dispatch session)
+episode_fork_kind     # none / sibling_locus / continuation / compaction / identity_lineage; names what kind of fork this event represents
+identity_lineage_fork # boolean: true only when a distinct child UUID exists with parent_agent_id + spawn_reason
 invocation_id         # concrete run/command/subprocess invocation, when distinct from episode
 harness_id            # concrete body/runtime instance mediating action
 harness_type          # hermes, claude-code, codex-cli, dispatch, goose, ...
@@ -281,6 +283,7 @@ The five layers in `identity.md` (process / substrate / role / memory / behavior
 **Design risks (open questions):**
 
 - **`episode_id` granularity.** Defined here as "local interaction span." Clean for Discord threads (one thread = one episode). Less clean for CLI: is one Claude invocation an episode, or is a continuous shell session with multiple invocations one episode? Affects whether episodes nest.
+- **Episode fork vs identity-lineage fork.** A live Hermes dogfood pass on April 30, 2026 resumed UUID `07d0f9c7-1512-4a1e-8cb1-a5225c20709f` in a fresh CLI episode and UNITARES returned `thread_context.is_fork=true`. That observation matched the ontology only if interpreted as a sibling episode/locus fork, not a descendant identity. A field named only `is_fork` is therefore too compressed: it must not imply identity lineage unless a distinct child UUID was minted with explicit `parent_agent_id` and `spawn_reason`.
 - **`thread_id`, `episode_id`, and `locus.thread_id` separation.** `thread_id` names logical conversation/history lineage, `episode_id` names a local interaction span, and `locus.thread_id` names a transport coordinate such as Discord. The names may need nesting or prefixes before implementation so conversation threads do not collide with Discord threads or lineage ancestry.
 - **`process_instance_id` vs `client_session_id`.** These are not the same thing. Process-instance per `identity.md` is the live runtime/process-instance boundary, while `client_session_id` is a logical session that can span sub-things or be sub-spanned. Both must coexist with clear naming, and `process_instance_id` should be opaque rather than a raw OS PID.
 - **`harness_id` granularity.** A harness has both a type and an instance. `hermes` as a type is too coarse to distinguish Hermes CLI, Hermes Discord gateway, Hermes profile, and Hermes MCP host behavior.
