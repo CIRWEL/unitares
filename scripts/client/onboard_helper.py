@@ -4,14 +4,15 @@
 Owns the flow:
 
 1. Read existing ``.unitares/session.json`` cache (if any).
-2. Call ``onboard`` — preferring ``continuity_token`` from cache, then
-   ``client_session_id``.
+2. Call ``onboard(force_new=true)``. When the cache has a UUID, pass it as
+   ``parent_agent_id`` with ``spawn_reason="new_session"``.
 3. If the server reports ``trajectory_required`` (identity exists but lacks
    a verifiable signal), return status=``trajectory_required`` with the
    server's recovery hint. We do NOT auto-retry with ``force_new=true``;
    that is an explicit operator decision, not an automatic one (see commit
    718ccd3 and the identity "never silently substitute" invariant).
-4. ``force_new=true`` is set only when the caller passed ``--force-new``.
+4. ``force_new=true`` is always sent on startup. ``--force-new`` only means
+   "ignore cached lineage".
 5. Only write the cache when onboard succeeded and produced a usable uuid.
 
 Emits a JSON line on stdout with the resolved fields for the shell hook to
@@ -201,16 +202,18 @@ def run_onboard(
     url = f"{server_url.rstrip('/')}/v1/tools/call"
     cache = read_cache(workspace, slot)
 
-    arguments: dict[str, Any] = {"name": agent_name, "model_type": model_type}
-    if force_new:
-        arguments["force_new"] = True
-    else:
-        cached_token = (cache.get("continuity_token") or "").strip()
-        cached_session = (cache.get("client_session_id") or "").strip()
-        if cached_token:
-            arguments["continuity_token"] = cached_token
-        elif cached_session:
-            arguments["client_session_id"] = cached_session
+    parent_agent_id = ""
+    if not force_new:
+        parent_agent_id = (cache.get("uuid") or cache.get("agent_uuid") or "").strip()
+
+    arguments: dict[str, Any] = {
+        "name": agent_name,
+        "model_type": model_type,
+        "force_new": True,
+    }
+    if parent_agent_id:
+        arguments["parent_agent_id"] = parent_agent_id
+        arguments["spawn_reason"] = "new_session"
 
     if with_bootstrap:
         arguments["initial_state"] = _build_bootstrap_initial_state()
@@ -219,9 +222,8 @@ def run_onboard(
     parsed = unwrap_tool_response(raw)
 
     if not is_successful_onboard(parsed):
-        # Per 718ccd3: never auto-force_new. Surface the error so the operator
-        # can decide (run `/governance-start --force` or clear the cache).
-        # Clobbering trajectory with force_new silently substitutes identity.
+        # Per 718ccd3: never auto-retry with a weaker/different identity
+        # posture. Surface the error so the operator can decide.
         recovery = parsed.get("recovery") or {}
         return {
             "status": "trajectory_required" if trajectory_required(parsed) else "onboard_failed",
@@ -243,6 +245,9 @@ def run_onboard(
         "continuity_token_supported": parsed.get("continuity_token_supported", False),
         "display_name": parsed.get("display_name", ""),
     }
+    if parent_agent_id:
+        new_cache["parent_agent_id"] = parent_agent_id
+        new_cache["spawn_reason"] = "new_session"
     write_cache(workspace, new_cache, slot)
 
     return {
@@ -266,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model-type", default="claude-code")
     parser.add_argument("--workspace", default=os.getcwd())
     parser.add_argument("--force-new", action="store_true",
-                        help="Explicit opt-in to create a fresh identity (never automatic)")
+                        help="Create a fresh identity without declaring cached lineage")
     parser.add_argument(
         "--no-bootstrap",
         dest="with_bootstrap",

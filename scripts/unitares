@@ -10,7 +10,8 @@
 #                         cli-<shorthost>-<user>). Identity is bound to this.
 #   UNITARES_TOKEN        Optional bearer token; sent as Authorization header.
 #   UNITARES_SESSION_FILE Path to the local session JSON (default:
-#                         ~/.unitares_session.json).
+#                         ~/.unitares_session.json). Onboard uses cached
+#                         uuid only as parent_agent_id lineage.
 
 set -u
 set -o pipefail
@@ -51,50 +52,58 @@ if value is not None:
 }
 
 _py_write_session() {
-    SESSION_FILE="$SESSION_FILE" AGENT_ID="$AGENT_ID" CSID="${1:-}" CTOKEN="${2:-}" python3 -c '
+    SESSION_FILE="$SESSION_FILE" AGENT_ID="$AGENT_ID" CSID="${1:-}" CTOKEN="${2:-}" UUID="${3:-}" PARENT="${4:-}" python3 -c '
 import json, os
 payload = {"agent_id": os.environ["AGENT_ID"]}
 sid = os.environ.get("CSID") or ""
 token = os.environ.get("CTOKEN") or ""
+uuid = os.environ.get("UUID") or ""
+parent = os.environ.get("PARENT") or ""
+if uuid:
+    payload["uuid"] = uuid
 if sid:
     payload["client_session_id"] = sid
 if token:
     payload["continuity_token"] = token
+if parent:
+    payload["parent_agent_id"] = parent
+    payload["spawn_reason"] = "new_session"
 with open(os.environ["SESSION_FILE"], "w") as f:
     json.dump(payload, f, indent=2)
 '
 }
 
+STORED_UUID="$(_py_read_field uuid || true)"
 STORED_SESSION_ID="$(_py_read_field client_session_id || true)"
 SESSION_ID="$STORED_SESSION_ID"
 CONT_TOKEN="$(_py_read_field continuity_token || true)"
-HAS_LOCAL_CONTINUITY=0
-[ -n "${STORED_SESSION_ID:-}" ] && HAS_LOCAL_CONTINUITY=1
-[ -n "${CONT_TOKEN:-}" ] && HAS_LOCAL_CONTINUITY=1
 
 # --- HTTP --------------------------------------------------------------------
 
-_headers=(
+_base_headers=(
     -H "Content-Type: application/json"
     -H "X-Agent-Id: ${AGENT_ID}"
 )
-[ -n "${SESSION_ID:-}" ] && _headers+=( -H "X-Session-ID: ${SESSION_ID}" )
-[ -n "${UNITARES_TOKEN:-}" ] && _headers+=( -H "Authorization: Bearer ${UNITARES_TOKEN}" )
+[ -n "${UNITARES_TOKEN:-}" ] && _base_headers+=( -H "Authorization: Bearer ${UNITARES_TOKEN}" )
 
 _curl_fetch() {
-    # _curl_fetch <method> <path> [post-body]
+    # _curl_fetch <method> <path> [post-body] [include-session-header]
     # Prints body on 2xx, emits error + returns 1 on any other HTTP status,
     # and returns 2 on network failure.
-    local method="$1" path="$2" body="${3:-}"
+    local method="$1" path="$2" body="${3:-}" include_session="${4:-1}"
     local tmp code curl_rc
+    local headers=("${_base_headers[@]}")
+    if [ "$include_session" = "1" ] && [ -n "${SESSION_ID:-}" ]; then
+        headers+=( -H "X-Session-ID: ${SESSION_ID}" )
+    fi
     tmp=$(mktemp -t unitares_cli_XXXXXX)
     if [ "$method" = "POST" ]; then
-        code=$(curl -s --max-time "$TIMEOUT" "${_headers[@]}" \
+        code=$(curl -s --max-time "$TIMEOUT" "${headers[@]}" \
             -X POST -d "$body" \
             -o "$tmp" -w "%{http_code}" "${UNITARES_URL}${path}")
         curl_rc=$?
     else
-        code=$(curl -s --max-time "$TIMEOUT" "${_headers[@]}" \
+        code=$(curl -s --max-time "$TIMEOUT" "${headers[@]}" \
             -o "$tmp" -w "%{http_code}" "${UNITARES_URL}${path}")
         curl_rc=$?
     fi
@@ -126,8 +135,9 @@ _curl_get() {
 
 _curl_post_tool() {
     local tool="$1" args="${2:-{\}}"
-    # Inject known continuity material if present, then POST.
-    local payload
+    # Inject known continuity material for ordinary in-process calls, but
+    # never onto force_new startup onboards.
+    local payload include_session
     payload=$(TOOL="$tool" RAW_ARGS="$args" CSID="${SESSION_ID:-}" CTOKEN="${CONT_TOKEN:-}" python3 -c '
 import json, os, sys
 tool = os.environ["TOOL"]
@@ -142,13 +152,22 @@ except json.JSONDecodeError as exc:
 if not isinstance(args, dict):
     sys.stderr.write("error: arguments must be a JSON object\n")
     sys.exit(2)
-if sid:
+inject = not bool(args.get("force_new"))
+if inject and sid:
     args.setdefault("client_session_id", sid)
-if token:
+if inject and token:
     args.setdefault("continuity_token", token)
 print(json.dumps({"name": tool, "arguments": args}))
 ') || return $?
-    _curl_fetch POST "/v1/tools/call" "$payload"
+    include_session=$(RAW_ARGS="$args" python3 -c '
+import json, os
+try:
+    args = json.loads(os.environ.get("RAW_ARGS") or "{}")
+except Exception:
+    args = {}
+print("0" if isinstance(args, dict) and bool(args.get("force_new")) else "1")
+')
+    _curl_fetch POST "/v1/tools/call" "$payload" "$include_session"
 }
 
 _check_body() {
@@ -344,6 +363,7 @@ cmd_diag() {
     echo "UNITARES_URL    : ${UNITARES_URL}"
     echo "UNITARES_AGENT  : ${AGENT_ID}"
     echo "SESSION_FILE    : ${SESSION_FILE}"
+    echo "UUID            : ${STORED_UUID:-<none>}"
     echo "SESSION_ID      : ${SESSION_ID:-<none>}"
     [ -n "${CONT_TOKEN:-}" ] && echo "CONTINUITY      : present (len=${#CONT_TOKEN})" || echo "CONTINUITY      : <none>"
     echo
@@ -361,17 +381,18 @@ cmd_diag() {
 cmd_onboard() {
     local name="${1:-$AGENT_ID}" purpose="${2:-}" force="${3:-}"
     local args
-    args=$(NAME="$name" PURPOSE="$purpose" FORCE="$force" HAS_LOCAL_CONTINUITY="$HAS_LOCAL_CONTINUITY" python3 -c '
+    args=$(NAME="$name" PURPOSE="$purpose" FORCE="$force" PARENT_UUID="${STORED_UUID:-}" python3 -c '
 import json, os
-args = {"name": os.environ["NAME"]}
+args = {"name": os.environ["NAME"], "force_new": True}
 purpose = os.environ.get("PURPOSE") or ""
 if purpose:
     args["purpose"] = purpose
 force = (os.environ.get("FORCE") or "").lower()
-if force in ("1", "true", "force", "yes", "--force"):
-    args["force_new"] = True
-elif os.environ.get("HAS_LOCAL_CONTINUITY") != "1":
-    args["force_new"] = True
+if force not in ("1", "true", "force", "yes", "--force"):
+    parent = os.environ.get("PARENT_UUID") or ""
+    if parent:
+        args["parent_agent_id"] = parent
+        args["spawn_reason"] = "new_session"
 print(json.dumps(args))
 ')
     local body
@@ -402,20 +423,30 @@ except Exception:
         return 1
     fi
 
-    # Extract session + continuity token in a single python invocation.
-    local extracted sid token
+    # Extract session + continuity token + uuid in a single python invocation.
+    local extracted sid token token_uuid uuid parent
     extracted=$(BODY="$body" python3 -c '
 import json, os
 try:
     data = json.loads(os.environ["BODY"])
     r = data.get("result") or {}
-    print((r.get("client_session_id") or "") + "\t" + (r.get("continuity_token") or ""))
+    print((r.get("client_session_id") or "") + "\t" + (r.get("continuity_token") or "") + "\t" + (r.get("uuid") or ""))
 except Exception:
-    print("\t")
+    print("\t\t")
 ')
     sid="${extracted%%	*}"
-    token="${extracted#*	}"
-    _py_write_session "$sid" "$token"
+    token_uuid="${extracted#*	}"
+    token="${token_uuid%%	*}"
+    uuid="${token_uuid#*	}"
+    parent=$(ARGS="$args" python3 -c '
+import json, os
+try:
+    args = json.loads(os.environ["ARGS"])
+    print(args.get("parent_agent_id") or "")
+except Exception:
+    print("")
+')
+    _py_write_session "$sid" "$token" "$uuid" "$parent"
     printf '%s' "$body" | parse_onboard
     echo "Session: ${sid:-<none>}"
 }
@@ -479,6 +510,7 @@ cmd_call() {
 cmd_session() {
     echo "Agent ID:     ${AGENT_ID}"
     echo "Session file: ${SESSION_FILE}"
+    echo "UUID:         ${STORED_UUID:-<none>}"
     echo "Session ID:   ${SESSION_ID:-<none>}"
     [ -n "${CONT_TOKEN:-}" ] && echo "Continuity:   present" || echo "Continuity:   <none>"
     echo "URL:          ${UNITARES_URL}"
@@ -486,7 +518,7 @@ cmd_session() {
 
 cmd_reset() {
     rm -f "$SESSION_FILE"
-    echo "Session reset. Next onboard will create/resume identity for agent '${AGENT_ID}'."
+    echo "Session reset. Next onboard will create a fresh identity for agent '${AGENT_ID}'."
 }
 
 cmd_help() {
@@ -494,8 +526,9 @@ cmd_help() {
 UNITARES CLI — REST wrapper for the governance MCP server
 
 Commands:
-  onboard [name] [purpose] [force]  Onboard / resume identity; pass "force"
-                                    as 3rd arg to bypass trajectory check
+  onboard [name] [purpose] [force]  Onboard a fresh identity; cached uuid is
+                                    declared as parent_agent_id unless "force"
+                                    is passed as 3rd arg
   update "text" [complexity] [confidence]
                                     Post a governance check-in (defaults: 0.5 / 0.6)
   metrics                           Show EISV + summary

@@ -33,12 +33,12 @@ If you are not using commands directly, the equivalent raw tool flow is:
 - Codex uses slash commands and explicit tool calls, not Claude hooks
 - nothing auto-checks in for you
 - Watcher findings are manual unless you invoke the watcher CLI yourself
-- `.unitares/session.json` is the local continuity cache you should trust first
+- `.unitares/session.json` is local workspace state; use its `uuid` as a lineage candidate, not a resume credential
 
 ## Continuity Model
 
 - `uuid` is an identity anchor, not ownership proof
-- `continuity_token` is short-lived ownership proof for same-owner rebinding, not indefinite cross-process resume
+- `continuity_token` is short-lived ownership proof for same-owner/in-process use, not startup resume
 - `client_session_id` is in-session transport continuity metadata
 - `parent_agent_id` is how a fresh process declares lineage to prior work
 - `session_resolution_source` tells you how the runtime actually resolved continuity
@@ -61,7 +61,7 @@ Treat this as local runtime state. It should not be used as a source of truth ov
 - `uuid`
 - `agent_id`
 - `display_name`
-- `continuity_token`
+- `continuity_token` when present for in-process proof-owned calls, not startup resume
 - `client_session_id`
 - `session_resolution_source`
 
@@ -69,7 +69,7 @@ Treat this as local runtime state. It should not be used as a source of truth ov
 
 Typical session:
 
-- start, declare lineage, or proof-resume with `/governance-start`
+- start or declare lineage with `/governance-start`
 - do meaningful work
 - check in after a milestone, completed step, or decision point
 - diagnose only when needed
@@ -86,7 +86,7 @@ Do not treat every file edit as a governance event. High-signal check-ins are mo
 
 ## Commands
 
-- `/governance-start` to create, declare lineage, or proof-resume and refresh local continuity state
+- `/governance-start` to create or declare lineage and refresh local continuity state
 - `/checkin` for a governance update after meaningful work
 - `/diagnose` for identity, state, and operator diagnostics
 - `/dialectic` for structured review

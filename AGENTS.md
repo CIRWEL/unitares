@@ -17,13 +17,13 @@ Codex has no hook system analogous to Claude's. **Nothing is automatic.** You de
 - `/diagnose` — identity, state, and operator diagnostics
 - `/dialectic` — structured review
 
-Raw tool flow when slash commands are unavailable: `onboard()` → save `uuid` → `identity(agent_uuid=..., resume=true)` → `process_agent_update(response_text, complexity)` → `get_governance_metrics()` for read-only checks → `health_check()` only if system health is suspect.
+Raw tool flow when slash commands are unavailable: `onboard(force_new=true, parent_agent_id=<prior uuid if continuing>, spawn_reason="new_session")` → save `uuid` + `client_session_id` → `process_agent_update(response_text, complexity, client_session_id=...)` → `get_governance_metrics()` for read-only checks → `health_check()` only if system health is suspect.
 
 ### Local continuity cache
 
-`.unitares/session.json` is Codex's authoritative local workspace state (not Claude's memory system). It holds `uuid`, `continuity_token`, `client_session_id`, `session_resolution_source`, `identity_assurance`. Helper: `scripts/client/session_cache.py`. On every new session or after a restart, call `identity(agent_uuid=<saved uuid>, resume=true)`.
+`.unitares/session.json` is Codex's authoritative local workspace state (not Claude's memory system). It holds `uuid`, `client_session_id`, `session_resolution_source`, and optional short-lived proof material for in-process calls. Helper: `scripts/client/session_cache.py`. On every new session or after a restart, call `onboard(force_new=true, parent_agent_id=<saved uuid>, spawn_reason="new_session")`.
 
-If `session_resolution_source` falls back to a weak source, rerun `/governance-start` or re-resume explicitly.
+If `session_resolution_source` falls back to a weak source, rerun `/governance-start` or diagnose explicitly; do not repair it with bare UUID resume.
 
 ### Watcher visibility is manual
 

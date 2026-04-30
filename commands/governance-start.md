@@ -1,20 +1,21 @@
 ---
-description: "Create, declare lineage, or proof-resume a UNITARES session in Codex"
+description: "Create or declare lineage for a UNITARES session in Codex"
 ---
 
-Start by checking for a local continuity cache in `.unitares/session.json` inside the current workspace.
+Under the identity ontology v2 (`docs/ontology/identity.md`), a fresh process-instance mints fresh governance-identity. Lineage is declared via `parent_agent_id`, not resumed via token. This command starts a session in that posture.
+
+Start by checking for a local workspace cache in `.unitares/session.json`.
 
 Use the shared helper in this repo:
 
 - `scripts/client/session_cache.py get session`
 
-If the cache contains a `uuid`, treat it as a lineage candidate, not ownership proof.
+If the cache contains a `uuid`, treat it as a lineage candidate, not ownership proof. Ignore any `continuity_token` field for startup; tokens are only for same-live-owner proof paths and in-process calls.
 
 Call `onboard()` against UNITARES using the strongest honest mode:
 
 - if this is a fresh process with no prior UUID, pass `force_new=true`
 - if this is a fresh process inheriting prior work, pass `force_new=true`, `parent_agent_id=<cached uuid>`, and `spawn_reason="new_session"`
-- if you are rebinding the same live owner and have a current matching token, call `identity(agent_uuid=<uuid>, continuity_token=<token>, resume=true)` instead of `onboard()`
 - include `model_type` when the current runtime is clear from context
 - do not invent a display name unless the user asked for one
 
@@ -32,14 +33,14 @@ After a successful `identity()` or `onboard()` response:
   - `agent_id`
   - `display_name`
   - `client_session_id`
-  - `continuity_token`
+  - `continuity_token` only if the server returned one; keep it for in-process proof-owned calls, not startup resume
   - `session_resolution_source`
   - `continuity_token_supported`
   - `updated_at`
 
 When reporting back:
 
-- say whether the identity was freshly created, proof-resumed, or created with lineage
+- say whether the identity was freshly created or created with lineage
 - if lineage was declared, name the parent UUID prefix
 - show the resolved display name or agent id
 - note whether continuity is strong or weak

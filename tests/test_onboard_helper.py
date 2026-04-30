@@ -3,8 +3,7 @@
 Covers the behavior described in `scripts/client/onboard_helper.py`:
 
 * successful onboard writes a fresh cache and returns ok
-* ``trajectory_required`` from the server triggers one retry with
-  ``force_new=true``
+* startup always sends ``force_new=true`` and declares cached UUID lineage
 * a failure (including a failed retry) leaves the existing cache untouched
 * missing ``uuid`` in the response counts as a failure, not success
 * response unwrapping handles both the native MCP envelope and the REST-direct
@@ -152,15 +151,17 @@ class TestRunOnboard:
         assert len(poster.calls) == 1
         sent_args = poster.calls[0][1]["arguments"]
         assert sent_args["name"] == "acme"
-        assert "force_new" not in sent_args
+        assert sent_args["force_new"] is True
+        assert "parent_agent_id" not in sent_args
 
         written = json.loads(cache_path.read_text())
         assert written["uuid"] == "uuid-ok"
         assert written["client_session_id"] == "agent-ok"
         assert written["continuity_token"] == "v1.token-ok"
 
-    def test_cache_continuity_token_passed_on_resume(self, tmp_path: Path) -> None:
+    def test_cached_uuid_declared_as_parent_on_startup(self, tmp_path: Path) -> None:
         initial = {
+            "uuid": "parent-uuid",
             "continuity_token": "v1.cached-token",
             "client_session_id": "agent-cached",
         }
@@ -168,20 +169,25 @@ class TestRunOnboard:
             tmp_path, [_success_response()], initial_cache=initial
         )
         sent_args = poster.calls[0][1]["arguments"]
-        assert sent_args["continuity_token"] == "v1.cached-token"
+        assert sent_args["force_new"] is True
+        assert sent_args["parent_agent_id"] == "parent-uuid"
+        assert sent_args["spawn_reason"] == "new_session"
+        assert "continuity_token" not in sent_args
         assert "client_session_id" not in sent_args
 
-    def test_cache_session_id_fallback(self, tmp_path: Path) -> None:
+    def test_cached_session_id_is_not_used_for_startup_resume(self, tmp_path: Path) -> None:
         initial = {"continuity_token": "", "client_session_id": "agent-only"}
         _, poster, _ = self._call(
             tmp_path, [_success_response()], initial_cache=initial
         )
         sent_args = poster.calls[0][1]["arguments"]
-        assert sent_args["client_session_id"] == "agent-only"
+        assert sent_args["force_new"] is True
+        assert "client_session_id" not in sent_args
         assert "continuity_token" not in sent_args
+        assert "parent_agent_id" not in sent_args
 
     def test_trajectory_required_surfaces_error_without_retry(self, tmp_path: Path) -> None:
-        """Per 718ccd3: never auto-force_new. Surface the error instead."""
+        """Per 718ccd3: never auto-retry with a different identity posture."""
         result, poster, cache_path = self._call(
             tmp_path, [_trajectory_required_response()]
         )
@@ -241,8 +247,9 @@ class TestRunOnboard:
         assert not cache_path.exists()
 
     def test_explicit_force_new_skips_cache_and_sends_flag(self, tmp_path: Path) -> None:
-        """force_new=True is only set by explicit operator opt-in (--force-new)."""
+        """force_new=True remains an explicit way to ignore cached lineage."""
         initial = {
+            "uuid": "parent-uuid",
             "continuity_token": "v1.cached-token",
             "client_session_id": "agent-cached",
         }
@@ -262,7 +269,8 @@ class TestRunOnboard:
         assert result["status"] == "ok"
         sent_args = poster.calls[0][1]["arguments"]
         assert sent_args["force_new"] is True
-        # When force_new is set, cached token should NOT be sent
+        # When force_new is explicit, cached lineage and proof material are not sent.
+        assert "parent_agent_id" not in sent_args
         assert "continuity_token" not in sent_args
         assert "client_session_id" not in sent_args
 
@@ -330,11 +338,12 @@ class TestSlotIsolation:
         assert "continuity_token" not in sent_args_b
         assert "client_session_id" not in sent_args_b
 
-    def test_slot_falls_back_to_legacy_cache_if_no_slot_file_yet(self, tmp_path: Path) -> None:
+    def test_slot_falls_back_to_legacy_cache_for_lineage_if_no_slot_file_yet(self, tmp_path: Path) -> None:
         # A pre-existing unslotted cache (from before this change) should still
-        # provide continuity to a slotted run on first start. Slotted writes
-        # then own that slot going forward.
+        # provide a lineage candidate to a slotted run on first start. Slotted
+        # writes then own that slot going forward.
         legacy = {
+            "uuid": "legacy-parent-uuid",
             "continuity_token": "v1.legacy-token",
             "client_session_id": "agent-legacy",
         }
@@ -345,8 +354,12 @@ class TestSlotIsolation:
         )
         assert result["status"] == "ok"
         sent_args = poster.calls[0][1]["arguments"]
-        # Resumed via legacy cache
-        assert sent_args["continuity_token"] == "v1.legacy-token"
+        # Declared lineage via legacy cache UUID; did not resume via token.
+        assert sent_args["force_new"] is True
+        assert sent_args["parent_agent_id"] == "legacy-parent-uuid"
+        assert sent_args["spawn_reason"] == "new_session"
+        assert "continuity_token" not in sent_args
+        assert "client_session_id" not in sent_args
         # New write went to the slotted file, not back to session.json
         assert cache_path.name == "session-first-run.json"
         # Legacy file is untouched
@@ -414,11 +427,11 @@ class TestBootstrapInitialState:
         sent_args = poster.calls[0][1]["arguments"]
         assert "initial_state" not in sent_args
 
-    def test_initial_state_present_on_resume(self, tmp_path: Path) -> None:
-        """Resume via continuity_token still sends initial_state — the
-        server's idempotency contract handles it (returns existing
-        bootstrap row's state_id)."""
+    def test_initial_state_present_with_declared_lineage(self, tmp_path: Path) -> None:
+        """Declared-lineage startup still sends initial_state so the new
+        identity gets its t=0 anchor."""
         initial = {
+            "uuid": "parent-uuid",
             "continuity_token": "v1.cached-token",
             "client_session_id": "agent-cached",
         }
@@ -435,7 +448,8 @@ class TestBootstrapInitialState:
             post_json=poster,
         )
         sent_args = poster.calls[0][1]["arguments"]
-        assert sent_args.get("continuity_token") == "v1.cached-token"
+        assert sent_args["parent_agent_id"] == "parent-uuid"
+        assert "continuity_token" not in sent_args
         assert "initial_state" in sent_args
 
     def test_initial_state_present_with_force_new(self, tmp_path: Path) -> None:
@@ -464,4 +478,3 @@ class TestBootstrapInitialState:
         payload = _build_bootstrap_initial_state()
         assert set(payload.keys()) == {"task_type"}
         assert payload["task_type"] == "introspection"
-

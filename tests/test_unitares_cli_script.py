@@ -11,7 +11,7 @@ What we verify:
     * Clear error reporting on unreachable hosts (no Python traceback leaks).
     * The end-to-end happy path: diag → health → tools → onboard → metrics →
       update, all against a sacrificial agent name and temp session file.
-    * Session file persistence of client_session_id + continuity_token.
+    * Session file persistence of uuid + client_session_id + continuity_token.
 """
 
 from __future__ import annotations
@@ -250,9 +250,10 @@ def test_onboard_persists_session_and_continuity_token(cli_env, tmp_path):
     assert session_file.exists(), "onboard should create the session file"
     payload = json.loads(session_file.read_text())
     assert payload.get("agent_id") == agent
+    assert payload.get("uuid"), "uuid not persisted"
     # Server returns client_session_id — CLI must persist it.
     assert payload.get("client_session_id"), "session id not persisted"
-    # Continuity token is recommended for resume.
+    # The token is retained for in-process proof-owned calls, not startup resume.
     assert payload.get("continuity_token"), "continuity token not persisted"
 
 
@@ -277,6 +278,7 @@ def test_session_command_shows_config(cli_env, mcp_test_server):
     result = _run(cli_env, "session")
     assert f"Agent ID:     {agent}" in result.stdout
     assert f"URL:          {mcp_test_server}" in result.stdout
+    assert "UUID:" in result.stdout
     assert "Continuity:   present" in result.stdout
 
 
@@ -305,6 +307,18 @@ def _run_parser(parser_name: str, body: dict):
     return subprocess.run(
         ["bash", "-c", script],
         input=json.dumps(body),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+
+def _source_cli_and_run(script: str, env: dict[str, str]):
+    """Source scripts/unitares, override shell functions, and run a snippet."""
+    wrapped = f". {CLI} help >/dev/null 2>&1; {script}"
+    return subprocess.run(
+        ["bash", "-c", wrapped],
+        env=env,
         capture_output=True,
         text=True,
         timeout=10,
@@ -398,17 +412,99 @@ def test_parse_onboard_accepts_valid_response():
     assert "11111111" in result.stdout
 
 
+def test_curl_post_tool_does_not_inject_continuity_when_force_new(tmp_path):
+    """S1-b: startup onboard sends force_new + lineage, not cached token/session."""
+    session_file = tmp_path / "session.json"
+    include_session_file = tmp_path / "include-session.txt"
+    session_file.write_text(json.dumps({
+        "uuid": "parent-uuid",
+        "client_session_id": "cached-session",
+        "continuity_token": "cached-token",
+    }))
+    env = os.environ.copy()
+    env["UNITARES_SESSION_FILE"] = str(session_file)
+    env["UNITARES_AGENT"] = "cli-unit"
+    env["INCLUDE_SESSION_FILE"] = str(include_session_file)
+
+    script = (
+        "_curl_fetch() { printf '%s' \"$4\" > \"$INCLUDE_SESSION_FILE\"; printf '%s' \"$3\"; }; "
+        "_curl_post_tool onboard '{\"force_new\": true, \"parent_agent_id\": \"parent-uuid\"}'"
+    )
+    result = _source_cli_and_run(script, env)
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    args = payload["arguments"]
+    assert args["force_new"] is True
+    assert args["parent_agent_id"] == "parent-uuid"
+    assert "client_session_id" not in args
+    assert "continuity_token" not in args
+    assert include_session_file.read_text() == "0"
+
+
+def test_cmd_onboard_declares_cached_uuid_as_parent(tmp_path):
+    """The CLI onboard command should use cached uuid as lineage, not resume."""
+    session_file = tmp_path / "session.json"
+    capture = tmp_path / "payload.json"
+    include_session_file = tmp_path / "include-session.txt"
+    session_file.write_text(json.dumps({
+        "uuid": "parent-uuid",
+        "client_session_id": "cached-session",
+        "continuity_token": "cached-token",
+    }))
+    env = os.environ.copy()
+    env["UNITARES_SESSION_FILE"] = str(session_file)
+    env["UNITARES_AGENT"] = "cli-unit"
+    env["CAPTURE"] = str(capture)
+    env["INCLUDE_SESSION_FILE"] = str(include_session_file)
+
+    response = json.dumps({
+        "success": True,
+        "result": {
+            "success": True,
+            "welcome": "Welcome",
+            "display_name": "cli-unit",
+            "agent_id": "mcp_cli_unit",
+            "uuid": "child-uuid",
+            "client_session_id": "child-session",
+            "continuity_token": "child-token",
+        },
+    })
+    script = (
+        "_curl_fetch() { printf '%s' \"$3\" > \"$CAPTURE\"; "
+        "printf '%s' \"$4\" > \"$INCLUDE_SESSION_FILE\"; "
+        f"printf '%s' '{response}'; }}; "
+        "cmd_onboard cli-unit pytest"
+    )
+    result = _source_cli_and_run(script, env)
+    assert result.returncode == 0, result.stderr
+
+    payload = json.loads(capture.read_text())
+    args = payload["arguments"]
+    assert args["force_new"] is True
+    assert args["parent_agent_id"] == "parent-uuid"
+    assert args["spawn_reason"] == "new_session"
+    assert "client_session_id" not in args
+    assert "continuity_token" not in args
+    assert include_session_file.read_text() == "0"
+
+    written = json.loads(session_file.read_text())
+    assert written["uuid"] == "child-uuid"
+    assert written["client_session_id"] == "child-session"
+    assert written["continuity_token"] == "child-token"
+    assert written["parent_agent_id"] == "parent-uuid"
+
+
 def test_onboard_with_force_creates_fresh_identity(cli_env):
     """Passing 'force' as the 3rd arg should set force_new=true and let
     the same agent name re-onboard cleanly."""
     agent = cli_env["UNITARES_AGENT"]
     _run(cli_env, "onboard", agent, "pytest force-first")
-    first = json.loads(Path(cli_env["UNITARES_SESSION_FILE"]).read_text())
 
     result = _run(cli_env, "onboard", agent, "pytest force-second", "force")
     assert "Welcome:" in result.stdout
     second = json.loads(Path(cli_env["UNITARES_SESSION_FILE"]).read_text())
     assert second.get("client_session_id"), "force onboard should persist a new session id"
+    assert "parent_agent_id" not in second, "force onboard should ignore cached lineage"
     # The continuity token must be present (value may or may not differ;
     # what we care about is that the path didn't silently produce an empty
     # write, which is what the trajectory-required regression was about).
