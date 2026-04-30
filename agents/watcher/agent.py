@@ -1101,6 +1101,7 @@ def _is_wait_for_guarded_onboard_pin_helper(
     this shape has the timeout mitigation and regression tests already.
     """
     helper_name = None
+    helper_def_line = None
     for line_no in range(flagged_line - 1, min(snippet_lines_by_num.keys()) - 1, -1):
         line = snippet_lines_by_num.get(line_no, "")
         if not line.strip():
@@ -1108,17 +1109,29 @@ def _is_wait_for_guarded_onboard_pin_helper(
         match = _P004_WAIT_FOR_GUARDED_PIN_HELPER.match(line)
         if match:
             helper_name = match.group(1)
+            helper_def_line = line_no
             break
         if _P003_OTHER_DEF.match(line):
             return False
 
-    if not helper_name:
+    if not helper_name or helper_def_line is None:
         return False
 
-    ordered_source = "\n".join(
-        snippet_lines_by_num[line_no] for line_no in sorted(snippet_lines_by_num)
-    )
-    return "asyncio.wait_for" in ordered_source and f"{helper_name}(" in ordered_source
+    ordered_lines = sorted(snippet_lines_by_num)
+    for idx, line_no in enumerate(ordered_lines):
+        if line_no >= helper_def_line:
+            break
+        line = snippet_lines_by_num[line_no]
+        if "asyncio.wait_for" not in line:
+            continue
+        call_window = "\n".join(
+            snippet_lines_by_num[window_line]
+            for window_line in ordered_lines
+            if line_no <= window_line <= line_no + 12
+        )
+        if f"{helper_name}(" in call_window:
+            return True
+    return False
 
 
 def _is_inside_get_or_create_monitor(

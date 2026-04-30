@@ -1936,6 +1936,25 @@ def test_p004_dropped_for_wait_for_guarded_onboard_pin_helper(watcher_module):
     assert not watcher_module._verify_finding_against_source(f, "", snippet)
 
 
+def test_p004_kept_when_wait_for_does_not_wrap_onboard_pin_helper(watcher_module):
+    """An unrelated wait_for near a Redis pin helper must not hide P004."""
+    f = watcher_module.Finding(
+        pattern="P004",
+        file="/repo/src/mcp_handlers/identity/session.py",
+        line=801,
+        hint="t",
+        severity="high",
+        detected_at="2026-04-29T00:00:00Z",
+        model_used="t",
+    )
+    snippet = {
+        779: "        return await asyncio.wait_for(other_work(), timeout=0.5)",
+        794: "async def _lookup_onboard_pin_inner(base_fingerprint: str, *, refresh_ttl: bool) -> Optional[str]:",
+        801: "    pin_data = await raw_redis.get(pin_key)",
+    }
+    assert watcher_module._verify_finding_against_source(f, "", snippet)
+
+
 def test_p001_dropped_when_task_reference_is_assigned(watcher_module):
     """The pattern library explicitly says that assigning create_task() to a
     named variable means the task is stored — NOT fire-and-forget. The
