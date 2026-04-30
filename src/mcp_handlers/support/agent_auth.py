@@ -8,6 +8,53 @@ from src.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
+_REGISTERED_AGENT_ALLOWED_STATUSES = ("active", "paused", "waiting_input")
+
+
+def _identity_result_aliases(identity: Dict[str, Any]) -> set[str]:
+    aliases = set()
+    for key in ("agent_uuid", "agent_id", "public_agent_id", "display_name", "label"):
+        value = identity.get(key)
+        if value:
+            aliases.add(str(value))
+    return aliases
+
+
+def _identity_result_row_status(identity: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(identity, dict):
+        return None
+    status = identity.get("core_agent_row_status")
+    if status:
+        return str(status)
+    if identity.get("archived"):
+        return "archived"
+    return None
+
+
+def _select_trusted_identity_result(
+    *,
+    arguments: Dict[str, Any],
+    context_identity: Optional[Dict[str, Any]],
+    requested_agent_id: str,
+    bound_uuid: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Choose middleware/core identity data matching this request."""
+    candidates = []
+    if isinstance(context_identity, dict):
+        candidates.append(context_identity)
+    arg_identity = arguments.get("_middleware_identity_result") if arguments else None
+    if isinstance(arg_identity, dict):
+        candidates.append(arg_identity)
+
+    for identity in candidates:
+        agent_uuid = identity.get("agent_uuid")
+        if not agent_uuid:
+            continue
+        aliases = _identity_result_aliases(identity)
+        if requested_agent_id in aliases or (bound_uuid and bound_uuid == agent_uuid):
+            return identity
+    return None
+
 
 def compute_agent_signature(
     agent_id: Optional[str] = None,
@@ -268,7 +315,7 @@ def require_registered_agent(arguments: Dict[str, Any]) -> Tuple[str, Optional[T
 
     try:
         from ..shared import get_mcp_server
-        from ..context import get_context_agent_id
+        from ..context import get_context_agent_id, get_session_context
         import uuid as uuid_module
 
         mcp_server = get_mcp_server()
@@ -293,6 +340,11 @@ def require_registered_agent(arguments: Dict[str, Any]) -> Tuple[str, Optional[T
         structured_id = None
         display_name = None
         label = None
+        context_identity = None
+        try:
+            context_identity = (get_session_context() or {}).get("identity_result")
+        except Exception:
+            context_identity = None
 
         if is_uuid:
             if agent_id in mcp_server.agent_metadata:
@@ -329,6 +381,26 @@ def require_registered_agent(arguments: Dict[str, Any]) -> Tuple[str, Optional[T
                 display_name = getattr(meta, 'display_name', None) or getattr(meta, 'label', None)
                 label = getattr(meta, 'label', None)
 
+        trusted_identity = _select_trusted_identity_result(
+            arguments=arguments,
+            context_identity=context_identity,
+            requested_agent_id=agent_id,
+            bound_uuid=get_context_agent_id(),
+        )
+        if not agent_found and trusted_identity:
+            actual_uuid = trusted_identity.get("agent_uuid")
+            agent_found = True
+            public_agent_id = (
+                trusted_identity.get("public_agent_id")
+                or trusted_identity.get("agent_id")
+            )
+            structured_id = trusted_identity.get("structured_id")
+            display_name = (
+                trusted_identity.get("display_name")
+                or trusted_identity.get("label")
+            )
+            label = trusted_identity.get("label")
+
         # S21-b §2: gate on meta.status. update_identity_status writes only PG,
         # so the in-memory dict can hold a stale-active row for an agent that
         # core.identities has marked archived/deleted/disabled. Without this
@@ -339,11 +411,24 @@ def require_registered_agent(arguments: Dict[str, Any]) -> Tuple[str, Optional[T
         # Allowlist (not blocklist) so a future status value not enumerated
         # below fails closed instead of silently passing through (council
         # pass-2 dialectic finding #1: blocklist is fail-open on unknown).
-        if agent_found and actual_uuid in mcp_server.agent_metadata:
-            agent_status = getattr(
-                mcp_server.agent_metadata[actual_uuid], "status", "active"
+        if agent_found and actual_uuid:
+            core_status = (
+                _identity_result_row_status(trusted_identity)
+                if (
+                    trusted_identity
+                    and trusted_identity.get("agent_uuid") == actual_uuid
+                )
+                else None
             )
-            if agent_status not in ("active", "paused", "waiting_input"):
+            if core_status is not None:
+                agent_status = core_status
+            elif actual_uuid in mcp_server.agent_metadata:
+                agent_status = getattr(
+                    mcp_server.agent_metadata[actual_uuid], "status", "active"
+                )
+            else:
+                agent_status = "active"
+            if agent_status not in _REGISTERED_AGENT_ALLOWED_STATUSES:
                 # Map to the inferer's keyword so error_code lands in the
                 # right category (AGENT_ARCHIVED / AGENT_DELETED / etc.).
                 return None, error_response(
