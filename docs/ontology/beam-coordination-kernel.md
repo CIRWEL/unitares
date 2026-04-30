@@ -4,6 +4,14 @@
 **Last Updated:** April 30, 2026  
 **Status:** Draft
 
+## Related artifacts (independent convergence, 2026-04-30)
+
+This ontology-track plan converged with a parallel proposals-track RFC on the same primitive without coordination between sessions. Both should be read by anyone executing the spike:
+
+- **`docs/proposals/surface-lease-plane-v0.md` (v0.4)** — proposals-track contract spec. Council-pass-1 + ack-pass complete; status: implementation-gate ready. Defines the Postgres schema (matches `db/postgres/migrations/024_lease_plane.sql` verbatim), the `/v1/lease/*` HTTP API, typed-absence return shapes (matches `src/lease_plane/models.py`), the Phase A advisory → Phase B selective-enforcement rollout, and the §7 open questions.
+
+This plan is the **integration-into-UNITARES framing** (R7 row in `docs/ontology/plan.md`); the RFC is the **contract spec**. Neither subsumes the other. Implementation skeleton (`db/postgres/migrations/024_lease_plane.sql`, `src/lease_plane/`, `tests/test_lease_plane_client.py`) was captured into the repo by commit `b5364d3` after both docs landed; the migration is already applied to the live `governance` database.
+
 ---
 
 ## Purpose

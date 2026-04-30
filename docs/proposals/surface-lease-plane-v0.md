@@ -1,7 +1,7 @@
 ---
-status: DRAFT-v0.3 (council-pass-1 + ack-pass complete; ready for implementation gate review)
+status: DRAFT-v0.4 (council-clean; cross-linked with parallel ontology-track plan; implementation skeleton captured)
 authored: 2026-04-30
-amended: 2026-04-30 (v0.1, v0.2, v0.3 same session)
+amended: 2026-04-30 (v0.1, v0.2, v0.3, v0.4 same session)
 council_pass_1: 2026-04-30
 ack_pass_1: 2026-04-30
 author_session: agent-68437d77-65c (claude_code-claude_68437d77)
@@ -694,3 +694,16 @@ The technical case is strong (three independent reviewers converged). The strate
 
   *§1 prose precision:*
   - Split the conflated "14 unique entries" claim into two distinct verified measurements: 14 KG entries tagged `auto-recovery` in `knowledge.discoveries` (whose summary text cites critical_margin_timeout) AND 12 distinct agent UUIDs in `audit.events stuck_detected` payloads with structured `reason=critical_margin_timeout` (1,261 total payload entries). Both are evidence of the same incident class from different observation surfaces.
+
+- **v0.4 (2026-04-30, same session):** Cross-linked with parallel ontology-track plan and captured implementation skeleton into the repo.
+
+  *Convergence story:* Between 13:03-13:05 local on 2026-04-30 (after v0.1 of this RFC was filed in KG anchor `2026-04-30T18:25:41.223729+00:00`), a parallel agent session shipped an independent ontology-track spec (`docs/ontology/beam-coordination-kernel.md`, framed as UNITARES R7 row in `docs/ontology/plan.md`) plus implementation skeleton:
+  - `db/postgres/migrations/024_lease_plane.sql` — exact match to v0.3 §4.4 schema (CHECK constraints, immutability trigger, partial unique index, vocabulary). Migration was applied to the live `governance` database before being committed to the repo (DB-ahead-of-repo drift, exactly the class `feedback_post-deploy-verify-fleet-wire-ins.md` warns about).
+  - `src/lease_plane/{__init__,client,models}.py` — Python contract anchor with Pydantic discriminated-union typed-absence shapes per v0.3 §4.5. Includes `LeasePlaneDisabledClient` as the advisory-mode escape valve.
+  - `tests/test_lease_plane_client.py` — client test infrastructure.
+
+  *Action taken:* Captured the parallel session's untracked work into commit `b5364d3` ("feat(lease-plane): capture parallel-session implementation skeleton") with honest provenance in the commit body. Cross-links between the proposals-track RFC and the ontology-track plan added in this v0.4 amendment. Frontmatter `related:` field updated to surface the migration, Python client, and ontology-track plan as canonical co-artifacts.
+
+  *RFC §9 checklist update:* "Shelf-Python sketch checked in alongside the Elixir spec" item is now **complete** — the parallel session's `src/lease_plane/` Python implementation IS the contract anchor, with same schema, same API, same return shapes per the §8.5 commitment.
+
+  *No spec changes.* This version is purely cross-linking and changelog; the technical substance of v0.3 stands unchanged. No additional council pass required.
