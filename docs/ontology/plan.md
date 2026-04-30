@@ -28,6 +28,7 @@ Every item from `identity.md` that requires work, what "resolved" means for it, 
 | R4 | Substrate-earned identity (Lumen's pattern, formalized) | None. Tractable first. | **Draft v1 landed 2026-04-21** as appendix of `docs/ontology/identity.md` ("Pattern — Substrate-Earned Identity"). Three conditions (dedicated substrate, sustained behavior, declared role); test cases (Lumen passes; synthetic fakes fail); open questions on N, envelope width, substrate migration. Open for revision. |
 | R5 | Memory-deepening-reality tooling (axiom #14) | R2 (integration must be defined before deepening it) | Three candidate mechanisms prototyped: forced re-derivation, behavioral backtests, self-knowledge reflection. Each has a minimal implementation + one passing test. |
 | R6 | Harness-substrate plurality — model identity across variable harness/model/transport/tool/memory layers | None; informs S7/S22 and gives R2 better vocabulary | Draft plan landed 2026-04-29 at `docs/ontology/harness-substrate-plurality.md`. Resolved when H1-H5 dogfood experiments have at least one pass each and the identity/KG/process-update response-shape implications are either promoted to system rows or explicitly rejected. |
+| R7 | BEAM coordination kernel — operationalize live surface ownership, leases, typed absence, and handoff semantics across agents | R6, S22, coordination-leases dialectic | Draft plan landed 2026-04-30 at `docs/ontology/beam-coordination-kernel.md`. Resolved when Phase 1 in-memory OTP lease server proves acquire/conflict/expiry semantics and a decision is made whether the service lives in a standalone repo or under `unitares/services/`. |
 
 ### System implications (descriptive stance)
 
@@ -89,6 +90,7 @@ RESOLVED (shipped or accepted)
 
 OPEN — actionable
   R6       harness-substrate plurality dogfood track — draft landed at docs/ontology/harness-substrate-plurality.md; first H1-H5 pass recorded at docs/ontology/r6-h1-h5-dogfood-20260429.md (H4/H5 direct, H2 evidence-backed, H1/H3 require controlled fresh process/profile runs); decide response-shape promotions
+  R7       BEAM coordination kernel — draft landed at docs/ontology/beam-coordination-kernel.md; next gate is Phase 1 in-memory OTP lease server spike (acquire/conflict/expiry) after repo-placement decision
   S1-b     onboard-helper + CLI startup-path migration to force_new + parent_agent_id (plugin + unitares)
   S7       KG provenance migration (R3 audit done; lineage-chain schema decision open)
   S8a-Ph2  Phase 2 sweep — trigger fires 2026-04-30; day-6 prep at `docs/ontology/s8a-phase2-prep.md` (corpus shape: 113 ephemeral / 67 untagged / 2 mis-tagged of 182 in window; threshold recommendation `total_updates ≥ 3` promoting 38 of 113 ephemeral; Phase-1 stamping-gap inventory). Day-7 PR scope reframed to three items: (a) `session_like` class entry, (c) promotion rule, (a-bis) Phase-1 stamp gap fixes for claude_desktop/Codex/named-resident paths so decision (d)'s 3180-record backfill doesn't carry the same biases. Council-required pre-merge.
