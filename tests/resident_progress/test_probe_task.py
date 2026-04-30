@@ -4,7 +4,7 @@ All tests use mocks — no real DB, no real heartbeat calls.
 """
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
@@ -17,11 +17,17 @@ from src.resident_progress.registry import ResidentConfig
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _hb(alive, eval_error=None):
+# A non-None timestamp so heartbeat-not-alive states aren't conflated with
+# never-seen states. Tests that specifically want never-seen pass a fresh
+# HeartbeatStatus with last_update=None instead of going through this helper.
+_LAST_UPDATE_DEFAULT = datetime(2026, 4, 30, 0, 0, 0, tzinfo=timezone.utc)
+
+
+def _hb(alive, eval_error=None, last_update=_LAST_UPDATE_DEFAULT):
     """Return a minimal HeartbeatStatus-like object."""
     return type("HS", (), {
         "alive": alive,
-        "last_update": None,
+        "last_update": last_update,
         "expected_cadence_s": 60,
         "in_critical_silence": not alive,
         "eval_error": eval_error,
@@ -523,3 +529,103 @@ async def test_dead_resident_metric_ok_no_suppression(monkeypatch):
 
     # No audit event (not a candidate)
     audit.emit.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Event-driven cadence=None: probe synthesizes alive=True, skips heartbeat
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_event_driven_resident_skips_heartbeat_eval(monkeypatch):
+    """Watcher-style event-driven residents have expected_cadence_s=None.
+
+    The probe must synthesize alive=True and never call the heartbeat
+    evaluator — heartbeat liveness is the wrong abstraction for an
+    edit-triggered probe. Otherwise we'd encode "n/a" as "very slow
+    timeout" and silently break the candidate gate.
+    """
+    watcher_uuid = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+    monkeypatch.setattr(
+        "src.resident_progress.probe_task.RESIDENT_PROGRESS_REGISTRY",
+        {"watcher": ResidentConfig(
+            source="watcher_findings", metric="rows_any",
+            window=timedelta(hours=6), threshold=1,
+            expected_cadence_s=None,
+        )},
+    )
+    monkeypatch.setattr(
+        "src.resident_progress.probe_task.resolve_resident_uuid",
+        lambda label: watcher_uuid,
+    )
+
+    source = MagicMock()
+    source.fetch = AsyncMock(return_value={watcher_uuid: 0})  # below threshold
+
+    heartbeat = MagicMock()
+    heartbeat.evaluate = AsyncMock()
+
+    writer = MagicMock()
+    writer.write = AsyncMock()
+    audit = MagicMock()
+    audit.emit = AsyncMock()
+
+    probe = _make_probe(
+        sources_by_name={"watcher_findings": source},
+        heartbeat_evaluator=heartbeat,
+        writer=writer, audit_emitter=audit,
+    )
+    await probe.tick()
+
+    heartbeat.evaluate.assert_not_called()
+    row = writer.write.call_args_list[0][0][0][0]
+    assert row.heartbeat_alive is True
+    assert row.candidate is True
+    assert row.suppressed_reason is None
+
+
+# ---------------------------------------------------------------------------
+# Never-seen distinction: fresh resident has last_update=None
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_never_seen_marked_distinct_from_silent(monkeypatch):
+    """A resident whose anchor resolves but who has never checked in must
+    surface as 'never_seen', not 'heartbeat_not_alive'. Otherwise a fresh
+    Chronicler instance looks like a 3-day outage on the dashboard.
+    """
+    vigil_uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    monkeypatch.setattr(
+        "src.resident_progress.probe_task.RESIDENT_PROGRESS_REGISTRY",
+        _registry_one_vigil(),
+    )
+    monkeypatch.setattr(
+        "src.resident_progress.probe_task.resolve_resident_uuid",
+        lambda label: vigil_uuid,
+    )
+
+    source = MagicMock()
+    source.fetch = AsyncMock(return_value={vigil_uuid: 0})
+
+    never_seen_hb = type("HS", (), {
+        "alive": False, "last_update": None,
+        "expected_cadence_s": 1800, "in_critical_silence": False,
+        "eval_error": None,
+        "to_jsonable": lambda self: {"alive": False, "last_update": None},
+    })()
+    heartbeat = MagicMock()
+    heartbeat.evaluate = AsyncMock(return_value=never_seen_hb)
+
+    writer = MagicMock()
+    writer.write = AsyncMock()
+
+    probe = _make_probe(
+        sources_by_name={"kg_writes": source},
+        heartbeat_evaluator=heartbeat,
+        writer=writer,
+    )
+    await probe.tick()
+
+    row = writer.write.call_args_list[0][0][0][0]
+    assert row.suppressed_reason == "never_seen"
+    assert row.candidate is False
+    assert row.heartbeat_alive is False

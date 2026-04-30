@@ -19,6 +19,7 @@ def _row(**overrides):
     (_row(error_details={"source": "kg_writes"}), "source-error"),
     (_row(suppressed_reason="unresolved_label"), "unresolved"),
     (_row(suppressed_reason="startup_unresolved_label"), "startup-grace"),
+    (_row(suppressed_reason="never_seen", heartbeat_alive=False), "never-seen"),
     (_row(suppressed_reason="heartbeat_not_alive", heartbeat_alive=False), "silent"),
     (_row(suppressed_reason="heartbeat_eval_error", heartbeat_alive=False), "silent"),
     (_row(candidate=True, metric_below_threshold=True), "flat-candidate"),
@@ -26,6 +27,11 @@ def _row(**overrides):
     # Tie-break: source-error wins over unresolved
     (_row(error_details={"source": "x"}, suppressed_reason="unresolved_label"),
      "source-error"),
+    # Tie-break: never-seen wins over silent (never-seen is a more specific
+    # explanation; "this resident has never checked in" is not the same as
+    # "this resident went silent").
+    (_row(suppressed_reason="never_seen", heartbeat_alive=False,
+          candidate=False), "never-seen"),
     # Tie-break: silent wins over flat-candidate when both could apply
     (_row(suppressed_reason="heartbeat_not_alive", heartbeat_alive=False,
           candidate=False, metric_below_threshold=True), "silent"),

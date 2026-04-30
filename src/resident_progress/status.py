@@ -1,7 +1,8 @@
 """Deterministic status-priority resolver for progress_flat snapshot rows.
 
 Priority (first match wins):
-    source-error > unresolved > startup-grace > silent > flat-candidate > OK
+    source-error > unresolved > startup-grace > never-seen > silent
+                 > flat-candidate > OK
 """
 from __future__ import annotations
 
@@ -14,6 +15,8 @@ def resolve_status(row: dict) -> str:
         return "unresolved"
     if suppressed == "startup_unresolved_label":
         return "startup-grace"
+    if suppressed == "never_seen":
+        return "never-seen"
     if suppressed in ("heartbeat_not_alive", "heartbeat_eval_error"):
         return "silent"
     if row.get("candidate") is True:
