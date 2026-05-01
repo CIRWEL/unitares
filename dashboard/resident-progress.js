@@ -18,6 +18,7 @@
         "unresolved": "rp-status-unresolved",
         "startup-grace": "rp-status-init",
         "initializing": "rp-status-init",
+        "never-seen": "rp-status-init",
     };
 
     async function fetchRecent(hours) {

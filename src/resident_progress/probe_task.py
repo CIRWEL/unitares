@@ -8,6 +8,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
+from src.resident_progress.heartbeat import HeartbeatStatus
 from src.resident_progress.registry import (
     RESIDENT_PROGRESS_REGISTRY,
     resolve_resident_uuid,
@@ -74,11 +75,28 @@ class ProgressFlatProbe:
         source_outputs = {n: out for n, out, err in results if err is None}
         source_errors = {n: err for n, out, err in results if err is not None}
 
-        # Step 4: heartbeat in parallel
-        async def _hb(agent_uuid):
-            return agent_uuid, await self._heartbeat.evaluate(agent_uuid)
+        # Step 4: heartbeat in parallel. Pass per-resident cadence from
+        # the registry so non-continuous residents (Vigil 30min, Steward
+        # 5min, Chronicler daily) aren't all judged against a 60s default.
+        # Residents whose registry cadence is None are event-driven
+        # (Watcher) — heartbeat-liveness is the wrong abstraction, so we
+        # synthesize an "alive=True, event_driven" status and skip the
+        # staleness gate entirely. Better than encoding "n/a" as "very
+        # slow timeout".
+        async def _hb(label, agent_uuid):
+            cfg = RESIDENT_PROGRESS_REGISTRY[label]
+            if cfg.expected_cadence_s is None:
+                return agent_uuid, HeartbeatStatus(
+                    alive=True, last_update=None, expected_cadence_s=None,
+                    in_critical_silence=False,
+                )
+            return agent_uuid, await self._heartbeat.evaluate(
+                agent_uuid, cadence_override_s=cfg.expected_cadence_s,
+            )
 
-        hb_pairs = await asyncio.gather(*[_hb(u) for u in resolved.values()])
+        hb_pairs = await asyncio.gather(*[
+            _hb(label, agent_uuid) for label, agent_uuid in resolved.items()
+        ])
         hb_by_uuid = dict(hb_pairs)
 
         # Step 5: compose resident rows
@@ -115,7 +133,20 @@ class ProgressFlatProbe:
             else:
                 metric = source_outputs[cfg.source].get(agent_uuid, 0)
                 below = metric < cfg.threshold
-                if not hb.alive and below:
+                # Distinguish "never checked in" from "went silent". A fresh
+                # resident with last_update=None looks identical to a long
+                # outage on the dashboard otherwise; operators investigate
+                # phantom failures of brand-new instances.
+                never_seen = (
+                    not hb.alive
+                    and hb.last_update is None
+                    and hb.eval_error is None
+                    and cfg.expected_cadence_s is not None
+                )
+                if never_seen:
+                    suppressed = "never_seen"
+                    candidate = False
+                elif not hb.alive and below:
                     suppressed = "heartbeat_not_alive"
                     candidate = False
                 else:

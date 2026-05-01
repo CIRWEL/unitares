@@ -46,7 +46,12 @@ class HeartbeatEvaluator:
         self._store = store
         self._now = _now
 
-    async def evaluate(self, agent_uuid: str) -> HeartbeatStatus:
+    async def evaluate(
+        self,
+        agent_uuid: str,
+        *,
+        cadence_override_s: int | None = None,
+    ) -> HeartbeatStatus:
         try:
             row = await self._store.get(agent_uuid)
         except Exception as e:
@@ -60,7 +65,13 @@ class HeartbeatEvaluator:
                 in_critical_silence=False,
             )
         last = row.get("last_update")
-        cadence = int(row.get("expected_cadence_s") or 0) or None
+        # Distinguish "explicitly 0" (caller bug) from "no override given".
+        # Falsy-or chains here would silently swallow a bad 0 and fall through
+        # to the store value, hiding the misconfiguration.
+        if cadence_override_s is not None:
+            cadence = cadence_override_s if cadence_override_s > 0 else None
+        else:
+            cadence = int(row.get("expected_cadence_s") or 0) or None
         if last is None or cadence is None:
             return HeartbeatStatus(
                 alive=False, last_update=last, expected_cadence_s=cadence,
