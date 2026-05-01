@@ -25,6 +25,7 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -97,9 +98,35 @@ def _read_cache(workspace: Path, slot: str | None = None) -> dict:
 
 
 def _write_cache(workspace: Path, payload: dict, slot: str | None = None) -> None:
+    """Atomic cache write with mode 0600.
+
+    Mirrors the write-path contract of ``unitares-governance-plugin/scripts/
+    session_cache.py:_write_json`` (S20.1b): atomic via ``mkstemp`` +
+    ``os.replace``, mode 0600 via ``fchmod`` on the temp fd before rename.
+    The default ``Path.write_text`` inherits umask 022 → mode 0644, leaving
+    cached identity world-readable on a typical macOS setup; any same-UID
+    process could read the file. S20.3.
+
+    On any write/chmod/replace failure, the temp file is unlinked rather
+    than left as a turd in ``.unitares/``.
+    """
     path = workspace / CACHE_DIR / _slot_filename(slot)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    data = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        try:
+            os.write(fd, data)
+            os.fchmod(fd, 0o600)
+        finally:
+            os.close(fd)
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 # --- Response unwrap -------------------------------------------------------
@@ -233,6 +260,12 @@ def run_onboard(
         }
 
     # Build fresh cache payload — never preserve stale fields.
+    # continuity_token / continuity_token_supported are intentionally NOT
+    # persisted: per identity.md v2 ontology and S1-a, lineage across
+    # process-instances is declared via parent_agent_id, not resumed via
+    # cached token. The fields stay in the in-process return value so a
+    # caller can use them transiently within the same process if needed.
+    # S20.3 — mirrors the plugin helper's v2 cache schema (session_cache.py).
     new_cache = {
         "server_url": server_url,
         "agent_name": agent_name,
@@ -240,9 +273,7 @@ def run_onboard(
         "uuid": parsed.get("uuid"),
         "agent_id": parsed.get("agent_id") or parsed.get("resolved_agent_id") or "",
         "client_session_id": parsed.get("client_session_id", ""),
-        "continuity_token": parsed.get("continuity_token", ""),
         "session_resolution_source": parsed.get("session_resolution_source", ""),
-        "continuity_token_supported": parsed.get("continuity_token_supported", False),
         "display_name": parsed.get("display_name", ""),
     }
     if parent_agent_id:
@@ -255,9 +286,9 @@ def run_onboard(
         "uuid": new_cache["uuid"],
         "agent_id": new_cache["agent_id"],
         "client_session_id": new_cache["client_session_id"],
-        "continuity_token": new_cache["continuity_token"],
+        "continuity_token": parsed.get("continuity_token", ""),
         "session_resolution_source": new_cache["session_resolution_source"],
-        "continuity_token_supported": new_cache["continuity_token_supported"],
+        "continuity_token_supported": parsed.get("continuity_token_supported", False),
         "display_name": new_cache["display_name"],
     }
 
