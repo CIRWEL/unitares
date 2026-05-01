@@ -1,7 +1,7 @@
 ---
-status: DRAFT-v0.7 (§7.2 + §7.3 resolved; §7.11 + §7.12 added as Tentative; Phase A test gates bundled in §9)
+status: DRAFT-v0.8 (§7.11 + §7.12 resolved; v1 forward-compat for content-addressing left Open by design; pre-existing v0.7 implementation drift surfaced as named §9 gates)
 authored: 2026-04-30
-amended: 2026-04-30 (v0.1–v0.7 same session)
+amended: 2026-04-30 (v0.1–v0.8 same session)
 council_pass_1: 2026-04-30
 ack_pass_1: 2026-04-30
 author_session: agent-68437d77-65c (claude_code-claude_68437d77)
@@ -732,55 +732,184 @@ A file rename, dialectic-session ID rotation, or resident relabel changes a surf
 
 **Token-rotation note:** `LEASE_FORCE_RELEASE_TOKEN` follows the same rotation cadence as other operator-scoped tokens at `~/.config/cirwel/secrets.env`. No special rotation infrastructure required for v0; rotation is manual operator action followed by `launchctl kickstart` of the lease-plane LaunchAgent to reload the secrets.env.
 
-### 7.11 Surface-kind deprecation / migration (council finding v0.7) — Tentative
+### 7.11 Surface-kind deprecation / migration — RESOLVED in v0.8
 
 **Question:** how does the lease plane retire a `surface_kind` (e.g., `td:/` deprecated in v3 because the TouchDesigner integration was abandoned)? What about migrating semantics within a kind (e.g., `resident:/` v0 = process PID, v1 = systemd unit name)?
 
-Without an answer, the §7.2 typed-scheme decision has no exit ramp — schemes become permanent surface area. With the §7.2.3 generated-column + grammar CHECK design, removing a scheme requires a coordinated DB-migration-then-app-deploy ordering that is identical to the migration-drift class CLAUDE.md flags as a single-writer surface. Without explicit deprecation procedure, a future operator either (a) drops the CHECK constraint at deploy time (loses storage-layer enforcement) or (b) leaves dead schemes in the CHECK forever (cruft).
+Council pass v0.8 (parallel: dialectic-knowledge-architect, feature-dev:code-reviewer, live-verifier) found three-voice convergence on `'forced_deprecation'` violating the deployed `release_reason` CHECK; two-voice convergence on Phase 2/3 race window leaving a Layer-1 enforcement gap, on the Sentinel alarm-storm collision with §7.10, and on the missing persistence substrate; plus four single-voice findings on operator-confirmation, sweep idempotency, 30-day window justification, and primitive-scheme evolution foreclosure.
 
-**Tentative:** scheme deprecation is a **30-day drain procedure**:
+**Resolution: 4-phase operator-driven procedure with `deprecated_schemes` table, CHECK-migration-before-sweep ordering, batch-suppressed Sentinel alarms, primitive-scheme strictly-stronger carve-out.**
 
-1. **T+0:** mark scheme deprecated. New acquires return `permission_denied` with reason `surface_kind_deprecated`. Existing leases on the deprecated kind continue to renew/release normally.
-2. **T+30 days:** all leases on the deprecated kind are forced via `LEASE_FORCE_RELEASE_TOKEN` (per §7.10) with `release_reason='forced_deprecation'`. Sentinel alarm fires per §7.10's blanket force-release alarm; expected event class.
-3. **T+30 days + 1 day:** migration extending the CHECK constraint to remove the scheme ships. `unitares_doctor.py` lints that no Elixir source mentions the deprecated scheme.
+#### 7.11.1 Persistence substrate — `deprecated_schemes` table
 
-**Tentative — semantics migration within a kind is forbidden:** if `resident:/` semantics change between versions (PID → systemd unit name), introduce a new kind (`resident_v2:/`) and dual-run during a deprecation window. Renaming surface_id format within a kind would orphan existing leases mid-flight; banning this case keeps the lease table semantically consistent.
+The "deprecated" flag MUST be a first-class schema object, not application config. Migration 027:
 
-Open subquestion: does scheme deprecation need its own first-class `deprecated_schemes` table for telemetry, or is the `unitares_doctor.py` check + Sentinel alarm sufficient? Defer to council pass on §7.11.
+```sql
+CREATE TABLE lease_plane.deprecated_schemes (
+  surface_kind        text PRIMARY KEY REFERENCES lease_plane.surface_kind_catalog(surface_kind),
+  deprecation_id      uuid NOT NULL DEFAULT gen_random_uuid(),
+  marked_deprecated_at timestamptz NOT NULL DEFAULT now(),
+  marked_by_session_id text NOT NULL,
+  drain_window_days   int NOT NULL DEFAULT 30 CHECK (drain_window_days > 0 AND drain_window_days <= 90),
+  sweep_started_at    timestamptz,
+  sweep_completed_at  timestamptz,
+  check_migrated_at   timestamptz
+);
+```
 
-### 7.12 Surface_id canonicalization / content-addressing forward-compat (council finding v0.7) — Tentative
+`surface_kind_catalog` is the canonical scheme registry (also added in migration 027); foreign-key-referenced so deprecation can only target a registered kind. `deprecation_id` is the audit-correlation key linking `marked` → `swept` → `migrated` events. Resumability invariant: a sweep is resumable if `sweep_started_at IS NOT NULL AND sweep_completed_at IS NULL`; idempotent re-run reaches fixpoint via the predicate in §7.11.4.
 
-**Question:** the §7.9 "v0 doesn't handle renames" deferral and the §7.2 typed-scheme commitment together require a canonicalization story. Two layers:
+The acquire path consults `deprecated_schemes` at the Elixir router layer (and the Pydantic field_validator on the Python side, fed via the lease-plane health endpoint's deprecated-kind list). T+0 acquire-block is a query against this table, not application config.
 
-1. **v0 (committed):** how do callers turn raw `surface_id` strings into the canonical form the partial unique index assumes? (Closes code-reviewer BLOCK-2: case-insensitive APFS, `..`-paths, percent-encoding ambiguity.)
-2. **v1 (forward-compat tentative):** how does §7.2 not foreclose §7.9's content-derived `surface_id` (file inode + ctime, dialectic content-hash) as a future v1 RFC?
+#### 7.11.2 4-phase operator-driven procedure
+
+`# OPERATOR_NOTE 1`: Phase ordering reverses the v0.7 tentative — CHECK migration lands BEFORE sweep, not after, to preserve §7.2.2 three-layer enforcement throughout the drain window. Each phase is operator-typed (not Oban-scheduled); operator presence at Phase 0 mark and Phase 2 sweep is required, matching §7.10's operator-only force-release semantic.
+
+| Phase | Time | Operator action | Effect |
+|-------|------|-----------------|--------|
+| 0 | T+0 | `lease-plane deprecate <kind>` CLI | INSERT row into `deprecated_schemes`. From this moment, acquire on the kind returns `permission_denied` reason `surface_kind_deprecated` (Elixir router gate + Pydantic field_validator). Existing leases continue to renew/release normally. |
+| 1 | T+1 day | (automatic verification) | `unitares_doctor.py` runs nightly, confirms no Elixir source mentions the deprecated scheme. If lint fails, operator alerted; deprecation pauses. |
+| 2 | T+`drain_window_days` (default T+30) | `lease-plane deprecation-sweep <kind>` CLI | Operator-issued; requires `LEASE_FORCE_RELEASE_TOKEN` (per §7.10). Sweeps surviving leases (idempotent — see §7.11.4). Records `sweep_started_at` then `sweep_completed_at` on the `deprecated_schemes` row. |
+| 3 | T+`drain_window_days` + 0 (same maintenance window) | `lease-plane deprecation-finalize <kind>` CLI | Migration extends `surface_id_grammar` CHECK to remove the scheme. Records `check_migrated_at`. After this point, INSERTs of the deprecated scheme fail at the storage layer. |
+
+Phase 2 and Phase 3 land in the **same operator session** to close the v0.7 1-day Layer-1 enforcement gap (closes dialectic BLOCK-E + code-reviewer BLOCK-3). The `deprecated_schemes` Phase 0 entry continues to gate the application layer regardless, but having both layers up simultaneously is the v0.8 commitment.
+
+#### 7.11.3 Audit event vocabulary
+
+`# OPERATOR_NOTE 2`: Council DRIFT-1 (live-verified) — `'forced_deprecation'` is not in the deployed `release_reason` CHECK. Two corrective options were considered:
+
+- (i) Add `'forced_deprecation'` to migration 026/027 CHECK + `models.py ReleaseReason` TypeAlias + `extract_release_params` in `http_router.ex`. Schema churn but explicit semantics.
+- (ii) **Adopted:** Use existing `release_reason='forced'` (already in CHECK) with semantic distinction in `lease_plane_events.event_type`. Phase 0 marks emit `event_type='lease.deprecation_marked'`; Phase 2 sweep events emit `event_type='lease.deprecation_swept'` with `release_reason='forced'`; Phase 3 emits `event_type='lease.deprecation_migrated'`. No `release_reason` schema change required. Audit consumers discriminate on `event_type`, not `release_reason`.
+
+Adopted option (ii) on the basis that (a) `release_reason` already has natural-language overflow into `event_type`, (b) preserves §7.10 Sentinel alarm-on-`release_reason='forced'` semantic without re-wiring (deprecation events ARE forced events; they just carry a discriminator), and (c) avoids a 4-site schema change for a vocabulary expansion. Cost: downstream consumers who want to filter "non-deprecation forced releases" must filter on `event_type NOT LIKE 'lease.deprecation_%'` rather than `release_reason != 'forced_deprecation'`.
+
+`tool_name` projection into `audit.tool_usage`: `'lease.deprecation_marked'`, `'lease.deprecation_swept'`, `'lease.deprecation_migrated'` respectively. Dashboard/KG consumers see deprecation as a first-class event class via `tool_name` discriminator.
+
+#### 7.11.4 Sweep predicate (idempotent, no timestamp filter)
+
+The Phase 2 sweep query is canonical — implementations MUST use exactly this predicate:
+
+```sql
+SELECT lease_id FROM lease_plane.surface_leases
+WHERE released_at IS NULL AND surface_kind = $1
+ORDER BY acquired_at
+FOR UPDATE SKIP LOCKED;
+```
+
+No timestamp filter (no `acquired_at < $deprecation_start`). Re-running on partial failure reaches fixpoint because already-released leases are excluded by `released_at IS NULL`. `FOR UPDATE SKIP LOCKED` lets multiple sweep workers (if ever needed) parallelize without conflict. `ORDER BY acquired_at` provides deterministic sweep order for audit reconstruction.
+
+The Oban implementation wraps this in a job that records `deprecation_id` on each emitted event so the entire sweep is reconstructable from `lease_plane_events` after the fact.
+
+#### 7.11.5 Sentinel batch suppression
+
+§7.10's "alarm-on-every-force-release" rule was justified for *rare* operator-typed force-release. A deprecation sweep over a high-cardinality kind could fire hundreds of alarms in minutes, training operators to mute the channel. v0.8 amendment to §7.10:
+
+> Sentinel alarm-on-every-event applies to `event_type='forced'`. Bulk deprecation sweeps emit `event_type='lease.deprecation_swept'` and are excluded from per-event alarming. Instead, Sentinel emits **one** alarm per `deprecation_id` summarizing `(kind, count_swept, started_at, completed_at)` after `sweep_completed_at` is set.
+
+This preserves the §7.10 design intent (every individual force-release is auditable and visible) while keeping the deprecation case from drowning the channel. The audit trail is fully preserved in `lease_plane_events` — the suppression is alarm-only.
+
+#### 7.11.6 Within-kind semantics evolution — strictly-stronger carve-out for primitives
+
+v0.7 tentative said within-kind semantics migration is *forbidden*. v0.8 relaxes for primitive schemes:
+
+- **Composite/owned schemes** (`dialectic:/`, `resident:/`, `capture:/`, `td:/`): semantics-migration-within-kind is forbidden; introduce a new kind (`resident_v2:/`) and dual-run during a 30-day drain.
+- **Primitive schemes** (`file://`): semantics evolution is allowed iff the new canonicalization rule is *strictly stronger* than the old (i.e., the new canonical form is a subset-of relation with the old form — every old canonical form maps deterministically to a new canonical form, and no two distinct old forms collide at the new form). Such migrations announce via the same 30-day drain (Phase 0 marks the *old* canonicalization deprecated; Phase 2 sweeps leases keyed on the old form; Phase 3 deploys the new canonicalization rule).
+
+The strictly-stronger condition is the safety invariant: it forecloses split-brain where an old-canonical and new-canonical key for the same physical surface coexist as two distinct leases. For `file://`, examples of strictly-stronger evolution include adding Unicode NFC normalization (NFC is canonical, NFD inputs map deterministically to NFC) or adding additional symlink-resolution depth. Examples that are NOT strictly stronger (and therefore require new-kind migration): inode-addressing (different identity model entirely) — handled per §7.12.
+
+#### 7.11.7 Adversarial-input — Phase 0 race window
+
+Council code-reviewer BLOCK-2 second-issue: a holder racing the Phase 0 mark transaction grabs a fresh 1h-TTL lease just before T+0. v0.8 mitigation: Phase 0 INSERT into `deprecated_schemes` is wrapped in a serializable transaction that ALSO sets a session-level advisory lock blocking new acquires on the kind for the transaction duration. The race window is reduced from "between operator command and Elixir router cache refresh" to "single Postgres transaction" (~ms).
+
+Belt-and-braces for very-long-TTL leases: the Phase 2 sweep, by §7.11.4 predicate, captures *all* unreleased leases regardless of when they were acquired. So a racer's lease is swept at T+30 like any other.
+
+#### 7.11.8 unitares_doctor lint polarity
+
+During T+0..T+30 (drain window), the deprecated scheme IS in the live grammar CHECK but SHOULD NOT be in active Elixir source (per §7.2.9). The `unitares_doctor.py` lint rule MUST be polarity-aware:
+
+- Schemes in `deprecated_schemes` table: lint REQUIRES that no Elixir source mentions them (warns operator if they do).
+- Schemes in grammar CHECK but NOT in `deprecated_schemes`: standard rule (Elixir source MAY reference; doctor doesn't lint).
+
+After Phase 3 (CHECK migration), the deprecated scheme falls out of the CHECK; standard polarity resumes (Elixir source mentioning the now-removed scheme would fail compile or lint).
+
+### 7.12 Surface_id canonicalization / content-addressing forward-compat — RESOLVED in v0.8 (v1 forward-compat remains Open)
+
+Council pass v0.8 found three-voice ground-truth findings that the v0.7 tentative was wrong about its Python stdlib API (`pathconf(_PC_CASE_SENSITIVE)` raises `ValueError` on macOS — REFUTED) and silently broken on `/var → /private/var` symlink resolution (live evidence). Plus two-voice convergence on the missing cross-platform/server-vs-target-filesystem authority commitment, and a code-reviewer-flagged `?`-ban decision deferral that blocked the §9 Phase A test gate.
+
+**Resolution: server-side canonicalization authority. Tmpfile probe (not pathconf). Double-realpath for /var. Symlink behavior surfaced as contract. v1 forward-compat downgraded from Tentative-option-(a) to Open. v0 explicitly does NOT add `?`-banning CHECK.**
+
+#### 7.12.0 Vocabulary disambiguation
+
+"Canonicalize" (verb) and "canonical form" (noun) in this section refer to the per-scheme string-normalization procedure below. This is **distinct** from §7.2.1's "canonical scheme list" (the vocabulary of allowed scheme prefixes). The two share the word "canonical" but operate at different levels: §7.2.1 enumerates allowed schemes; §7.12 normalizes the path within a scheme.
 
 #### 7.12.1 v0 canonicalization rule (committed via §7.2 cross-reference)
 
-Before any acquire/status/release call involving a `file://` surface_id, the caller MUST canonicalize:
+**Authority: server-side.** The lease plane re-canonicalizes on receipt against its own filesystem semantics. Caller-side canonicalization (via the helper) is a perf optimization, not load-bearing. This commits to (i) per the council BLOCK-G options.
 
-1. Resolve to absolute path: `os.path.realpath(path)` (Python) / `Path.expand` then `:filename.absname/1` (Elixir).
-2. Eliminate `.`, `..`, double-slashes (handled by realpath/absname).
-3. On case-insensitive filesystems (default macOS APFS/HFS+), lowercase the path. Detection: check filesystem case-sensitivity at startup (probe via `pathconf(_PC_CASE_SENSITIVE)` on macOS / mount-options on Linux); cache the answer per-startup.
-4. Strip trailing `/` unless the path is exactly `/`.
-5. Re-prefix with `file://`.
+Multi-host implication: if a caller on Linux (case-sensitive FS) sends `file:///Users/cirwel/Foo.py` and the Mac-hosted server canonicalizes against APFS (case-insensitive), the server-side lowercase produces `file:///users/cirwel/foo.py`. Both Linux and Mac callers see the same canonical form. The cost: on a future v1 with multi-server deployment, server-side authority requires all servers to share the same canonicalization rules; this is acceptable for v0 (single Mac BEAM node per §2 invariant).
 
-For non-`file://` schemes (`dialectic:/`, `resident:/`, `capture:/`, `td:/`), the v0 rule is "the path portion is opaque to the lease plane; callers are responsible for pre-canonicalization within their own scheme conventions." This may need tightening per scheme as Phase B proceeds.
+For `file://` surfaces, the server-side canonicalization steps (in order):
 
-A canonicalization helper SHALL ship in `src/lease_plane/canonicalize.py` (Python) with the same logic mirrored in the Elixir client. Callers using the helper get correct behavior for free; callers bypassing it carry the consequence of split-brain leases on the same physical surface.
+1. **Strip `file://` prefix** to get the raw path.
+2. **Resolve symlinks twice** (closes live-verifier DRIFT-2): `os.path.realpath(os.path.realpath(path))`. The double-realpath is required on macOS because `os.path.realpath` resolves `/var` → `/private/var` (system symlink) but does NOT idempotently re-resolve. Running realpath twice catches `/var/folders/.../tmpfile`-style paths that agents (Watcher, ship.sh, capture) use heavily and would otherwise split-brain.
+3. **Eliminate `.`, `..`, double-slashes** (handled implicitly by realpath on existing paths; if path doesn't exist, fall through to `os.path.normpath`).
+4. **Lowercase on case-insensitive filesystems.** Detection: tmpfile probe at startup (closes live-verifier DRIFT-3 — `pathconf(_PC_CASE_SENSITIVE)` is REFUTED on macOS Python). Implementation:
+   ```python
+   def _detect_case_insensitive() -> bool:
+       with tempfile.TemporaryDirectory() as d:
+           upper = os.path.join(d, "PROBE")
+           lower = os.path.join(d, "probe")
+           open(upper, 'w').close()
+           return os.path.exists(lower)
+   ```
+   Cached per-startup. The lease-plane server runs this at boot; the cached answer applies to all incoming `file://` canonicalization.
+5. **Strip trailing `/`** unless the path is exactly `/`.
+6. **Re-prefix with `file://`**.
 
-#### 7.12.2 v1 forward-compat with content-addressing
+For non-`file://` schemes, the v0 per-scheme rules are:
 
-§7.9 deferred content-derived `surface_id` (file inode + ctime, dialectic-session content-hash) to a v1 RFC. §7.2's typed-scheme grammar must not foreclose this. Two tentative options for v1:
+- **`dialectic:/`** — opaque hash. No normalization. Path portion is the dialectic-session UUID; case-sensitive (UUIDs are hex, lowercase-only by convention; reject mixed case at the field_validator).
+- **`resident:/`** — opaque resident-name. Case-sensitive. Reject whitespace, `?`, `#`, `&`. Trailing `/` stripped.
+- **`capture:/`** — composite member list of form `capture:/<id1>,<id2>,...,<idN>`. Members MUST be sorted lexically before canonicalization (closes dialectic missing-from-§7.12 finding: `capture:/A,B,C` and `capture:/B,A,C` would otherwise split-brain on the same calibration window). Helper sorts.
+- **`td:/`** — reserved; no canonicalization rule (not implemented v0).
 
-- **(a) New scheme.** `file-inode://<inode>:<ctime>` is a separate scheme (per §7.11 deprecation procedure, eventually `file://` is deprecated and content-addressed `file-inode://` replaces it). Pro: clean separation, follows the scheme-as-vocabulary discipline. Con: callers must migrate.
-- **(b) Modifier on existing scheme.** `file:///x.py?canon=inode` adds a query-string modifier. Pro: gradual rollout, no caller migration. Con: query-string parsing in `surface_id` is unusual; complicates the partial unique index normalization.
+#### 7.12.2 Helper error semantics
 
-**Tentative for v1:** option (a). Cleaner. v1 RFC will commit; this RFC just notes the design space is open.
+The `src/lease_plane/canonicalize.py` helper is the single point of truth for split-brain prevention. Error semantics MUST be unambiguous:
 
-**v0 invariant (must not break v1):** within a v0 scheme, the path portion is opaque to lease identity. The partial unique index keys on the literal `surface_id` string after caller canonicalization. Query-string parameters (if any caller adds them) are NOT stripped before indexing — `file:///x.py` and `file:///x.py?canon=inode` are distinct leases v0-side. This forecloses the split-brain bug where v1-aware callers and v1-naive callers race on the same file via different `?canon=` values: in v0 they're just two different surfaces. v1 either deprecates the unmodified form (per §7.11) or specifies a normalization rule for the modifier.
+- **Path doesn't exist** (no symlink target, no file): `os.path.realpath` returns the un-resolved input on macOS/Linux. Helper does not raise; canonicalization proceeds on the un-resolved form. Caller's responsibility to know whether the surface is supposed to exist; lease plane does not validate file existence.
+- **Symlink loop**: `os.path.realpath` raises `OSError` (ELOOP). Helper propagates as `CanonicalizeError` with `reason="symlink_loop"`. Caller MUST catch and either retry (after fixing the loop) or fall through to `service_unavailable`.
+- **NUL byte in path**: helper rejects at field_validator level with `ValidationError`; the underlying `os.path.realpath` would raise `ValueError` if reached. Caller-side rejection is preferred — fail at the model boundary, not deep in the canonicalize call.
+- **Path too long** (`PATH_MAX` exceeded): helper raises `CanonicalizeError(reason="path_too_long")`. Pre-Phase-A gate: ensure `surface_id` Pydantic field has `max_length` consistent with caller-side path-length expectations.
 
-Open subquestion: does v0 need a stronger rule banning `?` in `surface_id` to keep the v1 modifier-form open? Adding `CHECK (surface_id !~ '\\?')` to migration 026 would force v1 to choose option (a) by construction. Defer to council pass on §7.12.
+#### 7.12.3 Symlink behavioral commitment (closes code-reviewer CONCERN-3)
+
+`os.path.realpath` resolves symlinks to physical paths. **Behavioral commitment:** two callers using different symlink-paths to the same physical file will produce the same canonical `surface_id` IFF both use the helper. A caller bypassing the helper and passing a symlink path directly creates a lease whose `surface_id` is the symlink form; a second caller using the helper creates a lease on the physical form. The partial unique index sees them as distinct surfaces.
+
+**Worktree implication:** UNITARES uses `git worktree`s heavily. Worktrees are regular directories (not symlinks), so `realpath` does NOT collapse worktree paths to a canonical "main repo" path. A lease on `file:///.../unitares/src/x.py` and a lease on `file:///.../unitares/.worktrees/foo/src/x.py` are distinct leases by design — different physical files even though they're "the same logical source." This is correct and intended.
+
+#### 7.12.4 v1 forward-compat for content-addressing — Open (downgraded from v0.7 Tentative)
+
+v0.7 tentatively chose option (a) (new scheme `file-inode://`). v0.8 council CONCERN-H surfaced that option (a) commits §7.11 to fire on `file://` someday — running a 30-day drain across every Hermes/Claude/Codex/capture caller in the fleet, requiring fleet-wide caller-library upgrade as a precondition. This was not weighed in v0.7's choice.
+
+**v0.8 reframe — Open:** v1 RFC must explicitly weigh the asymmetric costs. Both options remain viable:
+
+- **Option (a) new scheme `file-inode://`.** Cleaner separation. Forces §7.11 drain on `file://`. Acceptable iff operator accepts fleet-wide caller migration as v1 precondition.
+- **Option (b) modifier on existing scheme `file:///x.py?canon=inode`.** Keeps `file://` permanent. Costs in-scheme normalization complexity (the partial unique index must be aware of the modifier; `?canon=inode` and the unmodified form are semantically the same surface but textually distinct).
+
+**v0 invariant preserved (closes code-reviewer CONCERN-4):** the open subquestion of "do we add `CHECK (surface_id !~ '\\?')` to migration 026 to force option (a) by construction" is **resolved as NO**. We explicitly do NOT add the `?`-banning CHECK. Doing so would foreclose option (b) and lock in option (a)'s fleet-upgrade cost without v1 having weighed it. v0 stores `?`-bearing `surface_id` values verbatim (live-verifier Finding 13 confirmed); v1 RFC chooses how to interpret them.
+
+`# OPERATOR_NOTE 3`: This means v0 callers MAY (accidentally or intentionally) write `?`-bearing `surface_id` values today, and the lease plane will accept them. The §7.12.1 helper SHOULD reject them via field_validator with `ValidationError("query string in surface_id reserved for v1; use plain canonical form for v0")` to keep v0 traffic clean. This is caller-side rejection only; the storage layer accepts.
+
+#### 7.12.5 Pydantic field_validator commitment (closes code-reviewer CONCERN-4)
+
+`AcquireRequest.surface_id` MUST gain a `field_validator` before Phase A ships. The validator:
+
+1. Matches against the canonical scheme list regex (§7.2.1).
+2. Calls the canonicalize helper on `file://` paths (so the model boundary enforces canonicalization).
+3. Rejects `?`-bearing values per §7.12.4.
+4. Rejects NUL bytes per §7.12.2.
+5. Returns the canonical form (Pydantic auto-canonicalizes; this trades visibility-of-drift for caller convenience). Operator note: this hides bugs where callers pass non-canonical and don't realize. v0.8 picks auto-canonicalize for UX; if drift becomes a debug problem, switch to validate-only-and-reject in v1.
 
 ## 8. Concerns / counter-arguments / minority views
 
@@ -816,8 +945,8 @@ A Python reference implementation of every endpoint in §5 (`asyncio.Lock` per-s
 
 Required before any `.ex` file is written:
 
-- [x] Council pass: dialectic-knowledge-architect, feature-dev:code-reviewer, live-verifier (parallel) — v0.2/v0.3/v0.5/v0.7
-- [x] §7 open questions all answered (RFC tentative -> RFC committed) — §7.1/7.4/7.6/7.8 resolved v0.2; §7.5/7.7 resolved v0.2 with operator-action carve-out; §7.9/7.10 resolved v0.6; **§7.2/7.3 resolved v0.7**; §7.11/7.12 newly added as Tentative v0.7 (separate council pass before commit)
+- [x] Council pass: dialectic-knowledge-architect, feature-dev:code-reviewer, live-verifier (parallel) — v0.2/v0.3/v0.5/v0.7/v0.8
+- [x] §7 open questions all answered (RFC tentative -> RFC committed) — §7.1/7.4/7.6/7.8 resolved v0.2; §7.5/7.7 resolved v0.2 with operator-action carve-out; §7.9/7.10 resolved v0.6; §7.2/7.3 resolved v0.7; **§7.11/7.12 resolved v0.8** (v0.8 §7.12.4 leaves v1 forward-compat option (a) vs (b) Open, by design)
 - [x] Shelf-Python sketch checked in alongside the Elixir spec — same schema, same API, same return shapes (v0.4)
 - [ ] Operational runbook draft: `docs/operations/lease-plane-operator-runbook.md` (stub created alongside this RFC; needs concrete commands once the service exists). **v0.6 commitment:** runbook MUST cover (a) §7.9 rename-orphan manual-release procedure, and (b) §7.10 `LEASE_FORCE_RELEASE_TOKEN` provisioning + rotation steps. **v0.7 addition:** (c) §7.11 scheme-deprecation 30-day drain procedure.
 - [ ] Sentinel monitoring spec for `/v1/lease/status?surface_id=__healthcheck__`
@@ -840,12 +969,33 @@ Each row below is a Phase A blocker. All tests live under `tests/test_lease_plan
 - [ ] **§7.3.5 — `_urllib_transport` HTTP-error body-parse path** — currently uncovered (live-verifier finding). Test name: `test_urllib_transport_parses_409_body`.
 - [ ] **§7.10 — `GOVERNANCE_TOKEN` cannot force-release** (already gated v0.6; restated): only `LEASE_FORCE_RELEASE_TOKEN` succeeds; rejection at contract layer. Test name: `test_force_release_rejects_governance_token`.
 
+#### Phase A test gates (v0.8 — bundles §7.11 + §7.12 council BLOCKs)
+
+- [ ] **Migration 027 ships and is verified** — `lease_plane.deprecated_schemes` table created; `surface_kind_catalog` registry created. Verified via `\d lease_plane.deprecated_schemes`.
+- [ ] **§7.11.3 — `release_reason='forced'` reused for deprecation events; vocabulary unchanged** — Phase 2 sweep events emit with existing `'forced'` value, distinguished by `event_type='lease.deprecation_swept'`. Closes live-verifier DRIFT-1. Test name: `test_deprecation_sweep_uses_forced_release_reason`.
+- [ ] **§7.11.2 — Phase 2 + Phase 3 land in same operator session** — Layer-1 enforcement gap closed. Test name: `test_deprecation_sweep_and_check_migration_atomic_session`.
+- [ ] **§7.11.4 — sweep predicate idempotent on partial-failure re-run** — operator interrupts mid-sweep, re-runs, completes without double-emitting events. Test name: `test_deprecation_sweep_idempotent_on_partial_failure`.
+- [ ] **§7.11.5 — Sentinel batch suppression** — bulk deprecation sweep emits one summary alarm per `deprecation_id`, not N per-lease alarms. Closes Sentinel alarm-storm CONCERN. Test name: `test_sentinel_batch_alarm_for_deprecation_sweep`.
+- [ ] **§7.11.7 — Phase 0 race window** — concurrent acquire racing the Phase 0 mark transaction is blocked by serializable-tx + advisory-lock. Test name: `test_phase_zero_acquire_race_blocked`.
+- [ ] **§7.12.1 — tmpfile probe replaces `pathconf(_PC_CASE_SENSITIVE)`** — startup detection works on macOS Python (live-verifier REFUTED pathconf). Test name: `test_canonicalize_case_detection_uses_tmpfile_probe`.
+- [ ] **§7.12.1 — `/var → /private/var` double-realpath** — `/var/folders/.../tmpfile` and `/private/var/folders/.../tmpfile` produce same canonical form. Closes live-verifier DRIFT-2. Test name: `test_canonicalize_resolves_var_to_private_var_on_macos`.
+- [ ] **§7.12.1 — `capture:/` member ordering** — `capture:/A,B,C` and `capture:/B,A,C` canonicalize to same `surface_id`. Test name: `test_capture_canonicalizes_member_ordering`.
+- [ ] **§7.12.2 — helper error semantics** — symlink loop raises `CanonicalizeError(reason="symlink_loop")`; NUL byte rejected at field_validator; nonexistent path falls through cleanly. Test name: `test_canonicalize_error_semantics`.
+- [ ] **§7.12.4 — `?`-bearing `surface_id` rejected by Pydantic field_validator** — caller-side rejection; storage layer remains permissive (v1 option-(b) keep-open). Test name: `test_acquire_request_rejects_query_string_in_surface_id`.
+- [ ] **§7.12.5 — `AcquireRequest.surface_id` field_validator wired** — closes the v0.7 implementation gap (currently only `min_length=1`). Test name: `test_acquire_request_surface_id_field_validator_wired`.
+
+#### Pre-existing v0.7 implementation drift (surfaced by v0.8 council; needs code, not RFC)
+
+- [ ] **`models.py AcquireHeldByOther`** — extend with `surface_id`, `blocking_lease_id`, `retry_after_hint_ms` per §7.3.2 (committed in v0.7; not yet in code). Test name: `test_held_by_other_includes_v0_7_extended_fields`.
+- [ ] **`http_router.ex extract_acquire_params`** — remove `"surface_kind"` from required fields and from params map per §7.2.3 (will hard-fail against migration 026 generated column otherwise). Test name (Elixir-side): `test http_router rejects surface_kind in acquire body after migration 026`.
+- [ ] **`agents/sentinel/agent.py`** — add alarm rule keyed on `event_type='forced'` from `lease_plane_events`. Live-verifier confirmed no such rule exists today (Finding 5 SOURCE_ONLY). Per §7.10 + §7.11.5, the rule fires per-event for ad-hoc force-release, batched for deprecation sweeps. Test name: `test_sentinel_force_release_alarm_wired`.
+
 #### Phase B prerequisites (v0.7 — non-blocking for Phase A)
 
 - [ ] **§7.2.8** — payload-shape standardization pass spec authored before any surface_kind reaches Phase B candidate status; commits to writing canonicalized `surface_id` (per §7.12.1) into `audit.tool_usage.payload`, no percent-encoding.
 - [ ] **§7.2.9** — `unitares_doctor.py` extended to lint that no Elixir source mentions a scheme not in the live DB CHECK.
 - [ ] **§7.11** council pass on the 30-day-drain tentative before any production scheme is deprecated.
-- [ ] **§7.12** council pass on the v1 forward-compat option (a) vs (b) before v1 RFC opens; consider whether to ship `CHECK (surface_id !~ '\\?')` in migration 026 to force option (a) by construction.
+- [ ] **§7.12.4** v1 RFC opening: weigh option (a) new scheme `file-inode://` vs option (b) modifier `?canon=inode` explicitly with the asymmetric-cost framing v0.8 surfaces. v0.8 explicitly does NOT add `?`-banning CHECK in migration 026 — both options remain viable for v1.
 
 ## 10. Runway tradeoff (operator decision, not technical)
 
@@ -859,6 +1009,38 @@ This is a 4-8 week spike. It trades against:
 The technical case is strong (three independent reviewers converged). The strategic case is the operator's call. If shelved, file this RFC as captured-decision so the next session doesn't re-litigate the substrate question from scratch.
 
 ## 11. Versions / changelog
+
+- **v0.8 (2026-04-30, same session):** §7.11 (deprecation procedure) and §7.12 (canonicalization + v1 content-addressing forward-compat) promoted Tentative → Resolved. Council pass run in parallel (dialectic-knowledge-architect / feature-dev:code-reviewer / live-verifier; adversarial framing per `feedback_council-adversarial-prompt.md`). Three-voice convergence on three top issues; multiple two-voice and single-voice findings folded in. Material changes:
+
+  *§7.11 — Resolved (4-phase operator-driven, with persistence substrate):*
+  - **`deprecated_schemes` table** added (§7.11.1, migration 027) — first-class schema object, not application config. Includes `deprecation_id` for audit-correlation across mark/sweep/migrate events; `surface_kind_catalog` registry referenced via FK. Closes code-reviewer BLOCK-2 + NIT-1 (the v0.7 open subquestion is load-bearing, not deferrable).
+  - **Phase ordering reversed** (§7.11.2): CHECK migration lands BEFORE sweep, both in same operator session. Closes dialectic BLOCK-E + code-reviewer BLOCK-3 — the v0.7 1-day Layer-1 enforcement gap is gone.
+  - **`'forced_deprecation'` REJECTED in favor of `release_reason='forced'` + `event_type='lease.deprecation_*'`** (§7.11.3): three-voice convergence (dialectic BLOCK-A + code-reviewer BLOCK-1 + live-verifier DRIFT-1) confirmed `'forced_deprecation'` is not in deployed CHECK. Avoids 4-site schema change; preserves §7.10 Sentinel `release_reason='forced'` alarm wiring.
+  - **Idempotent sweep predicate explicit** (§7.11.4): `WHERE released_at IS NULL AND surface_kind = $1`, no timestamp filter, `FOR UPDATE SKIP LOCKED`. Closes code-reviewer BLOCK-4.
+  - **Sentinel batch suppression** (§7.11.5): bulk deprecation sweeps emit one summary alarm per `deprecation_id` rather than N per-event alarms. §7.10 alarm-on-every-event semantic preserved for ad-hoc force-release. Closes dialectic BLOCK-D + code-reviewer CONCERN-1.
+  - **Within-kind primitive-scheme evolution carve-out** (§7.11.6): `file://` may evolve via "strictly stronger" canonicalization (subset-of relation) without forcing a new-kind migration. `dialectic:/`, `resident:/`, `capture:/`, `td:/` remain forbidden-within-kind. Closes dialectic CONCERN-C — primitive-scheme foreclosure resolved.
+  - **Phase 0 race window** mitigated (§7.11.7): serializable transaction + session-level advisory lock during the mark-deprecated INSERT. Belt-and-braces: §7.11.4 sweep predicate captures all unreleased leases regardless of acquire timestamp.
+  - **`unitares_doctor.py` lint polarity** (§7.11.8): polarity-aware during T+0..T+30 drain window — deprecated schemes REQUIRE no Elixir source mention; non-deprecated schemes are unconstrained.
+  - **Audit signal contract**: `tool_name` in `audit.tool_usage` projects as `'lease.deprecation_marked'`/`'lease.deprecation_swept'`/`'lease.deprecation_migrated'`. Dashboard/KG consumers see deprecation as first-class event class.
+  - **30-day default constant**: `drain_window_days` is a column on `deprecated_schemes` (default 30, max 90); per-deprecation override possible. Cross-references §7.6 outbox-prune and §7.2.6 lease-prune as collinear operational windows.
+
+  *§7.12 — Resolved (with v1 forward-compat explicitly Open):*
+  - **Server-side canonicalization authority** (§7.12.1, option (i)): lease plane re-canonicalizes on receipt against its own filesystem semantics; caller-side helper is a perf optimization, not load-bearing. Closes dialectic BLOCK-G + code-reviewer CONCERN-6 — cross-platform/multi-host split-brain hazard resolved for v0 (single Mac BEAM node per §2 invariant).
+  - **Tmpfile probe REPLACES `pathconf(_PC_CASE_SENSITIVE)`** (§7.12.1 step 4): three-voice ground-truth — live-verifier REFUTED `PC_CASE_SENSITIVE` availability on macOS Python; calling it raises `ValueError`. v0.7 spec was wrong. Helper code sample provided; cached per-startup.
+  - **Double-realpath for `/var → /private/var`** (§7.12.1 step 2): closes live-verifier DRIFT-2. `os.path.realpath(os.path.realpath(path))` catches the macOS system-symlink hop that single-realpath misses; matters for `/var/folders/.../tmpfile`-style paths heavily used by Watcher, ship.sh, capture.
+  - **Per-scheme canonicalization rules** (§7.12.1 for non-`file://` schemes): explicit per-kind handling. Notably **`capture:/A,B,C` member ordering** — sorted lexically before canonicalization to prevent split-brain on the same calibration window with reordered members. Closes dialectic missing-from-§7.12 finding.
+  - **Helper error semantics** (§7.12.2): symlink loop, NUL byte, path-too-long, nonexistent-path all named with explicit error/no-error contracts. The helper is the single point of truth for split-brain prevention; ambiguous errors are themselves a split-brain risk.
+  - **Symlink + worktree behavioral commitment** (§7.12.3): explicit contract that `os.path.realpath` resolves symlinks to physical paths; bypassing the helper produces split-brain. Worktree paths are NOT collapsed (worktrees are regular directories, not symlinks) — leases on a file via main-repo path vs `.worktrees/foo/...` path are distinct by design.
+  - **v1 forward-compat downgraded from Tentative-(a) to Open** (§7.12.4): closes dialectic CONCERN-H — option (a) commits §7.11 to fire on `file://` (fleet-wide caller migration as v1 precondition). Both options remain viable; v1 RFC must explicitly weigh asymmetric costs. **v0 explicitly does NOT add `?`-banning CHECK in migration 026** — preserves option (b) viability.
+  - **Vocabulary disambiguation** (§7.12.0): "canonicalize"/"canonical form" (§7.12 string normalization) distinguished from "canonical scheme list" (§7.2.1 vocabulary). Closes dialectic NIT-I.
+  - **Pydantic field_validator wired** (§7.12.5): closes code-reviewer CONCERN-4 — auto-canonicalize at the model boundary (UX over visibility-of-drift; flagged for revisit if drift becomes a debug problem in v1).
+
+  *§9 checklist — three new categories:*
+  - 6 §7.11 Phase A test gates (deprecated_schemes migration, sweep predicate, idempotency, batch alarm, race window).
+  - 6 §7.12 Phase A test gates (tmpfile probe, /var double-realpath, capture: member ordering, error semantics, ?-rejection, field_validator wired).
+  - **3 pre-existing v0.7 implementation drift items surfaced as named §9 gates**: `models.py AcquireHeldByOther` extended fields missing (closes v0.7 commitment §7.3.2 vs reality); `http_router.ex extract_acquire_params` still requires `surface_kind` (will hard-fail against migration 026); `agents/sentinel/agent.py` has no `event_type='forced'` alarm rule (live-verifier Finding 5 SOURCE_ONLY). These are runtime-code work, not RFC-text changes.
+
+  *Council reports archived in session transcript.* Three-voice convergence pattern (3+ voices agree → unconditional fix) handled separately from two-voice (most CONCERNs) and single-voice (additions). Three findings reframed as v0.7 implementation gaps to be tracked-not-litigated. Two operator decisions surfaced inline as `OPERATOR_NOTE` markers (Phase ordering reversal; `release_reason='forced'` reuse).
 
 - **v0.7 (2026-04-30, same session):** §7.2 (Surface ID schema) and §7.3 (Conflict semantics on `held_by_other`) promoted Tentative → Resolved. Council pass run in parallel (dialectic-knowledge-architect / feature-dev:code-reviewer / live-verifier; adversarial framing per `feedback_council-adversarial-prompt.md`). Operator-decision pass landed before commit; four operator-choice points resolved per codex direction. Material changes:
 
