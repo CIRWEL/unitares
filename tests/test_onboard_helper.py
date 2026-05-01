@@ -13,6 +13,8 @@ Covers the behavior described in `scripts/client/onboard_helper.py`:
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -157,7 +159,49 @@ class TestRunOnboard:
         written = json.loads(cache_path.read_text())
         assert written["uuid"] == "uuid-ok"
         assert written["client_session_id"] == "agent-ok"
-        assert written["continuity_token"] == "v1.token-ok"
+        # S20.3: continuity_token must NOT be persisted to the cache file.
+        # The field stays in the in-process return value (transient) so a
+        # caller can use it within the same process, but is never written
+        # to disk — lineage across process-instances is declared via
+        # parent_agent_id, not resumed via cached token.
+        assert "continuity_token" not in written
+        assert "continuity_token_supported" not in written
+        # Result still carries the transient token from the server response.
+        assert result["continuity_token"] == "v1.token-ok"
+
+    def test_cache_file_is_mode_0600(self, tmp_path: Path) -> None:
+        """S20.3: cache file must be readable only by the owner.
+
+        Default Path.write_text inherits umask 022 → mode 0644 (world-
+        readable on a typical macOS setup). The cache no longer carries
+        continuity_token, but client_session_id is still process-instance
+        identity — same-UID readability is still a siphon surface.
+        """
+        _, _, cache_path = self._call(tmp_path, [_success_response()])
+        assert cache_path.exists()
+        mode = stat.S_IMODE(os.stat(cache_path).st_mode)
+        assert mode == 0o600, f"expected mode 0600, got {oct(mode)}"
+
+    def test_write_failure_does_not_leave_tmp_file(self, tmp_path: Path, monkeypatch) -> None:
+        """S20.3: a failed atomic write unlinks the temp file rather than
+        leaving a .tmp turd in ``.unitares/``."""
+        from scripts.client import onboard_helper
+
+        real_replace = os.replace
+
+        def boom(*args, **kwargs):
+            raise OSError("simulated replace failure")
+
+        monkeypatch.setattr(onboard_helper.os, "replace", boom)
+        with pytest.raises(OSError):
+            onboard_helper._write_cache(tmp_path, {"uuid": "x"}, slot=None)
+
+        cache_dir = tmp_path / ".unitares"
+        if cache_dir.exists():
+            stragglers = [p for p in cache_dir.iterdir() if p.suffix == ".tmp"]
+            assert stragglers == [], f"temp file leaked: {stragglers}"
+        # Restore for other tests in the same session.
+        monkeypatch.setattr(onboard_helper.os, "replace", real_replace)
 
     def test_cached_uuid_declared_as_parent_on_startup(self, tmp_path: Path) -> None:
         initial = {
