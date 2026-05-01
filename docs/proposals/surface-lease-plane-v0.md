@@ -1,7 +1,7 @@
 ---
-status: DRAFT-v0.6 (§7.9 + §7.10 promoted Tentative → Resolved; council pass queued on §7.2/§7.3)
+status: DRAFT-v0.7 (§7.2 + §7.3 resolved; §7.11 + §7.12 added as Tentative; Phase A test gates bundled in §9)
 authored: 2026-04-30
-amended: 2026-04-30 (v0.1, v0.2, v0.3, v0.4, v0.5, v0.6 same session)
+amended: 2026-04-30 (v0.1–v0.7 same session)
 council_pass_1: 2026-04-30
 ack_pass_1: 2026-04-30
 author_session: agent-68437d77-65c (claude_code-claude_68437d77)
@@ -482,28 +482,171 @@ Council finding 1.1 (dialectic-knowledge-architect) flagged that keying leases o
 
 `holder_kind` is **immutable per `lease_id`** — switching from `remote_heartbeat` to `local_beam` mid-life requires release+reacquire (council finding 3.1). Postgres CHECK constraint enforces the (heartbeat_required, holder_kind) pair coherence.
 
-### 7.2 Surface ID schema
+### 7.2 Surface ID schema — RESOLVED in v0.7
 
-Opaque string, or typed scheme?
+Opaque string, or typed scheme? Council pass v0.7 (parallel: dialectic-knowledge-architect, feature-dev:code-reviewer, live-verifier) found three-voice convergence on "no storage-layer CHECK on `surface_id` despite RFC framing it as 'validatable'", plus a self-contradiction between §3.3's enumerated surfaces (5 schemes including `capture:/`) and §7.2's tentative grammar (4 schemes, no `capture:`).
 
-- Opaque: simplest, but no validation, no namespace discipline, surface-kind detection is by-convention.
-- Typed scheme (`file:///...`, `dialectic:/...`, `td:/...`, `resident:/...`): namespaced, validatable, surface_kind is derivable. Bounded grammar.
+**Resolution: typed scheme, defense-in-depth, with canonical scheme list.**
 
-**Tentative:** typed scheme. `surface_kind` is the parsed scheme prefix; `surface_id` is the full canonical URI. Document the grammar in this RFC §4.4 once chosen.
+#### 7.2.1 Canonical scheme list (v0)
 
-Cardinality bound on active leases per surface: 1 (the unique partial index). Cardinality bound per holder: open question — should one agent UUID be allowed to hold N leases concurrently? Hermes-style multi-file edits will need this.
+Authored once here; §3.3 surface enumeration MUST stay consistent with this list.
 
-**Tentative:** unbounded per holder; bounded per surface. Telemetry alerts if any single UUID exceeds a soft threshold (signals stuck/leaking holder).
+| Scheme | Surface_kind | Status v0 | Notes |
+|--------|--------------|-----------|-------|
+| `file://` | `file` | active | repo file paths; canonicalization rules in §7.2.4 |
+| `dialectic:/` | `dialectic` | active | dialectic session IDs |
+| `resident:/` | `resident` | active | resident lifecycle handles |
+| `capture:/` | `capture` | active | calibration capture windows |
+| `td:/` | `td` | reserved | TouchDesigner regions; not implemented v0 |
 
-### 7.3 Conflict semantics on `held_by_other`
+Single-slash form (`scheme:/path`) is canonical for all schemes *except* `file://` (kept double-slash for `file://` filesystem-URI tradition; the trailing `/` of an absolute path provides the third slash, e.g., `file:///Users/cirwel/...`).
 
-What's the caller default behavior?
+#### 7.2.2 Grammar enforcement (defense-in-depth)
 
-- **Wait** (with timeout) until the lease frees: friendly, but creates queueing pressure inside callers and reintroduces the asyncio.Lock bug class one altitude up.
-- **Abort** (return failure to operator): honest, but every caller now has retry logic.
-- **Auto-request handoff:** clean, but requires a holder that responds to handoff offers, which not all holder classes do (Hermes doesn't, Claude Code doesn't, only deliberate residents would).
+Three layers, each named:
 
-**Tentative:** abort by default. Caller decides whether to retry. Handoff is opt-in, used for specific surface kinds (resident:/ during planned restart, dialectic:/ during reviewer reassignment).
+1. **Postgres CHECK constraint** (migration 026 — required before Phase A): `CHECK (surface_id ~ '^(file://|dialectic:/|resident:/|capture:/|td:/)')`. Storage-layer rejection of malformed values. Live-verifier DRIFT-A confirmed migration 024 has no such CHECK today; this closes the gap.
+2. **Pydantic field_validator** on `AcquireRequest.surface_id` and `LeaseRecord.surface_id`: regex match against the canonical scheme list. Caller-side rejection before HTTP. Live-verifier confirmed today's `Field(min_length=1)` is the only enforcement on the Python side.
+3. **Elixir Ecto changeset validation**: enum-based scheme parser, compile-time exhaustive over the `@surface_schemes` module attribute. Server-side rejection before transaction starts.
+
+Layers (1) and (2) are required Phase A gates (§9 checklist). Layer (3) is Elixir-side and lands with the BEAM service implementation.
+
+#### 7.2.3 surface_kind ↔ surface_id consistency — DB-enforced via generated column
+
+surface_kind MUST NOT be application-only. Three options were considered:
+
+- (a) **Generated column** (chosen v0.7): `surface_kind text GENERATED ALWAYS AS (split_part(surface_id, ':', 1)) STORED`. Single source of truth, derived from surface_id at storage time, impossible to drift. Caller-supplied `surface_kind` becomes redundant and SHALL be removed from `AcquireRequest` and the §5 endpoint body. Live-verifier confirmed `surface_leases` is empty in production, so the migration-026 conversion (DROP COLUMN + ADD COLUMN ... GENERATED) is safe.
+- (b) **DB CHECK pair** (fallback if (a) is too disruptive at migration time): keep `surface_kind` as a regular column, add a CHECK constraint in migration 026 binding scheme prefix to surface_kind. Caller still supplies both; server-side enforcement is at the storage layer, not the application layer. Mismatch rejected with `schema_invalid`.
+- (c) ~~Application-only~~ — REJECTED. surface_kind enforcement at the application layer alone is insufficient because any direct SQL writer (governance-side projection, future operational scripts) bypasses it.
+
+**Adopted (v0.7): option (a) generated column.** Migration 026:
+
+```sql
+ALTER TABLE lease_plane.surface_leases DROP COLUMN surface_kind;
+ALTER TABLE lease_plane.surface_leases
+  ADD COLUMN surface_kind text
+  GENERATED ALWAYS AS (split_part(surface_id, ':', 1)) STORED;
+
+-- The grammar CHECK on surface_id (§7.2.2) keeps surface_kind in the canonical
+-- vocabulary; no separate surface_kind CHECK needed since the value is derived.
+ALTER TABLE lease_plane.surface_leases
+  ADD CONSTRAINT surface_id_grammar
+  CHECK (surface_id ~ '^(file://|dialectic:/|resident:/|capture:/|td:/)');
+```
+
+If the empty-table assumption changes between now and migration 026 ship time (i.e., Phase A advisory traffic lands first), fall back to option (b): keep the column, add the CHECK-pair binding scheme→kind, and treat caller-supplied surface_kind as a redundant input that the server validates against the parsed prefix. Either way, **the storage layer is authoritative** — application-only enforcement is not on the table.
+
+Cross-API impact (option a): `AcquireRequest.surface_kind` is removed from §5 `/v1/lease/acquire` body. `LeaseRecord.surface_kind` remains in responses (read-only echo of the stored generated value).
+
+#### 7.2.4 file:// canonicalization
+
+See **§7.12** for the v0 canonicalization rule and the v1 forward-compat path with §7.9 content-addressing. §7.2 commits that callers MUST use the canonicalization helper before acquire/status/release; §7.12 specifies the helper.
+
+#### 7.2.5 Cardinality bounds (closes dialectic CONCERN-4)
+
+- **Per surface:** exactly 1 active lease, enforced by the partial unique index `surface_leases_active_unique`. Live-verifier confirmed.
+- **Per holder:** unbounded by design. Hermes-style multi-file edits need it; capping per-holder would block a real workload.
+
+**Threat model (v0):** callers are authenticated holders; runaway-acquisition is a holder-bug class, not an external-attacker class. Mitigation:
+
+```sql
+-- Sentinel alarm threshold: 100 concurrent leases per holder
+SELECT count(*) FROM lease_plane.surface_leases
+WHERE holder_agent_uuid = $1 AND released_at IS NULL > 100
+```
+
+Threshold of 100 is initial; tunable via Sentinel config. The alert is **reactive** — it fires after a holder is already at threshold. Per-holder rate-limiting (acquires/sec) is **deferred to v1** and is the correct response if telemetry shows real-world holders crossing 100 concurrent leases routinely. v0 ships the alert without the throttle, with explicit acknowledgement that it is reactive — not a defense against adversarial fan-out, only an early-warning for holder-bug fan-out.
+
+#### 7.2.6 Pruning policy for `surface_leases` (closes code-reviewer CONCERN-3)
+
+Released rows accumulate indefinitely without explicit pruning. Migration 024 has no DELETE trigger. The partial unique index continues to work efficiently (released rows are excluded from the index), but the table itself grows unbounded.
+
+**v0 pruning:** Oban-scheduled job runs daily and DELETEs `surface_leases` rows where `released_at < now() - interval '30 days'`. Audit history is preserved via `lease_plane_events` (which has its own 30-day-after-`forwarded_at` pruning, §7.6) and via the projection into `audit.tool_usage` (canonical, never pruned by lease-plane code).
+
+#### 7.2.7 Status/release path normalization (closes code-reviewer CONCERN-4)
+
+`/v1/lease/status?surface_id=...` and `/v1/lease/release` body must apply the same canonicalization rules as acquire. The Python client helper SHALL apply normalization at the `LeasePlaneClient` method boundary, not at the transport boundary, so all three call paths (acquire/status/release) share the same normalization.
+
+#### 7.2.8 §6.1 promotion-gate criterion 5 cross-reference
+
+§6.1 criterion 5's `payload->>'surface_id' LIKE $1 || ':%'` predicate assumes un-encoded `surface_id` in the audit payload. The payload-shape standardization pass (named in §6.1 as a Phase B prerequisite) MUST commit to writing canonicalized `surface_id` (per §7.2.4) into `audit.tool_usage.payload`, with no percent-encoding. Cross-tracked in §9 checklist.
+
+#### 7.2.9 Forward-compat for unknown schemes
+
+Per dialectic CONCERN-3, scheme additions are migrations: a new `surface_kind` requires (a) Postgres migration extending the CHECK constraint, deployed before (b) the BEAM module rollout that begins INSERTing the new scheme. The `unitares_doctor.py` script SHALL be extended to lint that no Elixir source mentions a scheme not in the live CHECK. Tracked in §9 checklist as a Phase B prerequisite, not Phase A.
+
+Scheme deprecation/migration: see §7.11.
+
+### 7.3 Conflict semantics on `held_by_other` — RESOLVED in v0.7
+
+What's the caller default behavior? Council pass v0.7 reframed this from a single global default to a default-with-per-surface-kind-override slot. Three voices converged that "abort everywhere" is the *safe* default but not universally correct: file edits want loud-fail-on-collision, dialectic-reviewer assignment is friendlier with bounded queueing, resident lifecycle wants loud-fail, capture is too long to wait for. Council also flagged that abort-by-default with no backoff guidance ships a thundering-herd vector at the Postgres index-contention layer, and that the current `AcquireHeldByOther` shape gives callers insufficient information for sane retry logic.
+
+**Resolution: abort by default, with per-surface-kind override slot for Phase B promotion. Extended `held_by_other` shape. Mandatory backoff guidance for callers.**
+
+#### 7.3.1 Global default and override slot
+
+**v0 ships abort-only globally.** All surface_kinds default to `conflict_default = "abort"`. Per-surface-kind override is a Phase B promotion-time configuration, not a v0 deployment-time flag.
+
+| surface_kind | v0 default | Anticipated Phase B target | Rationale |
+|--------------|------------|----------------------------|-----------|
+| `file` | `abort` | `abort` | Concurrent edit → merge conflict → loud failure is correct semantic |
+| `dialectic` | `abort` | `wait_with_deadline=2s` | Reviewer assignment is fast; queueing friendlier than retry-loop |
+| `resident` | `abort` | `abort` | Only one restart at a time; loud-fail correct |
+| `capture` | `abort` | `abort` | Capture is long (~minutes); wait blocks calibration substrate |
+| `td` | `abort` | TBD | Reserved; not implemented v0 |
+
+Override values for Phase B: `{abort, wait_with_deadline=Nms, handoff_offer}`. The Phase B promotion config (§6.2) gains a `conflict_default` field per surface_kind. Promoting `dialectic:/` to `wait_with_deadline=2000` is anticipated but not committed in v0.
+
+**Out of scope for v0:** queue-with-bounded-depth and speculative-wait-with-deadline-per-call (per dialectic CONCERN-7). Both are coherent extensions; deferred to v1 if real-world telemetry indicates the abort+per-kind-override matrix is insufficient.
+
+#### 7.3.2 Extended `AcquireHeldByOther` typed-absence shape
+
+Council code-reviewer BLOCK-3 + CONCERN-6: callers currently cannot (a) distinguish "same stuck holder across retries" from "rotating cast of short-lived holders", or (b) correlate concurrent multi-surface acquires with which surface is blocked. v0.7 extends the §4.5 shape:
+
+```
+{ok: false, error: "held_by_other",
+ surface_id,                  -- echo of the requested surface (multi-acquire correlation)
+ blocking_lease_id,           -- which lease is blocking (retry-discrimination)
+ held_by_uuid,
+ expires_at,
+ retry_after_hint_ms}         -- min(remaining_ttl_ms, 5000); advisory, not enforced
+```
+
+`retry_after_hint_ms` is server-computed at conflict time. Callers MAY ignore it. The hint exists so well-behaved callers can rate-limit themselves without parsing `expires_at` and computing the delta.
+
+§4.5 typed-absence spec, §5 endpoint table, and `src/lease_plane/models.py` `AcquireHeldByOther` Pydantic model all need updating to match. Tracked in §9 checklist.
+
+#### 7.3.3 Backoff guidance (closes dialectic BLOCK-6 — thundering-herd)
+
+"Caller decides whether to retry" with no rate-limit guidance is a thundering-herd vector. Concrete data path: ship.sh fans out N parallel session worktrees, all attempting `lease_acquire('file:///<path>')`. One wins; N-1 receive `held_by_other`. If they retry immediately, they convoy on `surface_leases_active_unique` — O(N) acquires per contention window, each one a row INSERT-or-409 against the same partial unique index.
+
+**Caller library contract (v0.7):**
+
+- The `LeasePlaneClient` Python helper SHALL implement jittered exponential backoff if its `acquire_with_retry()` convenience method is used: floor 100ms, ceiling 5s, full jitter (per AWS Architecture Blog convention).
+- If the caller wraps `acquire()` with custom retry, they SHOULD honor `retry_after_hint_ms` as a lower bound, then add their own jitter.
+- The lease plane itself does NOT enforce backoff server-side; this is a contract on caller libraries.
+
+The bare `acquire()` method remains single-shot (no built-in retry) so callers who genuinely want immediate-fail-on-conflict (e.g., interactive operator commands) keep that semantic.
+
+#### 7.3.4 Handoff opt-in semantics
+
+Handoff is opt-in per-surface-kind, used for specific surface kinds where the holder participates in lifecycle coordination. Anticipated v1 wiring:
+
+- `resident:/` during planned restart: outgoing resident issues handoff_offer to incoming resident before exiting.
+- `dialectic:/` during reviewer reassignment: facilitator issues handoff_offer to new reviewer before tearing down the dialectic session.
+
+Hermes, Claude Code, Codex sessions, and most ephemeral holders do NOT respond to handoff offers — for them, handoff is undefined behavior. v0 ships handoff endpoints (per §5) but no holder classes wire handoff acceptance; first wiring lands with the first resident-class promotion to enforcement.
+
+#### 7.3.5 HTTP status convention (closes code-reviewer NIT-1)
+
+Live-verifier confirmed Elixir router returns HTTP 409 on `held_by_other` with the typed-absence body. v0.7 commits this:
+
+- `/v1/lease/acquire` returns HTTP 409 with the §7.3.2 body on `held_by_other`.
+- All other typed-absence error shapes return HTTP 200 with `ok: false` in the body (transport-level success, application-level failure).
+- HTTP 409 is reserved for `held_by_other`; HTTP 4xx other than 409 indicates transport-level failure (auth, malformed request, route not found).
+
+The Python `_urllib_transport` already handles HTTP 409 by parsing the body as JSON and returning it; this convention is now a contract requirement, not an implementation detail. §5 endpoint table updated to note "409 on held_by_other; 200 + ok:false otherwise".
 
 ### 7.4 Reaper authority on local-holder death — RESOLVED in v0.2
 
@@ -589,6 +732,56 @@ A file rename, dialectic-session ID rotation, or resident relabel changes a surf
 
 **Token-rotation note:** `LEASE_FORCE_RELEASE_TOKEN` follows the same rotation cadence as other operator-scoped tokens at `~/.config/cirwel/secrets.env`. No special rotation infrastructure required for v0; rotation is manual operator action followed by `launchctl kickstart` of the lease-plane LaunchAgent to reload the secrets.env.
 
+### 7.11 Surface-kind deprecation / migration (council finding v0.7) — Tentative
+
+**Question:** how does the lease plane retire a `surface_kind` (e.g., `td:/` deprecated in v3 because the TouchDesigner integration was abandoned)? What about migrating semantics within a kind (e.g., `resident:/` v0 = process PID, v1 = systemd unit name)?
+
+Without an answer, the §7.2 typed-scheme decision has no exit ramp — schemes become permanent surface area. With the §7.2.3 generated-column + grammar CHECK design, removing a scheme requires a coordinated DB-migration-then-app-deploy ordering that is identical to the migration-drift class CLAUDE.md flags as a single-writer surface. Without explicit deprecation procedure, a future operator either (a) drops the CHECK constraint at deploy time (loses storage-layer enforcement) or (b) leaves dead schemes in the CHECK forever (cruft).
+
+**Tentative:** scheme deprecation is a **30-day drain procedure**:
+
+1. **T+0:** mark scheme deprecated. New acquires return `permission_denied` with reason `surface_kind_deprecated`. Existing leases on the deprecated kind continue to renew/release normally.
+2. **T+30 days:** all leases on the deprecated kind are forced via `LEASE_FORCE_RELEASE_TOKEN` (per §7.10) with `release_reason='forced_deprecation'`. Sentinel alarm fires per §7.10's blanket force-release alarm; expected event class.
+3. **T+30 days + 1 day:** migration extending the CHECK constraint to remove the scheme ships. `unitares_doctor.py` lints that no Elixir source mentions the deprecated scheme.
+
+**Tentative — semantics migration within a kind is forbidden:** if `resident:/` semantics change between versions (PID → systemd unit name), introduce a new kind (`resident_v2:/`) and dual-run during a deprecation window. Renaming surface_id format within a kind would orphan existing leases mid-flight; banning this case keeps the lease table semantically consistent.
+
+Open subquestion: does scheme deprecation need its own first-class `deprecated_schemes` table for telemetry, or is the `unitares_doctor.py` check + Sentinel alarm sufficient? Defer to council pass on §7.11.
+
+### 7.12 Surface_id canonicalization / content-addressing forward-compat (council finding v0.7) — Tentative
+
+**Question:** the §7.9 "v0 doesn't handle renames" deferral and the §7.2 typed-scheme commitment together require a canonicalization story. Two layers:
+
+1. **v0 (committed):** how do callers turn raw `surface_id` strings into the canonical form the partial unique index assumes? (Closes code-reviewer BLOCK-2: case-insensitive APFS, `..`-paths, percent-encoding ambiguity.)
+2. **v1 (forward-compat tentative):** how does §7.2 not foreclose §7.9's content-derived `surface_id` (file inode + ctime, dialectic content-hash) as a future v1 RFC?
+
+#### 7.12.1 v0 canonicalization rule (committed via §7.2 cross-reference)
+
+Before any acquire/status/release call involving a `file://` surface_id, the caller MUST canonicalize:
+
+1. Resolve to absolute path: `os.path.realpath(path)` (Python) / `Path.expand` then `:filename.absname/1` (Elixir).
+2. Eliminate `.`, `..`, double-slashes (handled by realpath/absname).
+3. On case-insensitive filesystems (default macOS APFS/HFS+), lowercase the path. Detection: check filesystem case-sensitivity at startup (probe via `pathconf(_PC_CASE_SENSITIVE)` on macOS / mount-options on Linux); cache the answer per-startup.
+4. Strip trailing `/` unless the path is exactly `/`.
+5. Re-prefix with `file://`.
+
+For non-`file://` schemes (`dialectic:/`, `resident:/`, `capture:/`, `td:/`), the v0 rule is "the path portion is opaque to the lease plane; callers are responsible for pre-canonicalization within their own scheme conventions." This may need tightening per scheme as Phase B proceeds.
+
+A canonicalization helper SHALL ship in `src/lease_plane/canonicalize.py` (Python) with the same logic mirrored in the Elixir client. Callers using the helper get correct behavior for free; callers bypassing it carry the consequence of split-brain leases on the same physical surface.
+
+#### 7.12.2 v1 forward-compat with content-addressing
+
+§7.9 deferred content-derived `surface_id` (file inode + ctime, dialectic-session content-hash) to a v1 RFC. §7.2's typed-scheme grammar must not foreclose this. Two tentative options for v1:
+
+- **(a) New scheme.** `file-inode://<inode>:<ctime>` is a separate scheme (per §7.11 deprecation procedure, eventually `file://` is deprecated and content-addressed `file-inode://` replaces it). Pro: clean separation, follows the scheme-as-vocabulary discipline. Con: callers must migrate.
+- **(b) Modifier on existing scheme.** `file:///x.py?canon=inode` adds a query-string modifier. Pro: gradual rollout, no caller migration. Con: query-string parsing in `surface_id` is unusual; complicates the partial unique index normalization.
+
+**Tentative for v1:** option (a). Cleaner. v1 RFC will commit; this RFC just notes the design space is open.
+
+**v0 invariant (must not break v1):** within a v0 scheme, the path portion is opaque to lease identity. The partial unique index keys on the literal `surface_id` string after caller canonicalization. Query-string parameters (if any caller adds them) are NOT stripped before indexing — `file:///x.py` and `file:///x.py?canon=inode` are distinct leases v0-side. This forecloses the split-brain bug where v1-aware callers and v1-naive callers race on the same file via different `?canon=` values: in v0 they're just two different surfaces. v1 either deprecates the unmodified form (per §7.11) or specifies a normalization rule for the modifier.
+
+Open subquestion: does v0 need a stronger rule banning `?` in `surface_id` to keep the v1 modifier-form open? Adding `CHECK (surface_id !~ '\\?')` to migration 026 would force v1 to choose option (a) by construction. Defer to council pass on §7.12.
+
 ## 8. Concerns / counter-arguments / minority views
 
 ### 8.1 "BEAM has nil too. Null bugs aren't OTP-shaped."
@@ -623,14 +816,36 @@ A Python reference implementation of every endpoint in §5 (`asyncio.Lock` per-s
 
 Required before any `.ex` file is written:
 
-- [x] Council pass: dialectic-knowledge-architect, feature-dev:code-reviewer, live-verifier (parallel) — v0.2/v0.3/v0.5
-- [ ] §7 open questions all answered (RFC tentative -> RFC committed) — §7.1/7.4/7.6/7.8 resolved v0.2; §7.5/7.7 resolved v0.2 with operator-action carve-out; **§7.9/7.10 resolved v0.6**; §7.2/7.3 council pass queued v0.6
+- [x] Council pass: dialectic-knowledge-architect, feature-dev:code-reviewer, live-verifier (parallel) — v0.2/v0.3/v0.5/v0.7
+- [x] §7 open questions all answered (RFC tentative -> RFC committed) — §7.1/7.4/7.6/7.8 resolved v0.2; §7.5/7.7 resolved v0.2 with operator-action carve-out; §7.9/7.10 resolved v0.6; **§7.2/7.3 resolved v0.7**; §7.11/7.12 newly added as Tentative v0.7 (separate council pass before commit)
 - [x] Shelf-Python sketch checked in alongside the Elixir spec — same schema, same API, same return shapes (v0.4)
-- [ ] Operational runbook draft: `docs/operations/lease-plane-operator-runbook.md` (stub created alongside this RFC; needs concrete commands once the service exists). **v0.6 commitment:** runbook MUST cover (a) §7.9 rename-orphan manual-release procedure, and (b) §7.10 `LEASE_FORCE_RELEASE_TOKEN` provisioning + rotation steps.
+- [ ] Operational runbook draft: `docs/operations/lease-plane-operator-runbook.md` (stub created alongside this RFC; needs concrete commands once the service exists). **v0.6 commitment:** runbook MUST cover (a) §7.9 rename-orphan manual-release procedure, and (b) §7.10 `LEASE_FORCE_RELEASE_TOKEN` provisioning + rotation steps. **v0.7 addition:** (c) §7.11 scheme-deprecation 30-day drain procedure.
 - [ ] Sentinel monitoring spec for `/v1/lease/status?surface_id=__healthcheck__`
-- [ ] **Integration test (§7.10 gate):** confirm `GOVERNANCE_TOKEN` cannot force-release; only `LEASE_FORCE_RELEASE_TOKEN` succeeds. Rejection at contract layer, not application layer.
 - [ ] Decision: which exact surface_kind goes first into advisory (probably `dialectic:/`)
 - [ ] Decision on §6.1 promotion-gate criteria — what specifically counts as "the conflict log says 'we would have prevented a real bug here'"
+
+#### Phase A test gates (v0.7 — bundles council BLOCKs)
+
+Each row below is a Phase A blocker. All tests live under `tests/test_lease_plane_*.py` (Python) and `elixir/lease_plane/test/` (Elixir).
+
+- [ ] **Migration 026 ships and is verified** — generated `surface_kind` column (§7.2.3) + `surface_id_grammar` CHECK constraint (§7.2.2) live in the `governance` DB. Verified via `\d lease_plane.surface_leases` showing both.
+- [ ] **§7.2 — invalid scheme rejected at storage layer** — INSERT with `surface_id='not_a_scheme:foo'` raises CHECK violation. Test name: `test_invalid_uri_scheme_rejected_at_storage`.
+- [ ] **§7.2 — Pydantic field_validator rejects invalid scheme** — `AcquireRequest(surface_id='potato:foo', ...)` raises ValidationError. Test name: `test_acquire_request_rejects_invalid_scheme`.
+- [ ] **§7.2.3 — surface_kind drift impossible** — INSERT with `surface_id='file:///x.py'` produces `surface_kind='file'` automatically (generated column); caller cannot supply a conflicting value. Test names: `test_surface_kind_derived_from_scheme`, `test_acquire_request_has_no_surface_kind_field` (post-removal).
+- [ ] **§7.12.1 — case-insensitive file:// canonicalization** — `acquire(file:///Users/cirwel/X.py)` and `acquire(file:///Users/cirwel/x.py)` produce identical canonical form on case-insensitive APFS; second acquire returns `held_by_other` (or `idempotent: true` if same holder). Test name: `test_file_canonicalization_case_insensitive_apfs`.
+- [ ] **§7.12.1 — `..`-path canonicalization** — `acquire(file:///x/../y/z.py)` canonicalizes to `file:///y/z.py`. Test name: `test_file_canonicalization_relative_components`.
+- [ ] **§7.3.2 — extended `held_by_other` shape** — response includes `surface_id`, `blocking_lease_id`, `retry_after_hint_ms`. Test names: `test_held_by_other_echoes_surface_id`, `test_held_by_other_returns_blocking_lease_id`, `test_held_by_other_includes_retry_hint`.
+- [ ] **§7.3.3 — `acquire_with_retry()` honors backoff** — jittered exponential, floor 100ms, ceiling 5s. Test name: `test_acquire_with_retry_jittered_backoff`.
+- [ ] **§7.3.5 — HTTP 409 on `held_by_other`; 200 + ok:false otherwise** — Elixir router behavior. Test names (Elixir-side): `test http_router returns 409 on held_by_other`, `test http_router returns 200 on permission_denied`.
+- [ ] **§7.3.5 — `_urllib_transport` HTTP-error body-parse path** — currently uncovered (live-verifier finding). Test name: `test_urllib_transport_parses_409_body`.
+- [ ] **§7.10 — `GOVERNANCE_TOKEN` cannot force-release** (already gated v0.6; restated): only `LEASE_FORCE_RELEASE_TOKEN` succeeds; rejection at contract layer. Test name: `test_force_release_rejects_governance_token`.
+
+#### Phase B prerequisites (v0.7 — non-blocking for Phase A)
+
+- [ ] **§7.2.8** — payload-shape standardization pass spec authored before any surface_kind reaches Phase B candidate status; commits to writing canonicalized `surface_id` (per §7.12.1) into `audit.tool_usage.payload`, no percent-encoding.
+- [ ] **§7.2.9** — `unitares_doctor.py` extended to lint that no Elixir source mentions a scheme not in the live DB CHECK.
+- [ ] **§7.11** council pass on the 30-day-drain tentative before any production scheme is deprecated.
+- [ ] **§7.12** council pass on the v1 forward-compat option (a) vs (b) before v1 RFC opens; consider whether to ship `CHECK (surface_id !~ '\\?')` in migration 026 to force option (a) by construction.
 
 ## 10. Runway tradeoff (operator decision, not technical)
 
@@ -644,6 +859,34 @@ This is a 4-8 week spike. It trades against:
 The technical case is strong (three independent reviewers converged). The strategic case is the operator's call. If shelved, file this RFC as captured-decision so the next session doesn't re-litigate the substrate question from scratch.
 
 ## 11. Versions / changelog
+
+- **v0.7 (2026-04-30, same session):** §7.2 (Surface ID schema) and §7.3 (Conflict semantics on `held_by_other`) promoted Tentative → Resolved. Council pass run in parallel (dialectic-knowledge-architect / feature-dev:code-reviewer / live-verifier; adversarial framing per `feedback_council-adversarial-prompt.md`). Operator-decision pass landed before commit; four operator-choice points resolved per codex direction. Material changes:
+
+  *§7.2 — Resolved with defense-in-depth:*
+  - Canonical scheme list authored once in §7.2.1 (5 schemes: `file://`, `dialectic:/`, `resident:/`, `capture:/`, `td:/`); §3.3/§7.2 self-contradiction (dialectic BLOCK-1) resolved by adding `capture:` to §7.2 grammar.
+  - Three-layer enforcement (§7.2.2): Postgres CHECK on scheme grammar (migration 026), Pydantic field_validator, Elixir Ecto enum. Closes three-voice consensus on missing storage-layer CHECK (dialectic BLOCK-2 + code-reviewer BLOCK-1 + live-verifier DRIFT-A).
+  - **DB-enforced surface_kind via generated column** (§7.2.3, operator decision per codex): `surface_kind text GENERATED ALWAYS AS (split_part(surface_id, ':', 1)) STORED`. Caller-supplied `surface_kind` removed from `AcquireRequest`. Fallback to CHECK-pair documented if generated-column conversion is too disruptive at migration time. Application-only enforcement explicitly REJECTED. Closes code-reviewer CONCERN-2 + live-verifier DRIFT-B.
+  - Per-holder cardinality bound: unbounded by design with named soft-threshold alert at 100 concurrent leases (§7.2.5). Threat model explicitly stated: caller-bug class, not external-attacker class; alert is reactive. Closes dialectic CONCERN-4.
+  - 30-day pruning policy for `surface_leases.released_at` via Oban (§7.2.6). Closes code-reviewer CONCERN-3.
+  - Status/release path normalization commitment (§7.2.7). Closes code-reviewer CONCERN-4.
+  - §6.1 criterion-5 percent-encoding gotcha cross-tracked into payload-shape standardization pass (§7.2.8). Closes code-reviewer CONCERN-5.
+  - Forward-compat for unknown schemes deferred to §7.11 deprecation procedure (§7.2.9).
+  - file:// canonicalization details delegated to **new §7.12** rather than buried in §7.2.
+
+  *§7.3 — Resolved with per-surface-kind override slot:*
+  - Global default remains `abort`; per-surface-kind `conflict_default` override slot added for Phase B promotion (§7.3.1). Anticipated targets named per surface_kind. Closes dialectic CONCERN-8.
+  - Extended `AcquireHeldByOther` typed-absence shape (§7.3.2): adds `surface_id`, `blocking_lease_id`, `retry_after_hint_ms`. Closes code-reviewer BLOCK-3 + CONCERN-6.
+  - Mandatory backoff guidance for caller libraries (§7.3.3): `acquire_with_retry()` convenience method implements jittered exponential (floor 100ms, ceiling 5s, full jitter). Bare `acquire()` remains single-shot. Closes dialectic BLOCK-6 (thundering-herd).
+  - Handoff opt-in semantics clarified (§7.3.4): v0 ships endpoints, no holder classes wire acceptance until first resident-class enforcement promotion.
+  - HTTP 409 on `held_by_other`; HTTP 200 + `ok:false` on all other typed-absence errors (§7.3.5). Live-verifier confirmed Elixir router already implements this; v0.7 promotes from implementation detail to contract requirement.
+
+  *New §7.11 — Tentative:* Surface-kind deprecation/migration procedure. 30-day drain (mark deprecated → existing leases age out → force-release survivors → migrate CHECK constraint). Semantics-migration-within-a-kind forbidden; introduce a new kind and dual-run instead. Council pass before any production scheme is deprecated.
+
+  *New §7.12 — Tentative:* Surface_id canonicalization and v1 content-addressing forward-compat. v0 canonicalization rule committed via §7.2 cross-reference (case-insensitive APFS lowercase, realpath, trailing-slash strip). v1 forward-compat path: tentative is option (a) new scheme `file-inode://`, with option (b) query-string modifier as alternative. v0 invariant explicitly stated: query-string in `surface_id` is NOT stripped before indexing, foreclosing the v1 split-brain bug class. Council pass before v1 RFC opens.
+
+  *§9 checklist — Phase A test gates bundled* (per codex direction): 11 named test gates covering migration 026 verification, scheme rejection at storage + Pydantic layers, surface_kind generated-column behavior, file canonicalization (case-insensitive + relative components), extended `held_by_other` shape (3 sub-tests for the 3 new fields), `acquire_with_retry()` backoff, HTTP 409 convention, `_urllib_transport` HTTP-error path coverage (closes live-verifier test-coverage gap), and the v0.6 §7.10 force-release test (restated). 4 Phase B prerequisites separated as non-blocking.
+
+  *Council reports archived in session transcript.* Three-voice convergence pattern (BLOCKs found by 2+ voices) handled separately from single-voice findings. No findings rejected; one (Elixir GenServer start-after-commit invariant, code-reviewer CONCERN-1) tracked as Elixir-implementation contract rather than RFC-text amendment, since it lands with the BEAM service code.
 
 - **v0.6 (2026-04-30, same session):** Promoted §7.9 (surface_id renames) and §7.10 (force-release authority) from *Tentative* to *Resolved*, locking in the v0.2/v0.3 text as committed contract. Council pass queued in parallel on the two remaining open questions (§7.2 surface ID schema; §7.3 conflict semantics on `held_by_other`). Material changes:
 
