@@ -163,6 +163,25 @@ class ChroniclerAgent(GovernanceAgent):
         self.dry_run = dry_run
 
     async def run_cycle(self, client: GovernanceClient) -> CycleResult | None:
+        """Run one daily scrape cycle.
+
+        Phase A advisory lease wraps the cycle so concurrent Chronicler
+        invocations (rare — daily launchd, but operator manual + a stale
+        --dry could overlap) surface in telemetry. Outcome does NOT gate
+        execution per RFC v0.5 §6.1.
+        """
+        from src.lease_plane.advisory import lease_advisory_scope, new_holder_uuid
+
+        with lease_advisory_scope(
+            surface_id="chronicler:scrape",
+            surface_kind="chronicler_scrape",
+            holder_agent_uuid=new_holder_uuid(),
+            ttl_s=120,
+            intent="chronicler daily scrape",
+        ):
+            return await self._run_cycle_inner()
+
+    async def _run_cycle_inner(self) -> CycleResult | None:
         # Scrapers are sync (subprocess + httpx.Client); push to a thread so
         # the MCP anyio task group isn't blocked by their blocking I/O.
         successes, failures = await asyncio.to_thread(
