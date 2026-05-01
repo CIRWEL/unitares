@@ -12,12 +12,18 @@ Two analyses:
 import json
 import sqlite3
 import sys
+import argparse
 from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 
-DB_PATH = Path(__file__).parent.parent.parent / "data" / "governance.db"
+LEGACY_DB_PATH = Path(__file__).parent.parent.parent / "data" / "governance.db"
+LEGACY_WARNING = (
+    "This script reads the removed SQLite governance backend. That database is "
+    "months stale and is not canonical. Use live Postgres exports for current "
+    "analysis, or pass --legacy-sqlite-db with --i-understand-this-is-stale."
+)
 
 
 def load_eisv_histories(conn, min_updates=15, max_updates=5000):
@@ -204,12 +210,46 @@ def analyze_per_agent_variance(X, agent_ids, feature_names):
     print(f"  BEHAVIOR = mostly varies within agents (state changes)")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Legacy PCA over retired SQLite governance snapshots."
+    )
+    parser.add_argument(
+        "--legacy-sqlite-db",
+        type=Path,
+        default=None,
+        help="Explicit path to a retired SQLite governance snapshot.",
+    )
+    parser.add_argument(
+        "--i-understand-this-is-stale",
+        action="store_true",
+        help="Required acknowledgement that SQLite is not current governance truth.",
+    )
+    return parser.parse_args()
+
+
+def _open_legacy_sqlite(db_path: Path):
+    # Read-only URI mode prevents accidental writes to a legacy snapshot.
+    uri = f"file:{db_path.resolve()}?mode=ro"
+    return sqlite3.connect(uri, uri=True)
+
+
 def main():
-    if not DB_PATH.exists():
-        print(f"Database not found: {DB_PATH}")
+    args = parse_args()
+    if args.legacy_sqlite_db is None or not args.i_understand_this_is_stale:
+        print(LEGACY_WARNING, file=sys.stderr)
+        print(
+            f"Legacy default was: {LEGACY_DB_PATH}. It is intentionally disabled.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    db_path = args.legacy_sqlite_db
+    if not db_path.exists():
+        print(f"Database not found: {db_path}")
         sys.exit(1)
 
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = _open_legacy_sqlite(db_path)
 
     # --- Analysis 1: EISV State Space ---
     eisv_features = ["E", "I", "S", "V", "coherence", "risk", "lambda1"]

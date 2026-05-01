@@ -187,11 +187,11 @@ The response includes a `status_breakdown` field showing counts per status type.
 
 ## Migration Phases
 
-1. **Phase 1**: PostgreSQL tables for agents, sessions (keep JSON/SQLite for discoveries)
+1. **Phase 1**: PostgreSQL tables for agents and sessions
 2. **Phase 2**: Install AGE, create graph, dual-write discoveries
 3. **Phase 3**: Backfill historical discoveries to graph
 4. **Phase 4**: Cut over reads to AGE
-5. **Phase 5**: Deprecate JSON/SQLite for knowledge graph
+5. **Phase 5**: Remove JSON/SQLite knowledge graph paths
 6. **Phase 6**: Migrate dialectic sessions/messages to PostgreSQL (current state)
 
 ## Troubleshooting

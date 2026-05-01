@@ -89,8 +89,9 @@ def load_primitive_history(
     db_path: Path,
     min_records: int = 30,
 ) -> List[Dict[str, Any]]:
-    """Load primitive utterance history from Lumen's SQLite database."""
-    conn = sqlite3.connect(str(db_path))
+    """Load primitive utterance history from an explicitly supplied SQLite DB."""
+    uri = f"file:{db_path.resolve()}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         "SELECT timestamp, tokens, category_pattern, "

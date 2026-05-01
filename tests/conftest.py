@@ -14,7 +14,7 @@ warnings.filterwarnings("ignore", category=ResourceWarning)
 
 
 def pytest_configure(config):
-    """Configure pytest to filter ResourceWarnings from SQLite."""
+    """Configure pytest to filter noisy ResourceWarnings from DB drivers."""
     warnings.filterwarnings(
         "ignore",
         message="unclosed database",
