@@ -24,6 +24,7 @@ def isolated_silence_state(monkeypatch):
     agent_metadata.clear()
     background_tasks._silence_alerted.clear()
     background_tasks._silence_critical_alerted.clear()
+    background_tasks._silence_duplicate_warned.clear()
     # Pretend the server started 48h ago so pre-existing staleness cap
     # doesn't mask genuinely stale agents in tests.
     background_tasks._silence_server_start = datetime.now(timezone.utc) - timedelta(hours=48)
@@ -43,6 +44,7 @@ def isolated_silence_state(monkeypatch):
     agent_metadata.clear()
     background_tasks._silence_alerted.clear()
     background_tasks._silence_critical_alerted.clear()
+    background_tasks._silence_duplicate_warned.clear()
     background_tasks._silence_server_start = None
 
 
@@ -254,6 +256,73 @@ async def test_no_proxy_agent_fires_critical_normally(isolated_silence_state):
     call = broadcaster.broadcast_event.await_args
     assert call.args[0] == "lifecycle_silent_critical"
 
+
+@pytest.mark.asyncio
+async def test_duplicate_resident_row_does_not_fire_silence(isolated_silence_state):
+    """A 0-update resident fork should not page as if the canonical resident died."""
+    broadcaster, _ = isolated_silence_state
+
+    fresh = datetime.now(timezone.utc) - timedelta(seconds=30)
+    stale = datetime.now(timezone.utc) - timedelta(hours=2)
+
+    canonical = _make_meta("sentinel-main", "Sentinel", fresh.isoformat())
+    canonical.total_updates = 100
+    duplicate = _make_meta("sentinel-fork", "Sentinel", stale.isoformat())
+    duplicate.total_updates = 0
+
+    agent_metadata["sentinel-main"] = canonical
+    agent_metadata["sentinel-fork"] = duplicate
+
+    await background_tasks._silence_check_iteration()
+
+    broadcaster.broadcast_event.assert_not_awaited()
+    assert "sentinel-fork" not in background_tasks._silence_critical_alerted
+    assert "sentinel-fork" in background_tasks._silence_duplicate_warned
+
+
+@pytest.mark.asyncio
+async def test_duplicate_resident_prefers_fresh_real_update(isolated_silence_state):
+    """A restarted resident with real activity beats an older high-count row."""
+    broadcaster, _ = isolated_silence_state
+
+    stale = datetime.now(timezone.utc) - timedelta(hours=2)
+    fresh = datetime.now(timezone.utc) - timedelta(seconds=30)
+
+    old_row = _make_meta("sentinel-old", "Sentinel", stale.isoformat())
+    old_row.total_updates = 5000
+    new_row = _make_meta("sentinel-new", "Sentinel", fresh.isoformat())
+    new_row.total_updates = 1
+
+    agent_metadata["sentinel-old"] = old_row
+    agent_metadata["sentinel-new"] = new_row
+
+    await background_tasks._silence_check_iteration()
+
+    broadcaster.broadcast_event.assert_not_awaited()
+    assert "sentinel-old" in background_tasks._silence_duplicate_warned
+    assert "sentinel-new" not in background_tasks._silence_duplicate_warned
+
+
+@pytest.mark.asyncio
+async def test_duplicate_resident_malformed_update_count_does_not_break_pass(isolated_silence_state):
+    """Corrupt hydrated metadata should not disable the silence detector."""
+    broadcaster, _ = isolated_silence_state
+
+    stale = datetime.now(timezone.utc) - timedelta(hours=2)
+    fresh = datetime.now(timezone.utc) - timedelta(seconds=30)
+
+    duplicate = _make_meta("sentinel-corrupt", "Sentinel", stale.isoformat())
+    duplicate.total_updates = "not-an-int"
+    canonical = _make_meta("sentinel-main", "Sentinel", fresh.isoformat())
+    canonical.total_updates = 1
+
+    agent_metadata["sentinel-corrupt"] = duplicate
+    agent_metadata["sentinel-main"] = canonical
+
+    await background_tasks._silence_check_iteration()
+
+    broadcaster.broadcast_event.assert_not_awaited()
+    assert "sentinel-corrupt" in background_tasks._silence_duplicate_warned
 
 
 # test_proxy_alive_recovery_clears_alert removed — depended on eisv-sync-task proxy

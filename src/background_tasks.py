@@ -760,6 +760,7 @@ CADENCE_FROM_TAG: dict[str, int] = {
     "cadence.30min": 1800,
     "cadence.1hr": 3600,
     "cadence.6hr": 21600,
+    "cadence.24hr": 86400,
 }
 
 
@@ -783,6 +784,7 @@ _PERSISTENT_AGENT_INTERVALS = {
 
 _silence_alerted: set[str] = set()
 _silence_critical_alerted: set[str] = set()
+_silence_duplicate_warned: set[str] = set()
 _silence_server_start: datetime | None = None  # set on first iteration
 
 # Proxy agents whose recent activity proves another agent is alive.
@@ -790,6 +792,60 @@ _silence_server_start: datetime | None = None  # set on first iteration
 # When the proxy has checked in recently, a missing direct check-in is
 # a path issue (circuit breaker, threading) not a real outage.
 _SILENCE_PROXY_AGENTS: dict[str, str] = {}
+
+
+def _safe_total_updates(meta) -> int:
+    try:
+        return int(getattr(meta, "total_updates", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _canonical_active_resident_ids(agent_metadata_map) -> set[str]:
+    """Return active resident rows that should drive silence detection.
+
+    Resident label collisions can leave a fresh 0-update fork active beside the
+    canonical resident. Alerting on the fork says "Sentinel is down" while the
+    real Sentinel is healthy. For duplicate resident labels, prefer rows that
+    have real updates, then the freshest update timestamp.
+    """
+    try:
+        from src.grounding.class_indicator import KNOWN_RESIDENT_LABELS
+    except Exception:
+        KNOWN_RESIDENT_LABELS = frozenset()
+
+    by_label: dict[str, tuple[str, object, datetime | None]] = {}
+    for agent_id, meta in list(agent_metadata_map.items()):
+        if getattr(meta, "status", None) != "active":
+            continue
+        label = getattr(meta, "label", None)
+        if not label or label not in KNOWN_RESIDENT_LABELS:
+            continue
+        last = _parse_last_update_aware(getattr(meta, "last_update", None) or "")
+        current = by_label.get(label)
+        if current is None:
+            by_label[label] = (agent_id, meta, last)
+            continue
+
+        _, current_meta, current_last = current
+        total = _safe_total_updates(meta)
+        current_total = _safe_total_updates(current_meta)
+        has_updates = total > 0
+        current_has_updates = current_total > 0
+        if has_updates and not current_has_updates:
+            by_label[label] = (agent_id, meta, last)
+            continue
+        if (
+            has_updates == current_has_updates
+            and last
+            and (current_last is None or last > current_last)
+        ):
+            by_label[label] = (agent_id, meta, last)
+            continue
+        if has_updates == current_has_updates and last == current_last and total > current_total:
+            by_label[label] = (agent_id, meta, last)
+
+    return {agent_id for agent_id, _, _ in by_label.values()}
 
 
 def _get_expected_interval(meta) -> int | None:
@@ -874,9 +930,26 @@ async def _silence_check_iteration() -> None:
     if _silence_server_start is None:
         _silence_server_start = now
 
+    canonical_residents = _canonical_active_resident_ids(agent_metadata)
+
     for agent_id, meta in list(agent_metadata.items()):
         if meta.status != "active":
             continue
+        label = getattr(meta, "label", None)
+        if label and canonical_residents and agent_id not in canonical_residents:
+            try:
+                from src.grounding.class_indicator import KNOWN_RESIDENT_LABELS
+            except Exception:
+                KNOWN_RESIDENT_LABELS = frozenset()
+            if label in KNOWN_RESIDENT_LABELS:
+                if agent_id not in _silence_duplicate_warned:
+                    _silence_duplicate_warned.add(agent_id)
+                    logger.warning(
+                        f"[SILENCE] Skipping duplicate resident row {label} "
+                        f"({agent_id[:8]}...) for silence detection; canonical "
+                        "active row exists"
+                    )
+                continue
         interval = _get_expected_interval(meta)
         if interval is None:
             continue
@@ -966,6 +1039,7 @@ async def _silence_check_iteration() -> None:
     active_ids = {aid for aid, m in agent_metadata.items() if m.status == "active"}
     _silence_alerted.intersection_update(active_ids)
     _silence_critical_alerted.intersection_update(active_ids)
+    _silence_duplicate_warned.intersection_update(active_ids)
 
 
 async def check_agent_silence():

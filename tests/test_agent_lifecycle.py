@@ -186,6 +186,7 @@ class TestCadenceFromTags:
         assert cadence_from_tags(["cadence.5min"]) == 300
         assert cadence_from_tags(["cadence.30min"]) == 1800
         assert cadence_from_tags(["cadence.1hr"]) == 3600
+        assert cadence_from_tags(["cadence.24hr"]) == 86400
 
     def test_picks_first_match(self):
         # Multiple cadence tags is a user error, but first-wins is a stable rule.
@@ -246,3 +247,11 @@ class TestExpectedInterval:
         tagged = _protection_meta(label="Vigil", tags=["cadence.30min"])
         untagged = _protection_meta(label="Vigil", tags=[])
         assert _get_expected_interval(tagged) == _get_expected_interval(untagged) == 1800
+
+    def test_chronicler_daily_cadence_tag_is_respected(self):
+        """Chronicler is daily; unknown cadence tags must not fall to 5 minutes."""
+        meta = _protection_meta(
+            label="Chronicler",
+            tags=["persistent", "autonomous", "cadence.24hr"],
+        )
+        assert _get_expected_interval(meta) == 86400
