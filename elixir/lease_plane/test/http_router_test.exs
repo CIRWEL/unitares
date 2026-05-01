@@ -271,4 +271,66 @@ defmodule UnitaresLeasePlane.HTTPRouterTest do
       assert parsed(resp)["error"] == "not_found"
     end
   end
+
+  describe "auth-bypass and parser hardening (council #253 fixes)" do
+    test "malformed JSON WITHOUT auth → 401, not 400 — auth gates first", _ctx do
+      resp =
+        :post
+        |> conn("/v1/lease/acquire", "not json {")
+        |> put_req_header("content-type", "application/json")
+        |> HTTPRouter.call(@opts)
+
+      assert resp.status == 401
+      assert parsed(resp)["error"] == "permission_denied"
+    end
+
+    test "malformed JSON WITH auth → 422 typed-absence, not 400 empty", _ctx do
+      resp =
+        :post
+        |> conn("/v1/lease/acquire", "not json {")
+        |> put_req_header("content-type", "application/json")
+        |> authed()
+        |> HTTPRouter.call(@opts)
+
+      assert resp.status == 422
+      body = parsed(resp)
+      assert body["ok"] == false
+      assert body["error"] == "schema_invalid"
+      assert is_binary(body["detail"])
+    end
+
+    test "unsupported content-type → 415 typed-absence", _ctx do
+      resp =
+        :post
+        |> conn("/v1/lease/acquire", "<xml/>")
+        |> put_req_header("content-type", "application/xml")
+        |> authed()
+        |> HTTPRouter.call(@opts)
+
+      assert resp.status == 415
+      assert parsed(resp)["error"] == "schema_invalid"
+    end
+
+    test "handle_errors/2 emits typed 503 with redacted reason (no inspect leak)", _ctx do
+      # Plug.ErrorHandler sends the 503 response and *then re-raises* the original
+      # error so logging middleware further up the chain can record it. Testing
+      # the full path through Plug.Test is brittle (the WrapperError carries the
+      # pre-handler conn). Direct test of handle_errors/2 is the same coverage —
+      # what matters is the response shape, not which integration triggered it.
+      conn = conn(:post, "/v1/lease/renew")
+
+      result =
+        HTTPRouter.handle_errors(conn, %{
+          kind: :error,
+          reason: %RuntimeError{message: "postgresql password=hunter2 leaked"},
+          stack: []
+        })
+
+      assert result.status == 503
+      body = Jason.decode!(result.resp_body)
+      assert body == %{"ok" => false, "error" => "service_unavailable", "reason" => "internal error"}
+      # Verify the leaky inspect string never made it to the wire.
+      refute result.resp_body =~ "hunter2"
+    end
+  end
 end

@@ -15,19 +15,52 @@ defmodule UnitaresLeasePlane.HTTPRouter do
   """
 
   use Plug.Router
+  use Plug.ErrorHandler
+
+  require Logger
 
   alias UnitaresLeasePlane
 
   plug(:match)
 
-  plug(Plug.Parsers,
+  # HTTPAuth runs BEFORE body parsing so an unauthenticated caller cannot
+  # probe endpoint existence by sending malformed JSON (which would otherwise
+  # raise inside Plug.Parsers and surface a generic 400 *before* auth ran).
+  # Bearer auth doesn't need the parsed body; it only reads the Authorization
+  # header.
+  plug(UnitaresLeasePlane.HTTPAuth)
+
+  # SafeParsers wraps Plug.Parsers so JSON / media-type errors become typed
+  # 422 / 415 schema_invalid responses instead of Bandit's default empty 400.
+  plug(UnitaresLeasePlane.SafeParsers,
     parsers: [:json],
     pass: ["application/json"],
     json_decoder: Jason
   )
 
-  plug(UnitaresLeasePlane.HTTPAuth)
   plug(:dispatch)
+
+  # Plug.ErrorHandler catches anything raised inside route handlers
+  # (Postgrex connection failures, unexpected nil dereferences, etc.) and
+  # converts them into a typed-absence 503 with a redacted reason. The full
+  # error is logged server-side; the wire body never carries inspect output.
+  @impl Plug.ErrorHandler
+  def handle_errors(conn, %{kind: kind, reason: reason, stack: _stack}) do
+    Logger.error(
+      "lease plane HTTP error: kind=#{kind} reason=#{Exception.format_banner(kind, reason)}"
+    )
+
+    body =
+      Jason.encode!(%{
+        ok: false,
+        error: "service_unavailable",
+        reason: "internal error"
+      })
+
+    conn
+    |> Plug.Conn.put_resp_content_type("application/json")
+    |> Plug.Conn.send_resp(503, body)
+  end
 
   # ---------- /v1/lease/acquire ----------
   post "/v1/lease/acquire" do
@@ -51,11 +84,8 @@ defmodule UnitaresLeasePlane.HTTPRouter do
             })
 
           {:error, reason} ->
-            json(conn, 503, %{
-              ok: false,
-              error: "service_unavailable",
-              reason: inspect(reason)
-            })
+            Logger.error("lease plane acquire failed: #{inspect(reason)}")
+            json(conn, 503, %{ok: false, error: "service_unavailable", reason: "internal error"})
         end
 
       {:error, detail} ->
@@ -78,7 +108,8 @@ defmodule UnitaresLeasePlane.HTTPRouter do
             json(conn, 200, %{ok: true, lease: present_lease(lease)})
 
           {:error, reason} ->
-            json(conn, 503, %{ok: false, error: "service_unavailable", reason: inspect(reason)})
+            Logger.error("lease plane status failed: #{inspect(reason)}")
+            json(conn, 503, %{ok: false, error: "service_unavailable", reason: "internal error"})
         end
     end
   end
@@ -101,11 +132,8 @@ defmodule UnitaresLeasePlane.HTTPRouter do
             json(conn, 404, %{ok: false, error: "not_found"})
 
           {:error, reason_atom} ->
-            json(conn, 503, %{
-              ok: false,
-              error: "service_unavailable",
-              reason: inspect(reason_atom)
-            })
+            Logger.error("lease plane release failed: #{inspect(reason_atom)}")
+            json(conn, 503, %{ok: false, error: "service_unavailable", reason: "internal error"})
         end
 
       {:error, detail} ->
@@ -150,7 +178,8 @@ defmodule UnitaresLeasePlane.HTTPRouter do
             json(conn, 404, %{ok: false, error: "not_found"})
 
           {:error, reason} ->
-            json(conn, 503, %{ok: false, error: "service_unavailable", reason: inspect(reason)})
+            Logger.error("lease plane renew failed: #{inspect(reason)}")
+            json(conn, 503, %{ok: false, error: "service_unavailable", reason: "internal error"})
         end
 
       _ ->
