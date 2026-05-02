@@ -64,6 +64,128 @@ UnitaresLeasePlane.Stats.active_lease_count()
 
 The point: when something is wrong, you don't add print statements and redeploy. You attach, look, and decide.
 
+## Deprecating a surface_kind (RFC §7.11.2 — R1 canonical path)
+
+The 4-phase deprecation procedure runs through the Python CLI at
+`scripts/dev/lease_plane_deprecate.py`. R1 (PR #284) introduced
+`deprecate-and-finalize` as the canonical Phase 2+3 super-command; the
+standalone `deprecation-sweep` and `deprecation-finalize` subcommands remain
+as **operator escape hatches** for emergency partial recovery only.
+
+### Canonical sequence (production deprecation)
+
+```bash
+# Phase 0: mark the scheme deprecated (writes deprecated_schemes row,
+#   emits lease.deprecation_marked event)
+python3 scripts/dev/lease_plane_deprecate.py deprecate <kind> --days 30
+
+# Phase 1 (operator-driven): wait the drain window; verify no Elixir source
+#   still references the deprecated scheme (unitares_doctor lint — Phase B prep)
+
+# Phase 2+3: atomic on a single connection, correlated under shared run_id
+python3 scripts/dev/lease_plane_deprecate.py deprecate-and-finalize <kind>
+```
+
+The super-command runs Phase 2 (sweep — force-release surviving leases) and
+Phase 3 (finalize — record `check_migrated_at`) on a single asyncpg
+connection in two transactions. Both phases share a `run_id` (uuid4) that
+appears in every emitted event payload + every log line, so partial
+completion is correlatable in audit queries:
+
+```sql
+SELECT event_type, ts FROM lease_plane.lease_plane_events
+WHERE payload->>'run_id' = '<uuid-from-stderr-log>'
+ORDER BY ts;
+```
+
+### Recovery from partial failure
+
+The super-command uses **two transactions on one connection** (operator
+decision 2026-05-02): if Phase 3 fails after Phase 2 succeeded, the swept
+rows STAY released (no rollback of operator work). The super-command:
+
+1. Emits `lease.deprecation_aborted` event with run_id + reason payload
+2. Logs clear "rerun deprecation-finalize <kind>" guidance to stderr
+3. Returns exit code 3
+
+The §7.11.4 idempotent-sweep predicate makes the rerun safe. To recover:
+
+```bash
+# Fix the underlying issue that caused Phase 3 to fail, then:
+python3 scripts/dev/lease_plane_deprecate.py deprecation-finalize <kind>
+```
+
+### Escape-hatch sub-commands (DO NOT use in routine deprecation)
+
+Use ONLY when the super-command itself is unavailable or has failed in
+ways that prevent normal recovery:
+
+- `deprecation-sweep <kind>` — Phase 2 standalone. Requires
+  `LEASE_FORCE_RELEASE_TOKEN`. Idempotent.
+- `deprecation-finalize <kind>` — Phase 3 standalone. Used as the canonical
+  recovery path after a failed super-command (see "Recovery from partial
+  failure" above).
+
+### Audit query: any abandoned deprecations?
+
+Two queries — run both. The first catches abandons where the super-command
+emitted the abort event before exiting. The second catches the
+SIGKILL-between-phases case (Phase 2 committed, super-command was killed
+before Phase 3 could run, no abort event was written).
+
+```sql
+-- (1) Explicit abandon: abort event emitted
+SELECT
+  payload->>'kind' AS kind,
+  payload->>'run_id' AS run_id,
+  payload->>'reason' AS reason,
+  ts
+FROM lease_plane.lease_plane_events
+WHERE event_type = 'lease.deprecation_aborted'
+ORDER BY ts DESC;
+
+-- (2) Implicit abandon: Phase 2 committed but Phase 3 never ran
+-- (SIGKILL / power loss / OOM mid-super-command)
+SELECT
+  surface_kind,
+  sweep_completed_at,
+  check_migrated_at
+FROM lease_plane.deprecated_schemes
+WHERE sweep_completed_at IS NOT NULL
+  AND check_migrated_at IS NULL
+ORDER BY sweep_completed_at DESC;
+```
+
+If a row appears in either query for `<kind>`, that deprecation is in
+"swept but unfinalized" state. Recovery: rerun
+`deprecation-finalize <kind>` (the §7.11.4 idempotent-sweep predicate
+makes this safe even if Phase 2 is also re-attempted via the super-command).
+
+### Recovery from SIGKILL mid-Phase-2
+
+If `deprecate-and-finalize` was killed (SIGKILL, OOM, parent-process death)
+while Phase 2 was running, the in-flight transaction is rolled back by
+Postgres when it detects the dead client. Until that happens, row-level
+locks (`FOR UPDATE SKIP LOCKED`) on `lease_plane.surface_leases` rows for
+the deprecated kind may be held. To inspect:
+
+```sql
+-- Check for stuck backends with active transactions on surface_leases
+SELECT pid, state, query_start, wait_event, query
+FROM pg_stat_activity
+WHERE state IN ('active', 'idle in transaction')
+  AND query LIKE '%lease_plane.surface_leases%'
+ORDER BY query_start;
+```
+
+Postgres has no `idle_in_transaction_session_timeout` by default, so a
+stuck backend may persist indefinitely until the operator either: (a)
+restores the killed super-command (it'll observe its tx was lost), (b)
+manually `pg_terminate_backend(<pid>)` the stuck backend, or (c) restarts
+Postgres. Once the stuck backend is gone, rerun `deprecate-and-finalize <kind>`
+— Phase 2 will sweep zero rows (idempotent predicate) and Phase 3 will
+finalize cleanly.
+
 ## Common operations
 
 TBD. Will include:

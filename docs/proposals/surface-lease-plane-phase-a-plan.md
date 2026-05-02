@@ -305,12 +305,47 @@ Live-verifier: 9/10 verifiable claims VERIFIED (1 BLOCKED — no deployed Elixir
 
 **Total: 10 rows in PR 7.5. At the methodology cap.**
 
+## R1 — `deprecate-and-finalize` super-command (this branch: impl/lease-plane-r1-deprecate-supercommand)
+
+Closes the §7.11.2 atomicity residual that PR 5 deferred. Pre-R1 state was a 3-way contradiction shipped under PR 5's "council saw it, deferred it" stamp: (a) RFC v0.8 §7.11.2 line 775 commits to "same operator session" for Phases 2+3 (closing v0.7 dialectic BLOCK-E + code-reviewer BLOCK-3), (b) §9 named gate `test_deprecation_sweep_and_check_migration_atomic_session` codified that commitment, (c) the CLI implementation went multi-step with no cross-invocation session binding, (d) the named test was never written. R1 picks the code-not-discipline side per `feedback_memory-not-guardrail.md` (load-bearing safety in code, tests, type systems — not natural-language warnings).
+
+**Operator decisions captured 2026-05-02:**
+1. **Option A1**: super-command + keep singletons as escape-hatches (architect council recommendation)
+2. **Two-tx-one-connection**: code-enforces "same operator session" at the DB wire level (single asyncpg connection across both phases) without rolling back successful Phase 2 sweep work if Phase 3 finalize fails
+3. **Shared `run_id` (uuid4)** in logs + every event payload so partial completion is operator-visible and rerunnable via audit query (`SELECT ... WHERE payload->>'run_id' = '<uuid>'`)
+4. **`lease.deprecation_aborted` event class** added (closes the latent ontology gap architect surfaced — operators who fail Phase 3 thrice and give up now have an audit trail)
+
+Scope shipped:
+- `db/postgres/migrations/030_lease_plane_aborted_event.sql` — extends `lease_plane_events_event_type_check` to permit `lease.deprecation_aborted`. Idempotent.
+- `scripts/dev/lease_plane_deprecate.py` refactored: `_sweep_inner(conn, *, kind, deprecation_id, run_id)` and `_finalize_inner(conn, *, kind, run_id)` extracted from existing commands; new `deprecate_and_finalize_cmd(*, kind, db_url)` opens one connection, runs both phases in two transactions correlated by run_id; `_emit_aborted_event(conn, *, kind, deprecation_id, run_id, reason)` emits the abort event in its own short tx on Phase 3 failure.
+- `_payload_with_run_id(base, run_id)` helper threads run_id into existing event payloads (Phase 0 mark, sweep, migrated). Singletons pass `run_id=None`; field omitted to preserve existing payload shapes.
+- Operator runbook (`docs/operations/lease-plane-operator-runbook.md`): canonical sequence + recovery playbook + "any abandoned deprecations?" audit query.
+- Singleton sub-commands' `--help` text marked **ESCAPE HATCH — prefer `deprecate-and-finalize`**.
+
+### R1 — RFC gate → code surface → test name → status table
+
+| Gate | Code | Test | Status |
+|------|------|------|--------|
+| §7.11.2 same-operator-session invariant on a single asyncpg connection across Phase 2+3 | `scripts/dev/lease_plane_deprecate.py::deprecate_and_finalize_cmd` | `test_deprecation_sweep_and_check_migration_atomic_session` (the named §9 gate, finally implementable) | DONE |
+| §7.11.2 two-tx-one-connection: Phase 3 failure preserves Phase 2 work + emits aborted event | `deprecate_and_finalize_cmd` Phase 3 try/except → `_emit_aborted_event` | `test_deprecate_and_finalize_phase_3_failure_emits_aborted_event` | DONE |
+| §7.11.4 idempotent rerun: standalone `deprecation-finalize` succeeds after super-command Phase 3 failure | `deprecation_finalize_cmd` (now a thin wrapper around `_finalize_inner`) | `test_deprecate_and_finalize_phase_3_failure_then_rerun_finalize_succeeds` | DONE |
+| Shared run_id correlates all events from one super-command run | `_payload_with_run_id` + run_id threading through `_sweep_inner` + `_finalize_inner` + `_emit_aborted_event` | `test_deprecate_and_finalize_run_id_correlates_across_events` | DONE |
+| §7.11.3 `lease.deprecation_aborted` event class permitted at DB layer | `db/postgres/migrations/030_lease_plane_aborted_event.sql` (idempotency: primary `core.schema_migrations` guard + secondary constraint-text probe) | (covered transitively by the abort-emission test — INSERT would fail without the migration) | DONE |
+| Concurrent super-commands on same kind serialize via `pg_try_advisory_lock` | `deprecate_and_finalize_cmd` lock acquisition + rc=4 fail-fast on contention | `test_deprecate_and_finalize_advisory_lock_blocks_concurrent_invocation` | DONE (council CONCERN 3 fix) |
+| Abort-emission failure surfaces rc=3 + rerun guidance, not a stack trace | `deprecate_and_finalize_cmd` Phase 3 except branch wraps `_emit_aborted_event` in try/except | `test_deprecate_and_finalize_abort_emission_failure_still_returns_rc_3` | DONE (council BLOCK 1 fix) |
+| `sweep_completed_at` preserves first-completion timestamp across re-runs (audit non-drift) | `_sweep_inner` uses `COALESCE(sweep_completed_at, now())` | (covered transitively by existing rerun test — second invocation must not bump sweep_completed_at) | DONE (council CONCERN 4 fix) |
+| Operator runbook companion query: SIGKILL-between-phases detection | `docs/operations/lease-plane-operator-runbook.md` "any abandoned deprecations?" — second query for `sweep_completed_at IS NOT NULL AND check_migrated_at IS NULL` | (no test; doc-only) | DONE (council BLOCK 2 fix) |
+| §9 RFC named-gate for `lease.deprecation_aborted` test | (deferred to §9 reconciliation residual — see PR 8+ section) | `test_deprecate_and_finalize_phase_3_failure_emits_aborted_event` already exists in this PR; §9 list update is tracked in §9 reconciliation residual scope | DEFERRED |
+| Singleton sub-commands clearly marked as escape-hatch in `--help` and module docstring | `_build_parser` help= text + module docstring | (golden output not pinned by test; reviewer checklist) | DONE |
+| Operator runbook documents canonical sequence + recovery playbook + abandoned-deprecation audit query | `docs/operations/lease-plane-operator-runbook.md` | (no test; doc-only) | DONE |
+
+**Total: 7 rows in R1. Within the ≤10 methodology cap.**
+
 ## PR 8+ — Remaining deferred council CONCERNs and Phase B prerequisites
 
 Bigger council CONCERNs (need design discussion):
-- §7.11.2 Phase 2/3 atomicity rewrite — CLI sub-commands don't enforce same-session atomicity. Either coalesce into `deprecate-and-finalize` super-command or amend RFC §7.11.2.
-- Sentinel asyncpg pool wiring (CLAUDE.md anyio pattern; current code opens fresh connection per cycle).
-- §9 RFC test-name reconciliation (named tests semantically covered but not under contracted names).
+- Sentinel asyncpg pool wiring — `agents/sentinel/forced_release_alarm.py` opens a fresh asyncpg connection per cycle. Per the architect/reviewer disagreement (architect: separate process, hygiene fix only; reviewer: cites `agents/sentinel/agent.py:67` comment naming a prior 30h wedge from this exact anyio-asyncio class, recommends `run_in_executor` + `_poll_sync` wrapping `asyncio.run(...)`). Reviewer's framing has stronger code-level evidence; default to that. Council scope: 3-agent with live-verifier on the asyncio.run-in-executor + asyncpg loop-binding interaction.
+- §9 RFC test-name reconciliation — live-verifier ground truth: of 21 named gates, 8 exact / 4 variant / 9 entirely missing. Larger than originally framed. Architect's audit-script approach (`scripts/dev/audit_rfc_section_9_gates.py`) recommended.
 
 Phase B prerequisites (non-blocking for Phase A):
 - Payload-shape standardization pass — commits to writing canonicalized `surface_id` (per §7.12.1) into `audit.tool_usage.payload`, no percent-encoding (per §7.2.8 cross-track).
