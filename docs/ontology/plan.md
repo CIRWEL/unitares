@@ -96,7 +96,7 @@ OPEN — actionable
   R7       BEAM coordination kernel — draft landed at docs/ontology/beam-coordination-kernel.md; next gate is Phase 1 in-memory OTP lease server spike (acquire/conflict/expiry) after repo-placement decision
   S7       KG provenance migration (R3 audit done; lineage-chain schema decision open)
   S8b      class-tag backfill; S8a Phase 2 shipped, operator/runbook scheduling remains for `s8a_phase2_backfill.py`
-  S20      PR1 merged (plugin#23); S20.1b merged (plugin#25) 2026-04-27; S20.3 merged (#276 + plugin#29) 2026-05-01; S20.1c/2/4/5/6 still open
+  S20      PR1 merged (plugin#23); S20.1b merged (plugin#25) 2026-04-27; S20.3 merged (#276 + plugin#29) 2026-05-01; S20.2 merged (plugin#30) 2026-05-01 — second-pass caught a heredoc-pipe stdin bug the council missed; S20.1c/4/5/6 still open
   S22      harness context provenance — depends on R6/S7; record optional harness/model/transport/tool-surface context on process updates and KG provenance
 
 BLOCKED — by upstream work
