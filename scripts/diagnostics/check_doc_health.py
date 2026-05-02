@@ -22,7 +22,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # against the current branch's tree.
 SKIP_DIRS = {".git", ".venv", "venv", ".pytest_cache", "node_modules",
              ".claude", "archive", "__pycache__", ".hypothesis",
-             ".agent-guides", "plans", "superpowers", ".worktrees"}
+             ".agent-guides", "plans", "superpowers", ".worktrees",
+             "deps", "_build"}
 
 # Files to skip (historical records — dead refs are expected)
 SKIP_FILES = {"docs/CHANGELOG.md", "CHANGELOG.md"}

@@ -209,3 +209,22 @@ def test_dedup_stripped_paths(stub_repo, doc_health):
     assert len(warnings) == 1, (
         f"Expected dedupe to one warning per unique file, got {len(warnings)}: {warnings}"
     )
+
+
+def test_collect_md_files_skips_elixir_deps_and_build_dirs(tmp_path, monkeypatch, doc_health):
+    """Vendored Elixir deps and Mix build output are not repo documentation."""
+    (tmp_path / "docs").mkdir()
+    real_doc = tmp_path / "docs" / "real.md"
+    real_doc.write_text("Real project doc")
+
+    dep_doc = tmp_path / "elixir" / "lease_plane" / "deps" / "bandit" / "README.md"
+    dep_doc.parent.mkdir(parents=True)
+    dep_doc.write_text("Vendored doc with upstream-relative refs")
+
+    build_doc = tmp_path / "elixir" / "lease_plane" / "_build" / "test" / "README.md"
+    build_doc.parent.mkdir(parents=True)
+    build_doc.write_text("Generated build doc")
+
+    monkeypatch.setattr(doc_health, "REPO_ROOT", tmp_path)
+
+    assert doc_health.collect_md_files() == [real_doc]
