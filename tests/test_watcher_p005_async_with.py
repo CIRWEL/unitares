@@ -169,9 +169,14 @@ class TestP005PreInitTryFinally:
         }
         assert _verify_finding_against_source(_make(15), "", snippet) is False
 
-    def test_acquire_outside_try_with_pre_init_kept(self):
-        # `<var> = None` then bare acquire OUTSIDE any try block is the
-        # original buggy shape — must NOT drop.
+    def test_acquire_outside_try_dropped_by_acquire_then_try_filter(self):
+        # `<var> = await X.acquire(); try:` is the canonical asyncpg idiom
+        # under the policy from issue #268 — the cancel-between-acquire-
+        # and-try window is theoretical and the operator's intent is
+        # unambiguous, so the third P005 filter
+        # (`_is_acquire_then_try_with_unconditional_close`) drops it.
+        # The `conn = None` pre-init above is incidental — it does not
+        # change the acquire-then-try shape on lines 12-13.
         snippet = {
             10: "async def f():",
             11: "conn = None",
@@ -179,4 +184,4 @@ class TestP005PreInitTryFinally:
             13: "try:",
             14: "    pass",
         }
-        assert _verify_finding_against_source(_make(12), "", snippet) is True
+        assert _verify_finding_against_source(_make(12), "", snippet) is False

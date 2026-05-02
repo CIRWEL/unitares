@@ -1990,6 +1990,129 @@ def test_p001_dropped_on_comment_line(watcher_module):
     )
 
 
+def test_p005_dropped_for_acquire_then_try_with_unconditional_close(watcher_module):
+    """P005 must not fire on the canonical asyncpg `acquire-then-try` idiom:
+
+        conn = await asyncpg.connect(db_url)
+        try:
+            ...
+        finally:
+            await conn.close()
+
+    Release is unconditional. Caught when qwen3-coder-next flagged four
+    sites in scripts/dev/lease_plane_deprecate.py on 2026-05-01 (issue #268,
+    fingerprints ab83f5e0, f67aebf6, 0f4ceac4, 4ba2a281).
+    """
+    f = watcher_module.Finding(
+        pattern="P005",
+        file="/repo/scripts/dev/lease_plane_deprecate.py",
+        line=98,
+        hint="t",
+        severity="high",
+        detected_at="2026-05-01T00:00:00Z",
+        model_used="t",
+    )
+    snippet = {
+        97: "    \"\"\"Phase 0: mark scheme deprecated.\"\"\"",
+        98: "    conn = await asyncpg.connect(db_url)",
+        99: "    try:",
+        100: "        catalog = await _list_catalog_kinds(conn)",
+        101: "        ...",
+        102: "    finally:",
+        103: "        await conn.close()",
+    }
+    assert not watcher_module._verify_finding_against_source(f, "", snippet)
+
+
+def test_p005_dropped_for_acquire_then_try_with_blank_line_between(watcher_module):
+    """A blank line between the acquire and the try header doesn't change
+    the operator's intent — same idiom, just spaced out."""
+    f = watcher_module.Finding(
+        pattern="P005",
+        file="/repo/scripts/dev/x.py",
+        line=10,
+        hint="t",
+        severity="high",
+        detected_at="2026-05-01T00:00:00Z",
+        model_used="t",
+    )
+    snippet = {
+        10: "    conn = await asyncpg.connect(db_url)",
+        11: "",
+        12: "    try:",
+        13: "        await conn.execute('SELECT 1')",
+        14: "    finally:",
+        15: "        await conn.close()",
+    }
+    assert not watcher_module._verify_finding_against_source(f, "", snippet)
+
+
+def test_p005_dropped_for_acquire_then_try_acquire_variant(watcher_module):
+    """The `.acquire(` variant (e.g. pool.acquire()) inside the same shape
+    is equally safe — same try/finally guarantees release."""
+    f = watcher_module.Finding(
+        pattern="P005",
+        file="/repo/src/x.py",
+        line=20,
+        hint="t",
+        severity="high",
+        detected_at="2026-05-01T00:00:00Z",
+        model_used="t",
+    )
+    snippet = {
+        20: "    conn = await pool.acquire()",
+        21: "    try:",
+        22: "        await conn.fetch('SELECT 1')",
+        23: "    finally:",
+        24: "        await pool.release(conn)",
+    }
+    assert not watcher_module._verify_finding_against_source(f, "", snippet)
+
+
+def test_p005_kept_when_acquire_not_followed_by_try(watcher_module):
+    """Negative case: a bare acquire with no try wrapper at all is still a
+    real leak risk and must survive verification."""
+    f = watcher_module.Finding(
+        pattern="P005",
+        file="/repo/src/x.py",
+        line=10,
+        hint="t",
+        severity="high",
+        detected_at="2026-05-01T00:00:00Z",
+        model_used="t",
+    )
+    snippet = {
+        10: "    conn = await asyncpg.connect(db_url)",
+        11: "    rows = await conn.fetch('SELECT 1')",
+        12: "    return rows",
+    }
+    assert watcher_module._verify_finding_against_source(f, "", snippet)
+
+
+def test_p005_kept_when_intervening_statement_between_acquire_and_try(watcher_module):
+    """Negative case: if real code sits between the acquire and the try, the
+    cancel-between-acquire-and-try window is wider AND the operator's intent
+    is no longer the canonical idiom. Keep the finding."""
+    f = watcher_module.Finding(
+        pattern="P005",
+        file="/repo/src/x.py",
+        line=10,
+        hint="t",
+        severity="high",
+        detected_at="2026-05-01T00:00:00Z",
+        model_used="t",
+    )
+    snippet = {
+        10: "    conn = await asyncpg.connect(db_url)",
+        11: "    log.info('connected')",
+        12: "    try:",
+        13: "        await conn.fetch('SELECT 1')",
+        14: "    finally:",
+        15: "        await conn.close()",
+    }
+    assert watcher_module._verify_finding_against_source(f, "", snippet)
+
+
 def test_p016_dropped_on_typed_attribute_access(watcher_module):
     """P016 is the double-envelope dict-parsing bug. Pure attribute access
     on a typed pydantic model — `if audit_result.success:` — is by
