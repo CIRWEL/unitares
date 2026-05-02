@@ -135,6 +135,68 @@ def test_acquire_request_rejects_query_string_in_surface_id():
     )
 
 
+def test_acquire_request_has_no_surface_kind_field():
+    """RFC v0.8 §7.2.3 / §9 — `surface_kind` was removed from AcquireRequest;
+    it is now derived server-side from the surface_id scheme via migration
+    026's generated column. Caller cannot supply a conflicting value because
+    the field doesn't exist on the request model.
+
+    Pins the §9 named gate `test_acquire_request_has_no_surface_kind_field`
+    (post-removal)."""
+    from src.lease_plane import AcquireRequest
+
+    assert "surface_kind" not in AcquireRequest.model_fields, (
+        "AcquireRequest must not carry a surface_kind field — RFC §7.2.3 "
+        "moved derivation to migration 026's generated column."
+    )
+
+
+def test_file_canonicalization_case_insensitive_apfs():
+    """RFC v0.8 §7.12.1 / §9 — on a case-insensitive filesystem (default macOS
+    APFS), two surface_ids that differ only by case canonicalize to the same
+    string. Skipped when the host filesystem is case-sensitive (e.g. Linux
+    ext4) since the gate's premise is filesystem-dependent.
+
+    Pins the §9 named gate `test_file_canonicalization_case_insensitive_apfs`."""
+    import tempfile
+
+    from src.lease_plane.canonicalize import canonicalize, _is_case_insensitive
+
+    if not _is_case_insensitive():
+        pytest.skip("filesystem is case-sensitive; gate premise N/A")
+
+    with tempfile.TemporaryDirectory() as d:
+        # Materialize both spellings — realpath(strict=True) needs the path
+        # to exist so we exercise the canonicalization path, not the ENOENT fallback.
+        upper = Path(d) / "X.py"
+        upper.write_text("")
+        a = canonicalize(f"file://{upper}")
+        b = canonicalize(f"file://{Path(d) / 'x.py'}")
+        assert a == b, f"case-insensitive APFS must canonicalize equal: {a!r} != {b!r}"
+
+
+def test_file_canonicalization_relative_components():
+    """RFC v0.8 §7.12.1 / §9 — `..`-bearing paths canonicalize to the same form
+    as the directly-spelled equivalent (`file:///x/../y/z.py` → `file:///y/z.py`).
+
+    Pins the §9 named gate `test_file_canonicalization_relative_components`."""
+    import tempfile
+
+    from src.lease_plane.canonicalize import canonicalize
+
+    with tempfile.TemporaryDirectory() as d:
+        sub = Path(d) / "y"
+        sub.mkdir()
+        target = sub / "z.py"
+        target.write_text("")
+        via_dotdot = canonicalize(f"file://{d}/x/../y/z.py")
+        direct = canonicalize(f"file://{target}")
+        assert via_dotdot == direct, (
+            f"`..`-component path must canonicalize to direct form: "
+            f"{via_dotdot!r} != {direct!r}"
+        )
+
+
 def test_acquire_request_rejects_invalid_scheme():
     """RFC v0.8 §7.2 / §9 — Pydantic field_validator rejects surface_ids whose
     scheme is not in the canonical list (`AcquireRequest(surface_id='potato:foo', ...)`
