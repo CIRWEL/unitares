@@ -1234,6 +1234,47 @@ def _is_acquire_inside_try_with_none_init(
     return False
 
 
+def _is_acquire_then_try_with_unconditional_close(
+    flagged_line: int,
+    snippet_lines_by_num: dict[int, str],
+    lookahead: int = 4,
+) -> bool:
+    """Detect the canonical `acquire-then-try` idiom.
+
+    Shape:
+        <var> = await <expr>.(acquire|cursor|connect|lock)(...)
+        try:
+            ...
+        finally:
+            await <var>.close()  # or .release()
+
+    The flagged line must be the acquire itself. We walk forward up to
+    ``lookahead`` lines, skipping blanks and comments; the first real line
+    must be ``try:``. Mirrors `_is_acquire_inside_try_with_none_init` in
+    only verifying the structural cue — the matching `finally:` is not
+    separately checked. Once the operator wrote `<var> = await ... ; try:`,
+    the only failure mode is "forgot the close inside finally", which is
+    a different bug class than P005 catches.
+
+    Caught when qwen3-coder-next flagged 4 sites in
+    `scripts/dev/lease_plane_deprecate.py` on 2026-05-01 (issue #268,
+    fingerprints ab83f5e0, f67aebf6, 0f4ceac4, 4ba2a281).
+    """
+    src_line = snippet_lines_by_num.get(flagged_line, "")
+    if not _P005_VAR_AWAIT_ACQUIRE.match(src_line):
+        return False
+    for line_no in range(flagged_line + 1, flagged_line + lookahead + 1):
+        line = snippet_lines_by_num.get(line_no, "")
+        if not line.strip() or _looks_like_comment(line):
+            continue
+        # Function boundary: a new def header before try: means the acquire
+        # was the last stmt of its function — not the canonical idiom.
+        if _P003_OTHER_DEF.match(line) or _P003_CACHE_FUNC_HEADER.match(line):
+            return False
+        return bool(_P005_TRY_HEADER.match(line))
+    return False
+
+
 def _is_wait_for_guarded_onboard_pin_helper(
     flagged_line: int,
     snippet_lines_by_num: dict[int, str],
@@ -1425,6 +1466,19 @@ def _verify_finding_against_source(
         log(
             f"drop P005 {finding.file}:{finding.line} — acquire inside try with "
             f"<var> = None pre-init: {src_line.strip()[:80]}",
+            "warning",
+        )
+        return False
+    # P005 specifically: `<var> = await X.connect(...); try: ...; finally:
+    # await <var>.close()` is the canonical asyncpg idiom for resources
+    # without async-context-manager support. Release is unconditional, so
+    # this is not a leak even though `acquire`/`connect` appears.
+    if finding.pattern == "P005" and _is_acquire_then_try_with_unconditional_close(
+        finding.line, snippet_lines_by_num
+    ):
+        log(
+            f"drop P005 {finding.file}:{finding.line} — acquire-then-try idiom "
+            f"with unconditional close: {src_line.strip()[:80]}",
             "warning",
         )
         return False
