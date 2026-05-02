@@ -418,3 +418,291 @@ async def test_finalize_idempotent_does_not_double_emit():
     finally:
         await _cleanup(conn)
         await conn.close()
+
+
+# ---------- R1: deprecate-and-finalize super-command (RFC §7.11.2 atomicity) ----------
+
+
+@pytest.mark.asyncio
+async def test_deprecation_sweep_and_check_migration_atomic_session():
+    """RFC §9 named gate (finally implementable post-R1).
+
+    Verifies the super-command runs Phase 2 (sweep) and Phase 3 (finalize)
+    on the SAME asyncpg connection — the meaningful "same operator session"
+    invariant at the DB wire level. Mocks asyncpg.connect to count
+    invocations; expects exactly one connect() call across both phases.
+
+    Also verifies both phases successfully committed (sweep_completed_at
+    AND check_migrated_at populated).
+    """
+    from scripts.dev import lease_plane_deprecate as cli
+
+    await ensure_test_database_schema()
+    conn = await asyncpg.connect(TEST_DB_URL)
+    try:
+        await _cleanup(conn)
+        await cli.deprecate_cmd(
+            kind="td", session_id="test-cli-atomic-session",
+            drain_window_days=30, db_url=TEST_DB_URL,
+        )
+        lease_id = await _seed_lease(conn, "td:/pr3a-atomic-session-test")
+
+        real_connect = asyncpg.connect
+        connect_calls = []
+
+        async def _counting_connect(*args, **kwargs):
+            connect_calls.append((args, kwargs))
+            return await real_connect(*args, **kwargs)
+
+        import unittest.mock as _mock
+        with _mock.patch.object(cli.asyncpg, "connect", side_effect=_counting_connect):
+            rc = await cli.deprecate_and_finalize_cmd(kind="td", db_url=TEST_DB_URL)
+
+        assert rc == 0, "super-command must succeed on happy path"
+        assert len(connect_calls) == 1, (
+            f"expected exactly one asyncpg.connect call across Phase 2+3; "
+            f"got {len(connect_calls)} (proves DB-wire-level same-operator-session)"
+        )
+
+        row = await conn.fetchrow(
+            "SELECT sweep_completed_at, check_migrated_at "
+            "FROM lease_plane.deprecated_schemes WHERE surface_kind='td'"
+        )
+        assert row["sweep_completed_at"] is not None, "Phase 2 must have committed"
+        assert row["check_migrated_at"] is not None, "Phase 3 must have committed"
+
+        released = await conn.fetchval(
+            "SELECT released_at FROM lease_plane.surface_leases WHERE lease_id=$1",
+            lease_id,
+        )
+        assert released is not None, "swept lease must be released"
+    finally:
+        await _cleanup(conn)
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_deprecate_and_finalize_phase_3_failure_emits_aborted_event(monkeypatch):
+    """When Phase 3 raises after Phase 2 succeeded, the super-command emits
+    a lease.deprecation_aborted event with run_id + reason in payload, and
+    Phase 2's swept rows STAY released (two-tx-one-conn semantics — operator
+    decision 2026-05-02).
+    """
+    from scripts.dev import lease_plane_deprecate as cli
+
+    await ensure_test_database_schema()
+    conn = await asyncpg.connect(TEST_DB_URL)
+    try:
+        await _cleanup(conn)
+        await cli.deprecate_cmd(
+            kind="td", session_id="test-cli-aborted-emit",
+            drain_window_days=30, db_url=TEST_DB_URL,
+        )
+        lease_id = await _seed_lease(conn, "td:/pr3a-aborted-test")
+
+        async def _raising_finalize(*args, **kwargs):
+            raise RuntimeError("simulated phase-3 infrastructure failure")
+
+        monkeypatch.setattr(cli, "_finalize_inner", _raising_finalize)
+
+        rc = await cli.deprecate_and_finalize_cmd(kind="td", db_url=TEST_DB_URL)
+        assert rc == 3, f"super-command must return 3 on Phase 3 raise; got {rc}"
+
+        events = await conn.fetch(
+            "SELECT payload FROM lease_plane.lease_plane_events "
+            "WHERE event_type='lease.deprecation_aborted' AND surface_kind='td'"
+        )
+        assert len(events) == 1, f"expected one lease.deprecation_aborted event; got {len(events)}"
+        import json
+        payload = json.loads(events[0]["payload"])
+        assert payload["kind"] == "td"
+        assert payload["phase"] == "finalize"
+        assert "simulated phase-3 infrastructure failure" in payload["reason"]
+        assert "run_id" in payload, "aborted event payload must include run_id"
+        assert uuid.UUID(payload["run_id"])
+
+        released = await conn.fetchval(
+            "SELECT released_at FROM lease_plane.surface_leases WHERE lease_id=$1",
+            lease_id,
+        )
+        assert released is not None, "Phase 2 work must be preserved on Phase 3 failure"
+
+        check_migrated = await conn.fetchval(
+            "SELECT check_migrated_at FROM lease_plane.deprecated_schemes WHERE surface_kind='td'"
+        )
+        assert check_migrated is None, "Phase 3 must not have written check_migrated_at on failure"
+    finally:
+        await _cleanup(conn)
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_deprecate_and_finalize_phase_3_failure_then_rerun_finalize_succeeds(monkeypatch):
+    """End-to-end recovery: super-command Phase 3 fails → operator runs
+    standalone deprecation-finalize → succeeds and emits lease.deprecation_migrated.
+    """
+    from scripts.dev import lease_plane_deprecate as cli
+
+    await ensure_test_database_schema()
+    conn = await asyncpg.connect(TEST_DB_URL)
+    try:
+        await _cleanup(conn)
+        await cli.deprecate_cmd(
+            kind="td", session_id="test-cli-rerun-recovery",
+            drain_window_days=30, db_url=TEST_DB_URL,
+        )
+        await _seed_lease(conn, "td:/pr3a-rerun-test")
+
+        async def _raising_finalize(*args, **kwargs):
+            raise RuntimeError("first-attempt finalize failure")
+
+        monkeypatch.setattr(cli, "_finalize_inner", _raising_finalize)
+        rc1 = await cli.deprecate_and_finalize_cmd(kind="td", db_url=TEST_DB_URL)
+        assert rc1 == 3
+
+        monkeypatch.undo()
+
+        rc2 = await cli.deprecation_finalize_cmd(kind="td", db_url=TEST_DB_URL)
+        assert rc2 == 0, "standalone finalize must succeed on rerun"
+
+        check_migrated = await conn.fetchval(
+            "SELECT check_migrated_at FROM lease_plane.deprecated_schemes WHERE surface_kind='td'"
+        )
+        assert check_migrated is not None, "rerun finalize must populate check_migrated_at"
+
+        migrated_count = await conn.fetchval(
+            "SELECT count(*) FROM lease_plane.lease_plane_events "
+            "WHERE event_type='lease.deprecation_migrated' AND surface_kind='td'"
+        )
+        assert migrated_count == 1, "rerun finalize must emit exactly one migrated event"
+    finally:
+        await _cleanup(conn)
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_deprecate_and_finalize_advisory_lock_blocks_concurrent_invocation():
+    """Council CONCERN 3 (reviewer): two concurrent super-commands on the
+    same kind must NOT both succeed in finalizing — without the
+    pg_try_advisory_lock added in this PR, both could pass the
+    `already_finalized` check before either commits and double-emit
+    `lease.deprecation_migrated`. Now: the second invocation gets the lock
+    busy and exits with rc=4.
+    """
+    from scripts.dev import lease_plane_deprecate as cli
+
+    await ensure_test_database_schema()
+    conn = await asyncpg.connect(TEST_DB_URL)
+    try:
+        await _cleanup(conn)
+        await cli.deprecate_cmd(
+            kind="td", session_id="test-cli-lock-block",
+            drain_window_days=30, db_url=TEST_DB_URL,
+        )
+
+        # Manually acquire the advisory lock on a separate session, then
+        # invoke the super-command — it should fail-fast with rc=4.
+        lock_holder = await asyncpg.connect(TEST_DB_URL)
+        try:
+            lock_key = cli._lock_key_for_kind("td")
+            held = await lock_holder.fetchval("SELECT pg_advisory_lock($1)", lock_key)
+            assert held is None  # pg_advisory_lock returns void
+
+            rc = await cli.deprecate_and_finalize_cmd(kind="td", db_url=TEST_DB_URL)
+            assert rc == 4, f"super-command must fail-fast with rc=4 on lock contention; got {rc}"
+
+            check_migrated = await conn.fetchval(
+                "SELECT check_migrated_at FROM lease_plane.deprecated_schemes "
+                "WHERE surface_kind='td'"
+            )
+            assert check_migrated is None, "no Phase 3 work should have happened under lock"
+        finally:
+            # Release the held lock (closing the session also releases).
+            await lock_holder.close()
+    finally:
+        await _cleanup(conn)
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_deprecate_and_finalize_abort_emission_failure_still_returns_rc_3(monkeypatch):
+    """Council BLOCK 1 (reviewer) + CONCERN 1 (architect): when Phase 3 fails
+    AND the abort-event emission also fails (e.g., DB unreachable persists),
+    the operator must still get the structured rc=3 + rerun guidance. Without
+    the try/except around _emit_aborted_event, the secondary exception would
+    propagate as an unhandled stack trace, dropping the rerun signal.
+    """
+    from scripts.dev import lease_plane_deprecate as cli
+
+    await ensure_test_database_schema()
+    conn = await asyncpg.connect(TEST_DB_URL)
+    try:
+        await _cleanup(conn)
+        await cli.deprecate_cmd(
+            kind="td", session_id="test-cli-abort-emit-fails",
+            drain_window_days=30, db_url=TEST_DB_URL,
+        )
+
+        async def _raising_finalize(*args, **kwargs):
+            raise RuntimeError("simulated phase-3 connection failure")
+
+        async def _raising_emit(*args, **kwargs):
+            raise RuntimeError("simulated abort-emission failure")
+
+        monkeypatch.setattr(cli, "_finalize_inner", _raising_finalize)
+        monkeypatch.setattr(cli, "_emit_aborted_event", _raising_emit)
+
+        # No unhandled exception should propagate — rc=3 + operator guidance.
+        rc = await cli.deprecate_and_finalize_cmd(kind="td", db_url=TEST_DB_URL)
+        assert rc == 3, f"super-command must still return rc=3 even when abort emission fails; got {rc}"
+    finally:
+        await _cleanup(conn)
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_deprecate_and_finalize_run_id_correlates_across_events():
+    """Happy path: every event emitted by a single super-command run shares
+    the same run_id in payload (Phase 2 sweep events + Phase 3 migrated event).
+    Enables audit queries by run_id.
+    """
+    from scripts.dev import lease_plane_deprecate as cli
+
+    await ensure_test_database_schema()
+    conn = await asyncpg.connect(TEST_DB_URL)
+    try:
+        await _cleanup(conn)
+        await cli.deprecate_cmd(
+            kind="td", session_id="test-cli-run-id-correlation",
+            drain_window_days=30, db_url=TEST_DB_URL,
+        )
+        await _seed_lease(conn, "td:/pr3a-run-id-test-1")
+        await _seed_lease(conn, "td:/pr3a-run-id-test-2")
+
+        rc = await cli.deprecate_and_finalize_cmd(kind="td", db_url=TEST_DB_URL)
+        assert rc == 0
+
+        events = await conn.fetch(
+            """
+            SELECT event_type, payload FROM lease_plane.lease_plane_events
+            WHERE surface_kind='td'
+              AND event_type IN ('lease.deprecation_swept', 'lease.deprecation_migrated')
+            ORDER BY ts
+            """
+        )
+        assert len(events) >= 3, (
+            f"expected >=3 events (2 swept + 1 migrated); got {len(events)}: "
+            f"{[e['event_type'] for e in events]}"
+        )
+
+        import json
+        run_ids = {json.loads(e["payload"]).get("run_id") for e in events}
+        assert len(run_ids) == 1, (
+            f"all super-command events must share one run_id; got {run_ids}"
+        )
+        the_run_id = next(iter(run_ids))
+        assert the_run_id is not None
+        assert uuid.UUID(the_run_id)
+    finally:
+        await _cleanup(conn)
+        await conn.close()
