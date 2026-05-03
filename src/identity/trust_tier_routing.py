@@ -69,16 +69,82 @@ def _substrate_earned_tier_dict(
     }
 
 
+def _provisional_lineage_tier_dict() -> Dict[str, Any]:
+    """Tier dict for an agent whose lineage is currently provisional.
+
+    Per R1 v3.3-D consumer table: 'Read provisional_lineage; if true, do
+    not contribute to tier upgrades.' The simplest faithful read of that
+    contract is to return tier=1 (the baseline / lowest tier) regardless
+    of substrate-earned or compute_trust_tier verdict — a provisional
+    successor cannot promote to a higher tier until the lineage is
+    confirmed via `confirm_lineage`.
+
+    Same shape as `compute_trust_tier` for caller-API compatibility plus a
+    `source` tag so observability / dashboards can distinguish a
+    provisional gate from a substrate-earned or compute-derived tier.
+    """
+    return {
+        "tier": 1,
+        "name": "provisional",
+        "observation_count": 0,
+        "identity_confidence": 0.0,
+        "lineage_similarity": None,
+        "reason": "Provisional lineage (R1 v3.3-D); awaiting confirm_lineage to promote",
+        "source": "provisional_lineage_gate",
+        "conditions": None,  # parity with _substrate_earned_tier_dict + compute_trust_tier
+    }
+
+
+async def _is_provisional_lineage(agent_uuid: str) -> bool:
+    """Lookup of `core.identities.provisional_lineage` for the gate.
+
+    Delegates to `IdentityMixin.is_lineage_provisional` (mixin-level so
+    test conftest can stub via `_isolate_db_backend` without leaking
+    AsyncMock coroutines through an inline `async with backend.acquire()`).
+    PR 1's migration 031 added the SQL column; extending IdentityRecord
+    is deferred. When the dataclass is extended, callers can pass
+    `prefetched_provisional` to skip this lookup entirely.
+
+    Returns False on any error — a failed lookup should not silently gate
+    legitimate tier upgrades. Logged at debug for observability.
+    """
+    try:
+        from src.db import get_db
+        backend = get_db()
+        result = await backend.is_lineage_provisional(agent_uuid)
+        # Strict-identity check: anything other than literal True (e.g. an
+        # AsyncMock from a test that didn't stub the method, or a non-bool
+        # return) is treated as not-provisional. The gate's failure mode is
+        # to under-fire (allowing a tier upgrade for an unmocked test path)
+        # rather than over-fire (silently demoting a legitimately-tiered
+        # production agent because of a mock-shape accident).
+        return result is True
+    except Exception as e:
+        logger.debug(
+            f"[trust_tier_routing] provisional_lineage lookup failed for "
+            f"{agent_uuid[:8]}...: {e}; treating as not-provisional"
+        )
+        return False
+
+
 async def resolve_trust_tier(
     agent_uuid: str,
     metadata: Dict[str, Any],
     *,
     prefetched_tags: Optional[Iterable[str]] = None,
     prefetched_label: Optional[str] = None,
+    prefetched_provisional: Optional[bool] = None,
 ) -> Dict[str, Any]:
-    """Route to substrate-earned (R4) or session-like (`compute_trust_tier`).
+    """Route to provisional-gate (R1 v3.3-D), substrate-earned (R4), or
+    session-like (`compute_trust_tier`).
 
     Returns a tier dict with the same shape as `compute_trust_tier`.
+
+    Provisional gate (R1 v3.3-D): if `provisional_lineage=True` on the
+    agent's `core.identities` row, return tier=1 with source='provisional_
+    lineage_gate' regardless of substrate or compute verdict. Callers that
+    have provisional state in hand pass `prefetched_provisional=True/False`
+    to skip the DB lookup; otherwise this function does its own read.
 
     Fast path: if `prefetched_tags` is provided and does not include a
     substrate-class tag (`embodied`/`persistent`), skip the R4 predicate
@@ -91,9 +157,17 @@ async def resolve_trust_tier(
 
     On any exception in the substrate-earned check, fall through to
     `compute_trust_tier` — a failed R4 lookup should not block tier
-    computation.
+    computation. The provisional gate fails-soft the same way.
     """
     from src.trajectory_identity import compute_trust_tier
+
+    # R1 v3.3-D provisional gate — runs FIRST so a provisional successor
+    # cannot collect tier=3 via the substrate-earned shortcut.
+    is_provisional = prefetched_provisional
+    if is_provisional is None:
+        is_provisional = await _is_provisional_lineage(agent_uuid)
+    if is_provisional:
+        return _provisional_lineage_tier_dict()
 
     try:
         if prefetched_tags is not None:

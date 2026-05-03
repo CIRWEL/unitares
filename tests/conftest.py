@@ -125,6 +125,7 @@ def _isolate_db_backend(monkeypatch):
     # R1 v3.3-D provisional helpers + v3.3-C calibration_state singleton
     mock_backend.mark_lineage_provisional.return_value = True
     mock_backend.confirm_lineage.return_value = True
+    mock_backend.is_lineage_provisional.return_value = False
     mock_backend.read_r1_calibration_state.return_value = {
         "calibration_status": "seeded",
         "seeded_since": None,
