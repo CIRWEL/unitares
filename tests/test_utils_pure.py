@@ -203,6 +203,13 @@ class TestInferErrorCodeAndCategory:
         assert code == "TIMEOUT"
         assert cat == "system_error"
 
+    def test_tool_timeout_with_session_tool_name_is_system_error(self):
+        code, cat = _infer_error_code_and_category(
+            "Tool 'list_dialectic_sessions' timed out after 15.0 seconds."
+        )
+        assert code == "TIMEOUT"
+        assert cat == "system_error"
+
     def test_connection(self):
         code, cat = _infer_error_code_and_category("Connection refused by server")
         assert code == "CONNECTION_ERROR"
