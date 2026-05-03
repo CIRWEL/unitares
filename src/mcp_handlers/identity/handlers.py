@@ -1713,6 +1713,13 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                     _seed_genesis_from_parent_bg(agent_uuid, _parent_agent_id),
                     name="seed_genesis_from_parent",
                 )
+                # R1 v3.3-D `marks` policy: score declared lineage and stamp
+                # provisional on inconclusive verdicts. Fire-and-forget — onboard
+                # response must not block on the per-dim DTW + audit write.
+                create_tracked_task(
+                    _score_lineage_continuity_bg(agent_uuid, _parent_agent_id),
+                    name="score_lineage_continuity",
+                )
 
             # Cache with the adjusted session_key (may include model suffix)
             await _cache_session(session_key, agent_uuid, display_agent_id=agent_id)
@@ -1768,6 +1775,12 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                     create_tracked_task(
                         _seed_genesis_from_parent_bg(agent_uuid, _parent_agent_id),
                         name="seed_genesis_from_parent",
+                    )
+                    # R1 v3.3-D `marks` policy: mirror the created_fresh_identity
+                    # branch. See _score_lineage_continuity_bg for contract.
+                    create_tracked_task(
+                        _score_lineage_continuity_bg(agent_uuid, _parent_agent_id),
+                        name="score_lineage_continuity",
                     )
                 except Exception as e:
                     logger.debug(f"[ONBOARD] Could not schedule SPAWNED edge (force_new branch): {e}")
@@ -2317,3 +2330,49 @@ async def _seed_genesis_from_parent_bg(child_id: str, parent_id: str):
             )
     except Exception as e:
         logger.debug(f"seed_genesis_from_parent scheduling failed (non-fatal): {e}")
+
+
+async def _score_lineage_continuity_bg(child_id: str, parent_id: str) -> None:
+    """R1 onboard-time lineage scoring with the `marks` policy.
+
+    Per docs/ontology/r1-verify-lineage-claim.md §"Caller policy" and §v3.3-D:
+    onboard scores the declared lineage and stamps `provisional_lineage=true`
+    on the successor's identity row when the verdict is `inconclusive`.
+    `plausible` and `unsupported` are no-ops at this gate — orphan-archival
+    is the enforcement path for `unsupported` (see spec §"Caller policy"
+    line 256: re-scoring `unsupported` after maturation triggers archival,
+    not onboard refusal).
+
+    Fire-and-forget by design: the score does DB work (per-dim trajectory
+    reconstruction + audit write), and onboard must not block on it.
+    Mirrors `_seed_genesis_from_parent_bg` shape — non-fatal degradation,
+    log-only on failure, no exception propagates to the onboard response.
+
+    Almost every fresh successor will land at `inconclusive` until enough
+    check-ins accumulate (per `min_observations=5` floor). That's the
+    expected shadow-mode signal, not an error.
+    """
+    try:
+        from src.identity.trajectory_continuity import score_trajectory_continuity
+        score = await score_trajectory_continuity(parent_id, child_id)
+        logger.info(
+            f"[R1] Scored {parent_id[:8]}... -> {child_id[:8]}...: "
+            f"verdict={score.verdict} plausibility={score.plausibility:.3f} "
+            f"n_dims_used={score.n_dims_used} "
+            f"calibration_status={score.calibration_status}"
+        )
+        if score.verdict == "inconclusive":
+            backend = get_db()
+            marked = await backend.mark_lineage_provisional(child_id, score.score_id)
+            if marked:
+                logger.info(
+                    f"[R1] Marked {child_id[:8]}... provisional "
+                    f"(score_id={score.score_id[:8]}..., parent={parent_id[:8]}...)"
+                )
+            else:
+                logger.debug(
+                    f"[R1] mark_lineage_provisional matched 0 rows for "
+                    f"{child_id[:8]}... — identity row missing?"
+                )
+    except Exception as e:
+        logger.debug(f"score_trajectory_continuity scheduling failed (non-fatal): {e}")
