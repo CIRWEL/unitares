@@ -28,6 +28,12 @@ def _infer_error_code_and_category(message: str) -> Tuple[Optional[str], Optiona
         (["too short", "too small", "minimum"], "VALUE_TOO_SMALL", "validation_error"),
         (["empty", "cannot be empty"], "EMPTY_VALUE", "validation_error"),
 
+        # High-priority system errors.
+        # Keep these after validation so explicit parameter problems still win,
+        # but before broad auth patterns like "session"; otherwise tool names
+        # such as list_dialectic_sessions make timeout failures look like auth.
+        (["timeout", "timed out"], "TIMEOUT", "system_error"),
+
         # Auth errors
         (["permission", "not authorized", "forbidden", "access denied"], "PERMISSION_DENIED", "auth_error"),
         (["api key", "apikey"], "API_KEY_ERROR", "auth_error"),
@@ -40,7 +46,6 @@ def _infer_error_code_and_category(message: str) -> Tuple[Optional[str], Optiona
         (["locked", "already locked"], "RESOURCE_LOCKED", "state_error"),
 
         # System errors
-        (["timeout", "timed out"], "TIMEOUT", "system_error"),
         (["connection", "connect"], "CONNECTION_ERROR", "system_error"),
         (["database", "postgres", "db error"], "DATABASE_ERROR", "system_error"),
         (["failed to", "could not", "unable to"], "OPERATION_FAILED", "system_error"),
