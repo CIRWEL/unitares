@@ -299,3 +299,183 @@ The trajectory council agent surfaced this: under S1-a (TTL shrink), Chronicler-
 Four normative additions (v3.2-A through D), three implementation-row corrections (v3.2-E), one captured limitation (v3.2-F). Single-channel design from v3.1 unchanged. No changes to `score_trajectory_continuity` signature; one new column on lineage records (`provisional_lineage`); one new field on score records (`calibration_status`); one new audit table (`r1_score_audit`).
 
 **Implementation row sequencing reminder (per `plan.md` 2026-04-25 appendix):** R1 implementation row blocks on (1) S8c (`spawn_reason` write-path repair), (2) S8a Phase 2 (`session_like` class), (3) light council confirmation pass on this v3.2 amendment.
+
+---
+
+## Amendment v3.3 (2026-05-03) — council confirmation pass
+
+The "light council confirmation pass" named at the end of v3.2 ran 2026-05-03 as three parallel agents (`dialectic-knowledge-architect` + `feature-dev:code-reviewer` + `live-verifier`) against the v3.2 amendment. All three returned **WITHHOLD-PENDING-V3.3** with overlapping forcing items. v3.3 folds operator decisions on three taste-level choices and converts every council finding into either (a) a normative tightening, (b) an explicit implementation-row constraint, or (c) a doc-text correction.
+
+Single-channel design from v3.1 is unchanged. v3.2's normative additions (provisional lifecycle, calibration_status, dedupe/TTL) stand; v3.3 corrects their text and tightens their semantics where the council found leakage or under-specification.
+
+### v3.3-A. Public payload — strict redaction (supersedes v3.2-A)
+
+**Council finding (architect, forcing).** v3.2-A's "audit-only `components`" left `verdict + plausibility (scalar) + parent_mature + observations (per-dim counts)` public. With dedupe-by-pair (v3.2-D) and 30-day TTL, an adversary with KG read still gets (a) the exact scalar that crossed the cut and (b) which dims were `None` via the per-dim `observations` map. The split moves the leak; it does not close it.
+
+**Operator decision 2026-05-03.** Strict public redaction.
+
+**Replaces v3.2-A's split-payload spec with:**
+
+- **Public KG payload (label: "public redacted"):** `verdict` (enum) + `calibration_status` (enum, see v3.3-C) + `n_dims_used` (int 0–4) + `score_id` (UUID — the join key into the audit table). Nothing else. No `plausibility` scalar. No per-dimension `observations` map. No `parent_mature` boolean. No `reasons` array.
+- **Audit-only persistence (`audit.r1_score_audit` table — see v3.3-E for table name correction):** full record — `score_id` (PK), `parent_id`, `successor_id`, `recorded_at`, `plausibility` (float scalar), `components` (jsonb, per-dim similarities), `observations` (jsonb, per-dim counts and which were None), `parent_mature`, `reasons` (text[]), `class_tag` (text, parent class at scoring time per v3.3-G), `calibration_status` (enum at time of write).
+- **Naming.** Label this path "public redacted," not "audit-only." Calling it "audit-only" understates what was still public in v3.2-A.
+
+**Join semantics.** The public KG node carries `score_id` (UUID). The audit row with that `score_id` is the canonical record; the public node is its redacted projection. When dedupe fires on `(parent_id, successor_id)` (v3.2-D), the public node's `score_id` updates to the new audit row's UUID. Audit table is append-only; previous `score_id` values remain queryable for the operator-only calibration analysis path.
+
+This closes v3.2's residual leak and pre-resolves council finding A4 (audit↔public join key was implicit in v3.2; v3.3 makes `score_id` the explicit primitive).
+
+**Internal-caller surface unchanged.** The `TrajectoryContinuityScore` dataclass returned to *internal callers* (the policy layer making `blocks` / `marks` decisions) remains complete per v3.1 §"Input signature." Only the KG-published shape narrows.
+
+### v3.3-B. R2 row added to consumer table (closes v3.2-B gap)
+
+**Council finding (architect, forcing).** v3.2-B's read-side contract listed four consumers (trust-tier S6, KG provenance S7, R3 baselines, dashboard) but omitted R2. R2 (honest memory integration, design v2 merged 2026-05-02) walks `provenance_chain` and credits along confirmed lineage chains. With `provisional_lineage` defaulting to "treat as confirmed" for unaware consumers (the unsafe-default backstop v3.2-B itself names), provisional edges would flow through honest-memory crediting via the unsafe default.
+
+**Specification.** Extend the v3.2-B consumer table with an R2 row:
+
+| Consumer | Provisional record handling |
+|---|---|
+| (existing rows from v3.2-B) | (unchanged) |
+| **R2 honest memory integration** | **Excluded from chain crediting.** R2's forward-only chain counter (per `r2-honest-memory-integration.md` v2) does not advance through provisional edges; promotion to `confirmed` is the gate. R2's read path queries the explicit column added per v3.3-D (not the AGE edge property if and when it later mirrors). |
+
+**Sequencing.** The R2 implementation row hasn't opened (it blocks on R1 implementation row per `plan.md`). v3.3-B specification binds R2's read path *when R2 impl opens*, not retroactively in R1's PR. R1's PR adds `core.identities.provisional_lineage` (per v3.3-D); R2's PR consumes it.
+
+### v3.3-C. `calibration_status` lifecycle — three-state with timestamps (supersedes v3.2-C)
+
+**Council finding (architect, forcing).** v3.2-C's two-state `seeded → earned` forecloses the third reality: shadow-mode ran and distributions did not separate at the proposed cuts. Operator's only choices become "leave seeded" (silent-indefinite-advisory) or "mark earned" (false). v3.2-C is *explicitly* written to prevent the silent-graduation failure; the missing state recreates the symmetric silent-stagnation failure.
+
+**Operator decision 2026-05-03.** Add `calibration_failed` first-class. Add `seeded_since` timestamp.
+
+**Replaces v3.2-C's two-state spec with three states + lifecycle timestamps:**
+
+| Value | Meaning | UI / consumer behavior |
+|---|---|---|
+| `seeded` (default at ship) | Synthetic-fixture-calibrated thresholds, no production validation | "uncalibrated" badge; verdict treated as advisory only |
+| `earned` | Operator ran calibration analysis; cuts validated against production distributions; seeded thresholds stand or new cuts adopted | Verdict shown without caveat |
+| `calibration_failed` | Operator ran calibration analysis; distributions did not separate at any defensible cut | "calibration failed" badge; verdict suppressed in dashboard surfaces; downstream consumers (R2, trust-tier promotion gate) MUST treat as `inconclusive` regardless of what the primitive returned |
+
+**Timestamps (added to score record + a single calibration_state singleton row, location TBD during impl):**
+
+- `seeded_since` (TIMESTAMPTZ) — stamped at first ship of the primitive in production.
+- `earned_at` (TIMESTAMPTZ NULL) — stamped on `seeded → earned` transition.
+- `failed_at` (TIMESTAMPTZ NULL) — stamped on `seeded → calibration_failed` or `earned → calibration_failed` transition.
+
+Transitions are explicit operator actions; no automatic flips. (Automatic transitions reintroduce the silent-graduation problem v3.2-C exists to prevent.)
+
+**Stale-seeded surfacing.** Operator runbook + dashboard panel surface `seeded_since` age. ≥90 days seeded without an `earned_at` or `failed_at` decision = a flag in the operator's view. Not a hard cutoff; a visibility primitive. The forcing function is operator attention, not automatic transition.
+
+**Consumer behavior under `calibration_failed`.** This is the load-bearing piece v3.2-C was missing: when status is `calibration_failed`, downstream consumers do not just "show the badge" — they degrade the verdict to `inconclusive` for decision purposes. R2 chain crediting, trust-tier promotion, orphan-archival re-classification all behave as if the score returned `inconclusive`. The score record itself retains the original verdict for forensic access, but the consumer-facing primitive returns `inconclusive`.
+
+### v3.3-D. `provisional_lineage` storage — explicit SQL columns on `core.identities` (supersedes v3.2-B storage spec)
+
+**Council finding (reviewer + verifier, forcing).** v3.2-B said "boolean column on the lineage edge or `provenance_chain` entry." Live-verifier confirmed neither exists: no `lineage_edges` table, no `provenance_chain` table, no `provisional_lineage` column anywhere in the live schema. Declared lineage lives in `core.identities.parent_agent_id` (TEXT FK) and the AGE graph. v3.2-B's "must be patched in the same PR" backstop was unenforceable until the storage target was named.
+
+**Operator decision 2026-05-03.** SQL column on `core.identities`. AGE edge property may mirror later if graph traversal benefits surface; SQL is the source of truth for R2 / trust-tier / dashboard / audit consumers.
+
+**Specification.** Add to `core.identities`:
+
+| Column | Type | Default | Meaning |
+|---|---|---|---|
+| `provisional_lineage` | BOOLEAN NOT NULL | FALSE | True when most recent score returned `inconclusive` and call-site policy was `marks` |
+| `provisional_score_id` | UUID NULL | NULL | References `audit.r1_score_audit.score_id` of the score that justified the current state; NULL when never scored or after `confirmed` transition |
+| `provisional_recorded_at` | TIMESTAMPTZ NULL | NULL | When the current `provisional_lineage` value was last set |
+| `confirmed_at` | TIMESTAMPTZ NULL | NULL | Stamped on `provisional → confirmed` transition |
+
+Migration slot: take the next available slot in `db/postgres/migrations/`. No new indexes anticipated at v0; provisional rows are expected to be a tiny fraction of `core.identities`. Index decisions deferred until a query motivates them.
+
+**Consumer patches required in the same PR (concrete file paths, not spec labels):**
+
+| Consumer | File / module | Action |
+|---|---|---|
+| Trust-tier (S6) | `src/identity/trust_tier_routing.py` (`resolve_trust_tier`) | Read `provisional_lineage`; if true, do not contribute to tier upgrades |
+| KG provenance (S7) | `src/storage/knowledge_graph_postgres.py` + `src/db/mixins/knowledge_graph.py` (provenance-chain query path; identify exact site during impl) | Aggregations of "lineage-attributed activity" exclude `provisional_lineage=true` by default; explicit query opt-in shows them |
+| R3 role baselines | `src/trajectory_identity.py` (baseline distribution computation) | Exclude provisional pairs |
+| R2 honest memory | (R2 impl row prereq, not in R1's PR — see v3.3-B sequencing) | Exclude provisional from forward-only chain crediting |
+| Dashboard | `unitares-dashboard/` (specific file TBD during impl) | Show "provisional" badge with `provisional_recorded_at` |
+
+Migration + first three consumers ship in the R1 implementation PR. Dashboard patch may ship in a follow-up if scoping demands it (note: per memory `unitares-dashboard.md`, dashboard panel changes follow file-allowlist conventions). R2 consumer patch lives in R2's own implementation PR.
+
+**Why explicit columns, not JSON metadata.** R2 / trust-tier / R3 / dashboard all need to query on `provisional_lineage = false`. JSONB metadata makes the predicate awkward and untyped. Explicit columns + SQL constraints are the source-of-truth shape; AGE edge property can mirror later via a write-side trigger if graph traversal benefits surface.
+
+### v3.3-E. Audit table — name and retention corrections (supersedes v3.2-A storage location and v3.2-D retention claim)
+
+**Council finding (reviewer + verifier, forcing).** v3.2-A and v3.2-D both named `core.audit_events` as the audit persistence target and claimed 90-day retention. Live-verifier confirmed: actual table is `audit.events` (schema `audit`, not `core`); retention is **180 days** per `db/postgres/partitions.sql:4` and `drop_old_events_partitions(p_retention_days INTEGER DEFAULT 180)`. The 90-day figure applies to `audit.tool_usage`, not `audit.events`.
+
+**Operator decision 2026-05-03.** `audit.r1_score_audit` is a new dedicated table (not folded into `audit.events`). Retention: **180 days**, inheriting `audit.events`. R1 shadow calibration needs long enough windows to diagnose separation failure; 90 days is too easy to starve, especially for low-volume class partitions (e.g., `subagent` declared-lineage pairs).
+
+**Specification.**
+
+- New table `audit.r1_score_audit` (schema `audit`).
+- Columns per v3.3-A audit-only persistence list.
+- Partitioning: RANGE on `recorded_at`, matching `audit.events` partition cadence (see `db/postgres/partitions.sql`).
+- Retention: 180 days. Add to the existing partition-drop job — either by extending `drop_old_events_partitions` to cover the new table, or by a sibling function `drop_old_r1_score_audit_partitions` invoked from the same scheduled job. Implementation choice.
+
+### v3.3-F. `epoch` column reference (supersedes v3.2-E item 1)
+
+**Council finding (reviewer, forcing).** v3.2-E said "see `schema.sql:169` for the index" and named `epoch` as a column to filter on, but `db/postgres/schema.sql:146-167`'s `core.agent_state` DDL does not define `epoch`. The column is live (write path stamps it via `GovernanceConfig.CURRENT_EPOCH = 3`) — it was added in a migration that never folded back into the base `schema.sql`.
+
+**Specification (impl row work).** Implementor identifies the migration that added `epoch` (search `db/postgres/migrations/` for `epoch` or `CURRENT_EPOCH`) and either (a) cites it directly in the v3.2-E correction, or (b) backports the column into `schema.sql` so the base DDL is honest. The latter is the migration-discipline-clean path; the former is the minimal-scope path. **Operator default:** backport into `schema.sql` if it's a one-line addition; cite-only if the migration carries other unrelated changes that complicate a partial backport.
+
+This is migration-discipline housekeeping, not R1-specific work; it surfaces here because R1 is the first reader to depend on `epoch`'s presence and the gap was hidden until live-verifier ran.
+
+### v3.3-G. `class_tag` on score record (closes flag A5)
+
+**Council finding (architect, flag elevated to spec).** v3.2-F flagged the resident-class deterministic-script cluster as a known limitation. Without a `class_tag` on each score record, the calibration analysis must reconstruct partition membership *at analysis time* from `core.identities.metadata.class_tag` — which is what S8a Phase 1 stamps at onboard. That reconstruction is straightforward today but couples calibration analysis to S8a's tag-discipline state at *analysis time*, not *scoring time*.
+
+**Specification.** Add `class_tag TEXT NULL` to `audit.r1_score_audit` (per v3.3-A audit columns). Stamped at scoring time by reading the parent's current `class_tag` from `core.identities.metadata`. NULL when the parent has no class tag (S8a Phase 2 backfill not yet complete for that agent).
+
+This is the minimum honest move: future calibration analyses operate on the partition state *at scoring time*, not at analysis time. Cheap (one column read at score time), and avoids the failure mode where a Phase 2 backfill retroactively re-classifies an agent and silently changes the calibration partition for old score records.
+
+### v3.3-H. Implementation-row constraints (captures flags A4, A6, C4, C5)
+
+The following are not normative changes to the spec but explicit constraints the implementation row must follow. Naming them here so they are not left to implementor judgment.
+
+1. **C4 — empty-dim handling.** `_dtw_similarity` (at `src/trajectory_identity.py:205`, see v3.3-I for line correction) returns 0.0 on empty input via `_dtw_distance` returning `float("inf")`. The implementation MUST short-circuit at the caller: per-dimension absence (empty list from `reconstruct_eisv_series`) excludes that dimension from the average rather than scoring 0.0. Test plan must include a synthetic case where parent has all four dims, successor has only E (S/I/V missing on successor side) — should average over E only, with S/I/V named in `reasons`.
+2. **C5 — function placement.** `score_trajectory_continuity` is a module-level async function (not a backend method). It internally awaits `loop.run_in_executor(None, _score_sync, ...)` where `_score_sync` calls `reconstruct_eisv_series` (which IS the DB-touching helper, registered as a backend method per the v3.2-E correction). The conftest stub list narrows: only `mock_backend.reconstruct_eisv_series` needs registration in `tests/conftest.py:_isolate_db_backend`. `score_trajectory_continuity` itself is mocked at the module level when tests need to.
+3. **A4 — join key.** Already specified in v3.3-A: `score_id` UUID is the explicit join key between public KG node and audit table row. No additional impl-row work; this constraint is informational.
+4. **A6 — lifecycle scope expansion noted.** v3.2's normative additions (`provisional_lineage`, `calibration_status`) create a 2×2 lifecycle state (provisional × calibration_status) on what v3.1 framed as stateless-per-call. v3.3 acknowledges this explicitly. Test coverage in the impl row must include the four cells, not just happy-path single-call regression: `(provisional=false, status=seeded)`, `(provisional=true, status=seeded)`, `(provisional=false, status=earned)`, and crucially the failure-mode cells where `status=calibration_failed` degrades verdicts to `inconclusive` per v3.3-C.
+
+### v3.3-I. Doc-text corrections (live-verifier ground truth)
+
+These are mechanical fixes to v3.1/v3.2 prose — no spec impact. Future readers and implementors should trust v3.3 paths/lines over v3.1/v3.2 where they conflict.
+
+| v3.1/v3.2 text | Correction | Source |
+|---|---|---|
+| `core.identities.id` (FK target) | `core.identities.identity_id` | `\d core.identities` (live schema) |
+| `core.audit_events` | `audit.events` (schema `audit`, not `core`) | `db/postgres/partitions.sql:4` |
+| 90-day retention for `audit_events` | 180-day retention for `audit.events`; 90-day applies to `audit.tool_usage` | `drop_old_events_partitions(p_retention_days INTEGER DEFAULT 180)` |
+| `unitares/config/governance_config.py` | `config/governance_config.py` (live import: `from config.governance_config import GovernanceConfig`) | live import path verified |
+| `governance_core/knowledge_graph.py` (does not exist) | `src/storage/knowledge_graph_postgres.py` + `src/db/mixins/knowledge_graph.py` | repo scan |
+| `_dtw_similarity` at line 198 | line 205 | `src/trajectory_identity.py:205` |
+| `record_agent_state` at line 33 | def at line 17; epoch arg at line 39 | `src/db/mixins/state.py:17,39` |
+| `_write_entry` at lines 431-439 | def at line 515; fire-and-forget docstring at line 541 | `src/audit_log.py:515,541` |
+
+**KG upsert primitive — flag refuted, not folded as forcing.** v3.2-D's dedupe-by-pair claim was challenged by the code-reviewer council pass as requiring a MERGE primitive that "doesn't exist." Live-verifier ground-truthed this: `src/storage/knowledge_graph_postgres.py:82` already has `ON CONFLICT (id) DO UPDATE SET`. The dedupe-by-pair pattern is feasible against the existing write path; v3.2-D stands as specified.
+
+### v3.3 summary
+
+**Three operator decisions on taste-level questions (2026-05-03):**
+
+1. Strict public redaction (v3.3-A) — public payload narrows to `verdict + calibration_status + n_dims_used + score_id`; everything else moves to `audit.r1_score_audit`.
+2. `calibration_failed` + `seeded_since` (v3.3-C) — three-state lifecycle with timestamps; failure state is first-class with explicit consumer-degradation semantics.
+3. SQL column on `core.identities` for `provisional_lineage` (v3.3-D) — source of truth is SQL; AGE edge mirrors later if needed.
+
+**Six forcing items folded** (A1, A2, A3 from architect; storage target, audit-table-name, epoch-column-reference from reviewer + verifier).
+
+**Four flags converted to explicit impl-row constraints** (A4 join key, A6 lifecycle scope, C4 empty-dim skip, C5 function placement).
+
+**One flag refuted by live-verifier** (KG MERGE primitive — exists at `src/storage/knowledge_graph_postgres.py:82`).
+
+**Eight doc-text bugs corrected** (v3.3-I table).
+
+Single-channel design (v3.1) unchanged. Normative shape (v3.2) preserved; tightenings only.
+
+**Implementation row sequencing reminder (updated 2026-05-03):**
+
+| Prereq | Status |
+|---|---|
+| S8c (`spawn_reason` write-path repair) | ✅ shipped 2026-04-25 (#155) |
+| S8a Phase 2 (`session_like` class) | ✅ shipped 2026-05-01 (#252) |
+| Light council confirmation pass on v3.2 | ✅ ran 2026-05-03; verdict WITHHOLD-PENDING-V3.3 |
+| v3.3 amendment | ✅ this section |
+
+**The R1 implementation row may open against v3.3.**
