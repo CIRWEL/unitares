@@ -215,14 +215,19 @@ async def test_transition_r1_calibration_state_rejects_invalid_status():
 
 
 @pytest.mark.asyncio
-async def test_transition_r1_calibration_state_to_earned_writes_and_reads_back():
+async def test_transition_r1_calibration_state_to_earned_atomic_via_returning():
+    """Atomic write+read via UPDATE...RETURNING * (no separate read-back —
+    closes the TOCTOU window where a concurrent operator transition could
+    replace the state between UPDATE and SELECT). Datetime fields are
+    represented as strings in this mock-level pin; live datetime semantics
+    are exercised by the live-verifier council pass."""
     from src.db.mixins.identity import IdentityMixin
 
-    captured_executes: list = []
+    captured: list = []
 
     class _Stub(IdentityMixin):
         def acquire(self):
-            return _AcquireCtx(captured_executes)
+            return _AcquireCtx(captured)
 
     class _AcquireCtx:
         def __init__(self, sink):
@@ -231,19 +236,18 @@ async def test_transition_r1_calibration_state_to_earned_writes_and_reads_back()
         async def __aenter__(self):
             conn = AsyncMock()
 
-            async def _execute(sql, *args):
+            async def _fetchrow(sql, *args):
                 self._sink.append((sql, args))
-                return "UPDATE 1"
+                return {
+                    "id": 1,
+                    "calibration_status": "earned",
+                    "seeded_since": None,
+                    "earned_at": "now-stamp",
+                    "failed_at": None,
+                    "updated_at": "now-stamp",
+                }
 
-            conn.execute = _execute
-            conn.fetchrow = AsyncMock(return_value={
-                "id": 1,
-                "calibration_status": "earned",
-                "seeded_since": None,
-                "earned_at": "now-stamp",
-                "failed_at": None,
-                "updated_at": "now-stamp",
-            })
+            conn.fetchrow = _fetchrow
             return conn
 
         async def __aexit__(self, *args):
@@ -252,13 +256,11 @@ async def test_transition_r1_calibration_state_to_earned_writes_and_reads_back()
     backend = _Stub()
     state = await backend.transition_r1_calibration_state("earned")
 
-    # Wrote the new status
-    assert len(captured_executes) == 1
-    sql, args = captured_executes[0]
+    assert len(captured) == 1, "only one DB roundtrip — UPDATE + RETURNING * combined"
+    sql, args = captured[0]
     assert "UPDATE core.r1_calibration_state" in sql
-    assert "calibration_status = $1" in sql
+    assert "RETURNING" in sql
     assert args == ("earned",)
-    # Read back the post-transition state
     assert state["calibration_status"] == "earned"
     assert state["earned_at"] == "now-stamp"
 
@@ -274,7 +276,6 @@ async def test_transition_r1_calibration_state_accepts_calibration_failed():
     class _AcquireCtx:
         async def __aenter__(self):
             conn = AsyncMock()
-            conn.execute = AsyncMock(return_value="UPDATE 1")
             conn.fetchrow = AsyncMock(return_value={
                 "id": 1,
                 "calibration_status": "calibration_failed",
@@ -291,4 +292,40 @@ async def test_transition_r1_calibration_state_accepts_calibration_failed():
     backend = _Stub()
     state = await backend.transition_r1_calibration_state("calibration_failed")
     assert state["calibration_status"] == "calibration_failed"
+    assert state["failed_at"] == "now-stamp"
+
+
+@pytest.mark.asyncio
+async def test_transition_seeded_to_calibration_failed_skips_earned():
+    """Per v3.3-C: seeded → calibration_failed direct transition is supported
+    (operator can mark calibration_failed without first marking earned).
+    Pins the CASE-WHEN branch that fires on `$1 = 'calibration_failed'`
+    regardless of current state."""
+    from src.db.mixins.identity import IdentityMixin
+
+    class _Stub(IdentityMixin):
+        def acquire(self):
+            return _AcquireCtx()
+
+    class _AcquireCtx:
+        async def __aenter__(self):
+            conn = AsyncMock()
+            # Singleton was 'seeded' before; transition skips earned.
+            conn.fetchrow = AsyncMock(return_value={
+                "id": 1,
+                "calibration_status": "calibration_failed",
+                "seeded_since": "seeded-stamp",
+                "earned_at": None,         # never earned
+                "failed_at": "now-stamp",  # newly stamped
+                "updated_at": "now-stamp",
+            })
+            return conn
+
+        async def __aexit__(self, *args):
+            return None
+
+    backend = _Stub()
+    state = await backend.transition_r1_calibration_state("calibration_failed")
+    assert state["calibration_status"] == "calibration_failed"
+    assert state["earned_at"] is None  # skipped earned entirely
     assert state["failed_at"] == "now-stamp"

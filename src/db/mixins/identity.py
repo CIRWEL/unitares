@@ -289,6 +289,15 @@ class IdentityMixin:
         promotion uses `blocks`; the promotion gate only fires on a re-score
         returning `plausible`). Stamps confirmed_at, clears the provisional
         flag and score_id reference.
+
+        `provisional_recorded_at` is INTENTIONALLY preserved as an audit
+        anchor — it records *when the provisional window began*, which
+        survives confirmation. Consumers reading
+        `(provisional_lineage=False AND provisional_recorded_at IS NOT NULL
+        AND confirmed_at IS NOT NULL)` see "this lineage was once
+        provisional, was confirmed at confirmed_at, originally provisional
+        at provisional_recorded_at." Clearing it would erase that audit
+        trail. (PR 3 council code-reviewer flag — the explicit decision.)
         """
         async with self.acquire() as conn:
             result = await conn.execute(
@@ -330,6 +339,16 @@ class IdentityMixin:
                 # Pre-migration-032 caller fallback. After 032 is in
                 # production this branch is dead; keeping it avoids surprise
                 # crashes if a fresh DB is missing the seeded singleton.
+                # Logged at WARNING because in steady state this should not
+                # fire — if it does, an operator should investigate
+                # (singleton row deleted by hand, or migration 032 not
+                # applied).
+                logger.warning(
+                    "[R1] core.r1_calibration_state singleton missing — "
+                    "synthesizing fallback 'seeded' state. Either migration "
+                    "032 has not been applied or the singleton row was "
+                    "removed."
+                )
                 from datetime import datetime, timezone
                 now = datetime.now(timezone.utc)
                 return {
@@ -348,10 +367,25 @@ class IdentityMixin:
         does not validate operator authority — gate that at the call site
         (e.g. an admin handler with `X-Anima-Admin` header check).
 
-        Stamps the appropriate timestamp:
-        - seeded → earned: stamps earned_at
-        - {seeded, earned} → calibration_failed: stamps failed_at
-        - earned → seeded or any rollback: stamps updated_at only
+        Timestamp semantics:
+        - `earned_at` is **idempotent** — stamped only on the first
+          `seeded → earned` transition (`earned_at IS NULL` guard). A later
+          rollback through seeded and back to earned does NOT re-stamp.
+        - `failed_at` is **last-wins** — re-stamped on every transition
+          INTO `calibration_failed`. Recurring calibration loops are
+          expected and the most-recent failure is more useful than the
+          first; this matches the v3.3-C runbook framing of
+          calibration_failed as a recoverable state.
+        - Rollback paths (`earned → seeded`, `calibration_failed →
+          seeded`) update `calibration_status` + `updated_at` only;
+          `earned_at` and `failed_at` are append-only forensic anchors and
+          are never cleared by a rollback. (PR 3 council architect flag —
+          rollback is operator-decided, not in the spec, but defensible.)
+
+        Atomic write+read via `RETURNING *`: a separate read-back would
+        introduce a TOCTOU window where a concurrent operator transition
+        could replace the state between the UPDATE and the SELECT. The
+        returned dict is exactly what was written.
 
         Returns the post-transition state.
         """
@@ -361,7 +395,7 @@ class IdentityMixin:
                 f"(must be one of: seeded, earned, calibration_failed)"
             )
         async with self.acquire() as conn:
-            await conn.execute(
+            row = await conn.fetchrow(
                 """
                 UPDATE core.r1_calibration_state
                 SET calibration_status = $1,
@@ -375,10 +409,15 @@ class IdentityMixin:
                     END,
                     updated_at = now()
                 WHERE id = 1
+                RETURNING id, calibration_status, seeded_since, earned_at,
+                          failed_at, updated_at
                 """,
                 new_status,
             )
-        return await self.read_r1_calibration_state()
+        if row is None:
+            # Singleton missing — defer to the read fallback (which logs).
+            return await self.read_r1_calibration_state()
+        return dict(row)
 
     def _row_to_identity(self, row) -> IdentityRecord:
         return IdentityRecord(

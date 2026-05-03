@@ -55,14 +55,26 @@ _DIMENSIONS = ("E", "I", "S", "V")
 # Class tags recognized for R1's `class_tag` stamping (v3.3-G). Order matters
 # — most-specific first so calibration analyses can partition without
 # ambiguity. Substrate classes (embodied, persistent) are most specific;
-# session_like + engaged_ephemeral are S8a-specialized cohorts; ephemeral is
-# the default Phase-1 stamp. Mirrors src/identity/substrate.py and
-# src/grounding/class_promotion.py inventories.
+# engaged_ephemeral is S8a Phase-2's specialized cohort; ephemeral is the
+# Phase-1 default stamp.
+#
+# Stored tags only — `_CLASS_TAG_PRIORITY` mirrors the *atomic* tags written
+# by src/identity/substrate.py SUBSTRATE_CLASS_TAGS, src/grounding/
+# onboard_classifier.py defaults, and src/grounding/class_promotion.py
+# Phase-2 promotion. Derived class labels (e.g. `resident_persistent` =
+# `persistent` + `autonomous`, computed at analysis time) are NOT in this
+# tuple — calibration analyses partitioning by resident cohort must read
+# `class_tag='persistent'` AND join the parent's `metadata->'tags' @> ARRAY['autonomous']`.
+#
+# `session_like` is a *reserved* tag — named in the v3.3-F known-limitation
+# discussion + S8a Phase-2 plan, but no current stamp path emits it. Kept in
+# the priority order so when S8a Phase-2 grows the cohort, the stamp surface
+# is already correct. Until then, this branch is dead code (harmless).
 _CLASS_TAG_PRIORITY = (
     "embodied",
     "persistent",
     "engaged_ephemeral",
-    "session_like",
+    "session_like",  # reserved; no current stamp path — see comment above
     "ephemeral",
 )
 
@@ -203,7 +215,10 @@ async def score_trajectory_continuity(
     # v3.3-C consumer-degradation: under calibration_failed, the verdict is
     # forced to `inconclusive` regardless of plausibility. Stamping happens
     # here (before dataclass + audit write) so the audit row matches what
-    # the consumer-facing primitive returns.
+    # the consumer-facing primitive returns. raw_verdict is preserved on the
+    # audit row separately (migration 033) for forensic access — threshold
+    # drift in shadow-mode calibration would otherwise make verdict
+    # reconstruction lossy.
     if calibration_status == "calibration_failed":
         verdict = "inconclusive"
         if raw_verdict != "inconclusive":
@@ -246,6 +261,7 @@ async def score_trajectory_continuity(
         parent_id=claimed_parent_id,
         successor_id=successor_id,
         class_tag=class_tag,
+        raw_verdict=raw_verdict,
     ))
     if not persisted:
         raise RuntimeError(
@@ -285,10 +301,13 @@ def _to_audit_record(
     parent_id: str,
     successor_id: str,
     class_tag: Optional[str] = None,
+    raw_verdict: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Shape the full record for `record_r1_score_audit`. class_tag is the
     parent's class at scoring time (v3.3-G) or None when no recognized class
-    tag is present in the parent's metadata."""
+    tag is present in the parent's metadata. raw_verdict (migration 033) is
+    the pre-degradation verdict — preserved separately from `verdict` so
+    forensic access has both the original and the consumer-facing values."""
     return {
         "score_id": score.score_id,
         "parent_id": parent_id,
@@ -301,6 +320,8 @@ def _to_audit_record(
         "reasons": score.reasons,
         "class_tag": class_tag,
         "calibration_status": score.calibration_status,
+        "verdict": score.verdict,
+        "raw_verdict": raw_verdict if raw_verdict is not None else score.verdict,
     }
 
 
@@ -315,7 +336,15 @@ async def _read_parent_class_tag(backend, parent_agent_id: str) -> Optional[str]
     """
     try:
         record = await backend.get_identity(parent_agent_id)
-    except Exception:
+    except Exception as exc:
+        # Narrow swallow — class_tag is a forensic anchor, not a correctness
+        # gate. Log so a calibration-blocking pool issue is visible rather
+        # than silently producing class_tag=NULL on every score.
+        import logging
+        logging.getLogger(__name__).debug(
+            "[R1] _read_parent_class_tag get_identity failed for %s: %s (%s)",
+            parent_agent_id, type(exc).__name__, exc,
+        )
         return None
     if record is None:
         return None
