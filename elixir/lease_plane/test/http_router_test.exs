@@ -165,6 +165,27 @@ defmodule UnitaresLeasePlane.HTTPRouterTest do
       assert payload["lease"]["surface_kind"] == "dialectic"
     end
 
+    test "acquire silently ignores caller-supplied surface_kind in body after migration 026 (RFC §7.2.3)", ctx do
+      # Companion to the absent-from-body test above: the router intentionally
+      # silently ignores any surface_kind the caller puts in the body, even one
+      # that disagrees with the scheme. This is the documented contract per
+      # http_router.ex extract_acquire_params (PR §7.2.3 v0.8 drift-fix row):
+      # post-migration-026, surface_kind is a generated column derived from
+      # split_part(surface_id, ':', 1). Including caller-supplied surface_kind
+      # in the Repo INSERT would raise `ERROR: column "surface_kind" is a
+      # generated column`, so the router strips it out and the DB derives
+      # surface_kind from the canonical scheme.
+      body = acquire_body(ctx.surface, surface_kind: "deliberately_wrong_kind")
+      resp = post_json("/v1/lease/acquire", body)
+
+      assert resp.status == 200
+      payload = parsed(resp)
+      assert payload["ok"] == true
+      # surface_kind on the returned lease comes from the generated column, NOT
+      # from the body. The router silently ignored "deliberately_wrong_kind".
+      assert payload["lease"]["surface_kind"] == "dialectic"
+    end
+
     test "PR 7 — non-canonical scheme → 422 schema_invalid", _ctx do
       body = acquire_body("ftp://nope")
       resp = post_json("/v1/lease/acquire", body)

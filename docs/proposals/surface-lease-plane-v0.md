@@ -987,7 +987,7 @@ Each row below is a Phase A blocker. All tests live under `tests/test_lease_plan
 #### Pre-existing v0.7 implementation drift (surfaced by v0.8 council; needs code, not RFC)
 
 - [ ] **`models.py AcquireHeldByOther`** — extend with `surface_id`, `blocking_lease_id`, `retry_after_hint_ms` per §7.3.2 (committed in v0.7; not yet in code). Test name: `test_held_by_other_includes_v0_7_extended_fields`.
-- [ ] **`http_router.ex extract_acquire_params`** — remove `"surface_kind"` from required fields and from params map per §7.2.3 (will hard-fail against migration 026 generated column otherwise). Test name (Elixir-side): `test http_router rejects surface_kind in acquire body after migration 026`.
+- [x] **`http_router.ex extract_acquire_params`** — remove `"surface_kind"` from required fields and from params map per §7.2.3 (will hard-fail against migration 026 generated column otherwise). Test name (Elixir-side): `test "acquire silently ignores caller-supplied surface_kind in body after migration 026 (RFC §7.2.3)"`. (Contract chose silent-ignore over reject — caller can supply any surface_kind in the body and the router strips it before INSERT; the DB-generated column remains the source of truth. See `http_router.ex:240-244` and the companion test that asserts a deliberately-wrong caller-supplied `surface_kind` is overridden by the generated column.)
 - [ ] **`agents/sentinel/agent.py`** — add alarm rule keyed on `event_type='forced'` from `lease_plane_events`. Live-verifier confirmed no such rule exists today (Finding 5 SOURCE_ONLY). Per §7.10 + §7.11.5, the rule fires per-event for ad-hoc force-release, batched for deprecation sweeps. Test name: `test_sentinel_force_release_alarm_wired`.
 
 #### Phase B prerequisites (v0.7 — non-blocking for Phase A)
