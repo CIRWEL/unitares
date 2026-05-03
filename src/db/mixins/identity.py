@@ -317,6 +317,23 @@ class IdentityMixin:
                 rows = 0
             return rows > 0
 
+    async def is_lineage_provisional(self, agent_id: str) -> bool:
+        """R1 v3.3-D: read-only check of provisional_lineage on core.identities.
+
+        Returns False when the row doesn't exist. Consumers (trust-tier
+        gate, R3 baselines, KG provenance) call this to filter without
+        loading the full record. Stubbable in tests via conftest's
+        `_isolate_db_backend` (no `async with self.acquire()` exposure).
+        """
+        async with self.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT provisional_lineage FROM core.identities WHERE agent_id = $1",
+                agent_id,
+            )
+            if row is None:
+                return False
+            return bool(row["provisional_lineage"])
+
     async def read_r1_calibration_state(self) -> Dict[str, Any]:
         """Read the R1 calibration_state singleton (v3.3-C).
 
