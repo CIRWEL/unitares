@@ -156,6 +156,49 @@ async def test_resolve_trust_tier_db_lookup_failure_fails_soft(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_is_lineage_provisional_returns_literal_bool():
+    """Pin the contract: IdentityMixin.is_lineage_provisional returns a
+    literal Python bool. The gate's `result is True` strict-identity check
+    is belt-and-suspenders; this contract pin makes the type guarantee
+    load-bearing rather than implicit (architect council flag, PR 4a)."""
+    from src.db.mixins.identity import IdentityMixin
+
+    class _Stub(IdentityMixin):
+        def __init__(self, val):
+            self._val = val
+
+        def acquire(self):
+            return _AcquireCtx(self._val)
+
+    class _AcquireCtx:
+        def __init__(self, val):
+            self._val = val
+
+        async def __aenter__(self):
+            conn = AsyncMock()
+            conn.fetchrow = AsyncMock(return_value={"provisional_lineage": self._val})
+            return conn
+
+        async def __aexit__(self, *a):
+            return None
+
+    result_true = await _Stub(True).is_lineage_provisional("agent-x")
+    assert result_true is True
+    assert type(result_true) is bool
+
+    result_false = await _Stub(False).is_lineage_provisional("agent-y")
+    assert result_false is False
+    assert type(result_false) is bool
+
+    # Defensive: if asyncpg ever returned a truthy non-bool (it doesn't for
+    # BOOLEAN columns, but the explicit `bool(row[...])` cast in the mixin
+    # is what guards), the result must still be a literal bool.
+    result_truthy_int = await _Stub(1).is_lineage_provisional("agent-z")
+    assert result_truthy_int is True
+    assert type(result_truthy_int) is bool
+
+
+@pytest.mark.asyncio
 async def test_provisional_gate_runs_before_substrate_earned_check():
     """A substrate-anchored agent (Vigil/Lumen) whose lineage is provisional
     is gated to tier=1 — the substrate-earned shortcut to tier=3 is

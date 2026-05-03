@@ -91,6 +91,7 @@ def _provisional_lineage_tier_dict() -> Dict[str, Any]:
         "lineage_similarity": None,
         "reason": "Provisional lineage (R1 v3.3-D); awaiting confirm_lineage to promote",
         "source": "provisional_lineage_gate",
+        "conditions": None,  # parity with _substrate_earned_tier_dict + compute_trust_tier
     }
 
 
