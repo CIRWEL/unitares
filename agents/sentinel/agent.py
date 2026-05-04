@@ -47,6 +47,10 @@ from unitares_sdk.models import CheckinResult
 from unitares_sdk.errors import GovernanceError, VerdictError
 from unitares_sdk.utils import notify
 from agents.common.findings import post_finding, compute_fingerprint
+from agents.sentinel.phase_b_promotion import (
+    PhaseBEvaluatorError,
+    detect_transitions as detect_phase_b_transitions,
+)
 
 # ---------------------------------------------------------------------------
 # Paths & Config
@@ -668,6 +672,7 @@ class SentinelAgent(GovernanceAgent):
             log(f"forced-release alarm poll failed: {e}")
             return
 
+        conflict_surface_kinds: list[str] = []
         for alarm in alarms:
             severity_tag = alarm.severity.upper()
             log(f"FORCED-RELEASE ALARM: [{severity_tag}] {alarm.summary}")
@@ -682,12 +687,76 @@ class SentinelAgent(GovernanceAgent):
                 fingerprint=alarm.fingerprint,
                 extra={"alarm_kind": alarm.kind, **alarm.extra},
             )
+            if alarm.kind == "conflict_batch":
+                kind = alarm.extra.get("surface_kind")
+                if isinstance(kind, str):
+                    conflict_surface_kinds.append(kind)
 
         if new_cursor is not None and new_cursor != cursor:
             state.setdefault("forced_release_alarm", {})["last_event_ts"] = (
                 new_cursor.isoformat()
             )
             self.save_state(state)
+
+        await self._emit_phase_b_transitions(conflict_surface_kinds, db_url)
+
+    async def _emit_phase_b_transitions(
+        self, surface_kinds: list[str], db_url: str
+    ) -> None:
+        """Run the §6.1 Phase B promotion evaluator for each surface_kind that
+        had a conflict-batch alarm this cycle, and emit a transition finding
+        only when one or more criteria flip status (or overall promotable
+        flips) vs. the last recorded verdict.
+
+        Failures are logged and swallowed — promotion-evaluator failure MUST
+        NOT break the Sentinel cycle. Subprocess + sync psycopg2 inside the
+        evaluator means no anyio loop binding hazard; we still push to a
+        thread executor for consistency with the surrounding alarm path.
+        """
+        if not surface_kinds:
+            return
+        loop = asyncio.get_running_loop()
+        try:
+            transitions = await loop.run_in_executor(
+                None, lambda: detect_phase_b_transitions(surface_kinds, db_url=db_url),
+            )
+        except PhaseBEvaluatorError as e:
+            log(f"phase-B evaluator failed: {e}")
+            return
+        except Exception as e:
+            log(f"phase-B transition detection failed: {e}")
+            return
+
+        for transition in transitions:
+            severity = "high" if transition.promotable_now else "medium"
+            log(f"PHASE-B TRANSITION: [{severity.upper()}] {transition.summary}")
+            post_finding(
+                event_type="lease_plane_phase_b_transition",
+                severity=severity,
+                message=transition.summary,
+                agent_id=self.agent_uuid or "sentinel",
+                agent_name="Sentinel",
+                fingerprint=compute_fingerprint([
+                    "phase_b",
+                    transition.surface_kind,
+                    transition.promotable_now,
+                    *(f"{c.number}:{c.current_status}" for c in transition.criteria),
+                ]),
+                extra={
+                    "surface_kind": transition.surface_kind,
+                    "promotable_now": transition.promotable_now,
+                    "promotable_before": transition.promotable_before,
+                    "criteria_changed": [
+                        {
+                            "number": c.number,
+                            "name": c.name,
+                            "previous": c.previous_status,
+                            "current": c.current_status,
+                        }
+                        for c in transition.criteria
+                    ],
+                },
+            )
 
     async def on_after_checkin(
         self, client: GovernanceClient, checkin_result: CheckinResult, cycle_result: CycleResult,
