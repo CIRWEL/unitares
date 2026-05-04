@@ -45,19 +45,19 @@ Test counts at the most recent merge: **8191 passed, 33 skipped, 0 fail**.
 
 ## 4. Open work — remaining for full v3.3 closure
 
-### 4.1 Call-site wiring (HIGH priority — primitive is dark today)
+### 4.1 Call-site wiring — onboard ✅ shipped 2026-05-03 (#321); promotion + orphan still open
 
-`score_trajectory_continuity` exists and writes audit rows when called, but **nothing calls it**. The primitive is unwired. Per spec §"Caller-policy responsibility" and the operator decision quoted in `plan.md` §"2026-04-25 — Operator-decision sweep":
+`score_trajectory_continuity` is wired into the onboard handler with the `marks` policy as of #321 (`452354b`). Helper `_score_lineage_continuity_bg` in `src/mcp_handlers/identity/handlers.py` fires the score in a tracked background task on both fresh-identity-with-lineage sites; verdict=`inconclusive` calls `mark_lineage_provisional`. The 4-week shadow window per `plan.md` line 25 began on this merge.
+
+Remaining call sites:
 
 | Call site | Policy on `inconclusive` | Where to wire |
 |---|---|---|
-| `onboard` | `marks` (call `mark_lineage_provisional`) | `src/mcp_handlers/identity/handlers.py` — onboard handler, after `parent_agent_id` is recorded, before the response is built |
+| ~~`onboard`~~ | ~~`marks`~~ | ~~`src/mcp_handlers/identity/handlers.py`~~ ✅ shipped #321 |
 | Trust-tier promotion | `blocks` (refuse promotion) | Whichever path is being added under the S6 promotion work — no current promotion path triggers R1 |
 | Orphan archival re-classification | `blocks` | Orphan-archival job (path TBD during impl) |
 
-`confirm_lineage` has no caller yet either. The promotion-path code that would clear `provisional_lineage` does not exist.
-
-**Until at least the onboard wiring lands, R1 produces zero shadow-mode pairs.** The 4-week shadow window the operator approved (per `plan.md` line 25, "≥100 pairs OR ≥4 weeks, whichever later") cannot start until then.
+`confirm_lineage` still has no caller — the promotion-path code that would clear `provisional_lineage` does not exist. **Operator-facing consequence:** every fresh agent declaring lineage at onboard is now marked provisional and pinned to tier=1 via PR 4a's gate; lineage-claiming agents stay tier=1 indefinitely until promotion is wired.
 
 ### 4.2 Remaining v3.3-D consumers
 
@@ -70,11 +70,16 @@ PR 4a covered consumer 1 of 4. Remaining:
 | Dashboard | `unitares-dashboard/` (specific file TBD) | Show "provisional" badge with `provisional_recorded_at`; may ship as follow-up per v3.3-D scoping note |
 | R2 honest memory | (R2 impl row, not R1) | Excluded from forward-only chain crediting; lives in R2's own PR per v3.3-B |
 
-### 4.3 KG public emission
+### 4.3 KG public emission — in flight (#324)
 
-PR 2's commit message states: *"KG public emission (the actual write to AGE) deferred to PR 3 alongside consumer patches; `_build_public_payload` here defines the redaction shape callers will pass."*
+PR 2's commit message stated: *"KG public emission (the actual write to AGE) deferred to PR 3 alongside consumer patches; `_build_public_payload` here defines the redaction shape callers will pass."* PR 3 stayed score-side.
 
-PR 3 did not pick up KG emission (it stayed score-side). The redacted public payload is constructed but not written to the AGE graph. This is the consumer-side work that closes v3.3-A end-to-end.
+#324 closes this — adds `_emit_public_kg_node` inside `score_trajectory_continuity` that publishes the redacted payload to `knowledge.discoveries` via `kg_add_discovery`. Deterministic node id `r1_score:{uuid5(...)}` per (parent, successor) pair; existing ON CONFLICT (id) DO UPDATE gives v3.2-D dedupe-by-pair. v3.3-I corrected the target from AGE to PG-FTS; #324 follows that correction.
+
+What #324 does NOT pick up (still open after it lands):
+
+- 30-day TTL archival of public nodes per v3.2-D second clause — needs a partition-maintenance hook.
+- Re-scoring at promotion or orphan paths — those call sites do not exist yet.
 
 ### 4.4 Performance follow-up (non-blocking)
 
