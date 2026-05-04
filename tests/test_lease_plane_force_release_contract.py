@@ -57,19 +57,32 @@ if not _router_reachable():
 
 # ---------- helpers ----------
 
-def _read_force_release_token() -> str | None:
-    """Read LEASE_FORCE_RELEASE_TOKEN from env or ~/.config/cirwel/secrets.env."""
-    tok = os.environ.get("LEASE_FORCE_RELEASE_TOKEN")
+def _read_secrets_var(var_name: str) -> str | None:
+    """Read VAR_NAME from env or ~/.config/cirwel/secrets.env."""
+    tok = os.environ.get(var_name)
     if tok:
         return tok
     secrets_path = Path.home() / ".config" / "cirwel" / "secrets.env"
     if not secrets_path.exists():
         return None
+    prefix = f"{var_name}="
     for line in secrets_path.read_text().splitlines():
         line = line.strip()
-        if line.startswith("LEASE_FORCE_RELEASE_TOKEN="):
+        if line.startswith("export "):
+            line = line[len("export "):]
+        if line.startswith(prefix):
             return line.split("=", 1)[1].strip().strip('"').strip("'")
     return None
+
+
+def _read_force_release_token() -> str | None:
+    """Read LEASE_FORCE_RELEASE_TOKEN from env or ~/.config/cirwel/secrets.env."""
+    return _read_secrets_var("LEASE_FORCE_RELEASE_TOKEN")
+
+
+def _read_lease_plane_bearer() -> str | None:
+    """Read LEASE_PLANE_BEARER_TOKEN — the regular bearer the router accepts."""
+    return _read_secrets_var("LEASE_PLANE_BEARER_TOKEN")
 
 
 def _router_url(path: str) -> str:
@@ -140,10 +153,17 @@ def test_force_release_rejects_governance_token(monkeypatch):
             "cannot complete sub-assertion 3 (elevated-token success path)"
         )
 
-    # We need a governance token to acquire a lease for sub-assertion 3.
-    # If it's not set, we can still test sub-assertions 1 and 2 against a
-    # synthetic lease_id — the auth check fires before the lease lookup.
-    governance_token = os.environ.get("GOVERNANCE_TOKEN", "some-non-elevated-token")
+    # We need the regular lease-plane bearer to acquire a lease for sub-assertion 3.
+    # The "GOVERNANCE_TOKEN" name in this module's prose is a label for the
+    # regular (non-elevated) bearer; the actual env var on the router side is
+    # LEASE_PLANE_BEARER_TOKEN. Sub-assertions 1 and 2 use a synthetic token
+    # since the auth check fires before the lease lookup.
+    lease_plane_bearer = _read_lease_plane_bearer()
+    if not lease_plane_bearer:
+        pytest.skip(
+            "LEASE_PLANE_BEARER_TOKEN not set (env or ~/.config/cirwel/secrets.env); "
+            "cannot acquire a real lease for sub-assertion 3"
+        )
 
     # Sub-assertion 1: non-elevated token is rejected at the path level.
     # The router's path-aware HTTPAuth rejects any token that is not
@@ -172,7 +192,7 @@ def test_force_release_rejects_governance_token(monkeypatch):
     )
 
     # Sub-assertion 3: elevated token + real lease → 200 ok:true.
-    lease_id = _acquire_lease(governance_token)
+    lease_id = _acquire_lease(lease_plane_bearer)
     status3, body3 = _post_json(
         _FORCE_RELEASE_PATH,
         {"lease_id": lease_id},
@@ -194,12 +214,21 @@ def test_release_rejects_forced_reason_on_release_endpoint():
 
     This test was added in PR 1 on the BEAM side. Re-verified here as
     a sanity check that the path routing is still correct after PR 2.
+
+    Requires the regular bearer (LEASE_PLANE_BEARER_TOKEN) to be valid;
+    skips cleanly otherwise so the auth-level rejection (401) doesn't
+    masquerade as a semantic failure.
     """
-    governance_token = os.environ.get("GOVERNANCE_TOKEN", "some-governance-token")
+    lease_plane_bearer = _read_lease_plane_bearer()
+    if not lease_plane_bearer:
+        pytest.skip(
+            "LEASE_PLANE_BEARER_TOKEN not set (env or ~/.config/cirwel/secrets.env); "
+            "cannot exercise the semantic-rejection path with a valid bearer"
+        )
     status, body = _post_json(
         _RELEASE_PATH,
         {"lease_id": str(uuid.uuid4()), "release_reason": "forced"},
-        authorization=f"Bearer {governance_token}",
+        authorization=f"Bearer {lease_plane_bearer}",
     )
     # The Elixir router returns 200 + ok:false + permission_denied for semantic
     # rejections (not a lease mismatch, not a missing route — a policy rejection).
