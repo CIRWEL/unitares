@@ -1097,7 +1097,7 @@ class TestProvenanceWriterLabel:
             id="2026-04-25T06:00:00.000000+00:00",
             agent_id=registered_agent,
             provenance={
-                "system_version": "2.12.0",
+                "system_version": "2.13.0",
                 "writer_label_at_write": "OriginalSession",
                 "writer_session_id_at_write": "agent-original-001",
                 "captured_at": "2026-04-25T06:00:00.000000+00:00",

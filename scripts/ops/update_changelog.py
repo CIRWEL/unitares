@@ -313,6 +313,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
         version_file.write_text(next_version + '\n')
         print(f"✅ Updated VERSION: {next_version}")
 
+        # Propagate to all version references (pyproject.toml, etc.) via the
+        # version_manager helpers so the bump doesn't leave pyproject lagging
+        # and trip the pre-commit version-mismatch check.
+        try:
+            import sys
+            sys.path.insert(0, str(self.repo_path / "scripts" / "ops"))
+            from version_manager import VERSION_REFERENCES, update_file_versions
+            for ref_file, patterns in VERSION_REFERENCES:
+                ref_path = self.repo_path / ref_file
+                if ref_path.exists() and update_file_versions(ref_path, patterns, next_version):
+                    print(f"✅ Synced {ref_file} → {next_version}")
+        except ImportError:
+            print("⚠️  version_manager unavailable; pyproject.toml not auto-synced")
+
 
 def main():
     """Main entry point."""
