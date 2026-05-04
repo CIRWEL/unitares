@@ -151,14 +151,77 @@ def test_governance_monitor_resolves_resident_agent_id_to_class():
 
 
 def test_governance_monitor_resolves_non_resident_to_none():
-    """Plain UUID / unrecognized agent_id with no state.agent_class → returns
-    None, which leaves the threshold on its default adaptive path."""
+    """Plain UUID / unrecognized agent_id with no state.agent_class AND no
+    metadata cache entry → returns None, which leaves the threshold on its
+    default adaptive path."""
     from src.governance_monitor import UNITARESMonitor
 
     monitor = UNITARESMonitor(agent_id="abcdefab-cdef-4abc-8def-abcdefabcdef",
                                 load_state=False)
     resolved = monitor._resolve_agent_class()
     assert resolved is None
+
+
+def test_governance_monitor_uuid_resolves_via_agent_metadata_cache():
+    """Production case (regression for 2026-05-04 canary): agent_id is a UUID,
+    label/tags live in agent_metadata cache. _resolve_agent_class MUST consult
+    the cache to find the resident class — without this the void-threshold
+    override never applied to UUID-keyed residents and the canary tripped
+    void_pause anyway. Caught on Steward unpause: V=0.081 with default
+    adaptive threshold (clamped to MIN=0.10) → void_active=true → pause.
+    Resident threshold (0.30) would have cleared it."""
+    from src.agent_metadata_model import AgentMetadata, agent_metadata
+    from src.governance_monitor import UNITARESMonitor
+
+    # Steward's actual production UUID per project_steward-paused.md memory.
+    steward_uuid = "9a6681ec-1d16-4143-ada9-282f14483fea"
+
+    # Simulate a populated cache entry (what background_metadata_load produces
+    # in production for Steward).
+    agent_metadata[steward_uuid] = AgentMetadata(
+        agent_id=steward_uuid,
+        status="active",
+        created_at="2026-01-01T00:00:00+00:00",
+        last_update="2026-05-04T03:00:00+00:00",
+        label="Steward",
+        tags=["persistent", "autonomous"],
+    )
+
+    try:
+        monitor = UNITARESMonitor(agent_id=steward_uuid, load_state=False)
+        resolved = monitor._resolve_agent_class()
+        assert resolved == "Steward", (
+            f"UUID-form Steward must resolve to 'Steward' class via cache; "
+            f"got {resolved!r}. Without this lookup, the v0.11.3 PR 3 "
+            f"safety net is a no-op for production residents."
+        )
+    finally:
+        agent_metadata.pop(steward_uuid, None)
+
+
+def test_governance_monitor_uuid_with_persistent_autonomous_tags_resolves():
+    """Tag-derived resident classification path: agents with no label-match
+    but tags={persistent, autonomous} resolve to 'resident_persistent' via
+    classify_agent's tag fallback."""
+    from src.agent_metadata_model import AgentMetadata, agent_metadata
+    from src.governance_monitor import UNITARESMonitor
+
+    uuid = "11111111-2222-4333-8444-555555555555"
+    agent_metadata[uuid] = AgentMetadata(
+        agent_id=uuid,
+        status="active",
+        created_at="2026-01-01T00:00:00+00:00",
+        last_update="2026-05-04T03:00:00+00:00",
+        label=None,  # No KNOWN_RESIDENT_LABELS match
+        tags=["persistent", "autonomous"],
+    )
+
+    try:
+        monitor = UNITARESMonitor(agent_id=uuid, load_state=False)
+        resolved = monitor._resolve_agent_class()
+        assert resolved == "resident_persistent"
+    finally:
+        agent_metadata.pop(uuid, None)
 
 
 def test_governance_monitor_state_agent_class_takes_precedence():

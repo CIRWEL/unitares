@@ -645,12 +645,17 @@ class UNITARESMonitor:
         Resolution order:
           1. `state.agent_class` if pre-populated by an upstream loader.
           2. `agent_id` literal match against KNOWN_RESIDENT_LABELS — catches
-             residents constructed with a label string as agent_id.
-          3. Synthetic meta from `state.label`/`state.tags` if upstream loaders
-             populated those fields.
-
-        For PR 3 this is intentionally narrow — full DB-backed lookup is a
-        future wiring item. The hot path stays sync.
+             monitors constructed with a label string as agent_id (test pattern).
+          3. **agent_metadata cache lookup** — production residents have
+             agent_id = UUID, with `label` and `tags` set on the AgentMetadata
+             entry. Pass that meta to `classify_agent` to resolve the class
+             via the same logic the rest of the system uses. This was the
+             missing path in the v0.11.3 PR 3 — without it, the canary tripped
+             void_pause anyway because the UUID-form agent_id never matched
+             the label set, so no override was applied. Caught 2026-05-04
+             on Steward unpause smoke test (V=0.081, threshold=0.10 adaptive
+             floor → void_active=true → pause).
+          4. Synthetic meta from `state.label`/`state.tags` (legacy fallback).
         """
         explicit = getattr(self.state, "agent_class", None)
         if explicit:
@@ -667,6 +672,27 @@ class UNITARESMonitor:
         if self.agent_id in KNOWN_RESIDENT_LABELS:
             return self.agent_id
 
+        # Production path: look up agent's metadata to find label/tags.
+        # The agent_metadata cache is populated at gov-mcp startup via
+        # `background_metadata_load` and refreshed lazily — it carries the
+        # label and tags fields we need to classify.
+        try:
+            from src.agent_state import agent_metadata as _agent_metadata
+            meta = _agent_metadata.get(self.agent_id)
+        except Exception:
+            meta = None
+
+        if meta is not None:
+            try:
+                cls = classify_agent(meta)
+                if cls != "default":
+                    return cls
+            except Exception:
+                pass
+
+        # Final fallback: synthesize meta from state-side fields if upstream
+        # loaders populated them. Inert in production (state.label is rarely
+        # set), but kept for tests and future upstream wiring.
         synthetic_meta = type("StateMeta", (), {
             "label": getattr(self.state, "label", None),
             "tags": getattr(self.state, "tags", None) or [],
