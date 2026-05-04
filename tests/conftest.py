@@ -126,7 +126,7 @@ def _isolate_db_backend(monkeypatch):
     mock_backend.mark_lineage_provisional.return_value = True
     mock_backend.confirm_lineage.return_value = True
     mock_backend.is_lineage_provisional.return_value = False
-    # R2 lineage lifecycle helpers (PR 1 — migration 035 + storage helpers).
+    # R2 lineage lifecycle helpers (PR 1 — migration 036 + storage helpers).
     # Per the R2 plan §"Test 10 (meta)" — explicit stubs avoid the
     # AsyncMock auto-child coroutine-leak pattern noted in R1 v3.2-E.
     mock_backend.declare_lineage.return_value = True

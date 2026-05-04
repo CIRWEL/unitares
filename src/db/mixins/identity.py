@@ -437,7 +437,7 @@ class IdentityMixin:
         return dict(row)
 
     # ------------------------------------------------------------------
-    # R2: lineage lifecycle helpers (migration 035)
+    # R2: lineage lifecycle helpers (migration 036)
     #
     # Extends the R1 helpers above with the demote / archive / eval-stamp
     # transitions and the forward-only chain counter. The state machine
@@ -480,6 +480,17 @@ class IdentityMixin:
         to 0 (clawback for the confirmed → demoted path). `reason` is
         accepted by the caller for the audit event payload — the column
         carries timestamps, not free-text.
+
+        Also clears lineage_declared_at and lineage_last_eval_at so a
+        subsequent re-declaration (PR 3) starts a fresh grace window
+        and a fresh cadence cycle. Without these clears, a demoted-then-
+        re-declared row would inherit the prior declaration's grace
+        clock and the sweeper's prior eval stamp, causing the new
+        lineage to expire prematurely or skip its first eval.
+
+        WHERE guard `lineage_archived_at IS NULL AND lineage_demoted_at
+        IS NULL` prevents re-demoting a row already in a terminal state
+        (forcing item from PR 1 council review).
         """
         # `reason` is intentionally consumed by the caller's audit
         # emission — kept in the signature so call sites must name a
@@ -494,9 +505,13 @@ class IdentityMixin:
                     provisional_score_id = NULL,
                     confirmed_at = NULL,
                     lineage_demoted_at = now(),
+                    lineage_declared_at = NULL,
+                    lineage_last_eval_at = NULL,
                     chain_obs_count = 0,
                     updated_at = now()
                 WHERE agent_id = $1
+                  AND lineage_archived_at IS NULL
+                  AND lineage_demoted_at IS NULL
                 """,
                 successor_id,
             )
@@ -513,6 +528,19 @@ class IdentityMixin:
         provisional_score_id, but **retains parent_agent_id** as an
         inert audit anchor (the declaration happened; we just stopped
         being able to verify it before the grace window closed).
+
+        Also clears confirmed_at, lineage_declared_at, and
+        lineage_last_eval_at. Clearing confirmed_at prevents a zombie
+        "archived but confirmed" combination if the helper is invoked
+        on a confirmed row (the FSM never archives confirmed rows in
+        practice, but the helper's contract should not leave that
+        invariant to the caller). Clearing the declaration/eval
+        timestamps mirrors `demote_lineage`: a future re-declaration
+        starts a fresh grace and cadence cycle.
+
+        WHERE guard `lineage_archived_at IS NULL AND lineage_demoted_at
+        IS NULL` prevents re-archiving a row already in a terminal
+        state.
         """
         async with self.acquire() as conn:
             result = await conn.execute(
@@ -520,9 +548,14 @@ class IdentityMixin:
                 UPDATE core.identities
                 SET provisional_lineage = FALSE,
                     provisional_score_id = NULL,
+                    confirmed_at = NULL,
                     lineage_archived_at = now(),
+                    lineage_declared_at = NULL,
+                    lineage_last_eval_at = NULL,
                     updated_at = now()
                 WHERE agent_id = $1
+                  AND lineage_archived_at IS NULL
+                  AND lineage_demoted_at IS NULL
                 """,
                 successor_id,
             )

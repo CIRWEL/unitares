@@ -24,10 +24,19 @@ COMMENT ON COLUMN core.identities.chain_obs_count      IS 'R2: forward-only chai
 -- Sweeper-friendly partial index: only rows the FSM cares about.
 -- Provisional rows (still in flight) and confirmed rows (subject to
 -- post-promotion divergence clawback) are the candidates the sweeper
--- re-evaluates; everything else is excluded from the index.
+-- re-evaluates. Archived/demoted rows are terminal and excluded from
+-- the index — the sweeper has no work to do on them.
+--
+-- Drop-then-create so this migration is idempotent against dev DBs that
+-- ran an earlier version of slot 036 with a looser predicate (the
+-- predicate change is the load-bearing edit; CREATE INDEX IF NOT EXISTS
+-- alone would not rebuild the index in that case).
+DROP INDEX IF EXISTS core.idx_identities_provisional_eval;
 CREATE INDEX IF NOT EXISTS idx_identities_provisional_eval
     ON core.identities (lineage_last_eval_at)
-    WHERE provisional_lineage = TRUE OR confirmed_at IS NOT NULL;
+    WHERE (provisional_lineage = TRUE OR confirmed_at IS NOT NULL)
+      AND lineage_archived_at IS NULL
+      AND lineage_demoted_at IS NULL;
 
 INSERT INTO core.schema_migrations (version, name, applied_at)
 VALUES (36, 'r2_lineage_lifecycle', NOW())

@@ -11,7 +11,7 @@ conftest. Adds three lineage-pair fixtures:
 - ``confirmed_pair_with_obs`` — confirmed successor + chain_obs_count=5.
 
 Fixtures rely on R1's existing ``provisional_lineage`` / ``confirmed_at``
-columns (migration 031) and the new R2 columns (migration 035).
+columns (migration 031) and the new R2 columns (migration 036).
 """
 
 from __future__ import annotations

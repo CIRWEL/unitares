@@ -1,6 +1,6 @@
 """R2 PR 1: storage layer for lineage lifecycle columns + helpers.
 
-Covers migration 035 (column existence) plus the new backend helpers:
+Covers migration 036 (column existence) plus the new backend helpers:
 ``declare_lineage``, ``demote_lineage``, ``archive_lineage``,
 ``increment_chain_obs_count``, ``stamp_lineage_eval``,
 ``are_lineages_provisional``.
@@ -67,7 +67,7 @@ async def test_lineage_columns_exist(live_postgres_backend):
 
 @pytest.mark.asyncio
 async def test_provisional_eval_index_exists(live_postgres_backend):
-    """Sweeper-friendly partial index from migration 035."""
+    """Sweeper-friendly partial index from migration 036."""
     async with live_postgres_backend.acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -105,14 +105,21 @@ async def test_declare_lineage_stamps_when_null(live_postgres_backend):
                 "VALUES ($1, 'test-hash', $2)",
                 successor_id, parent_id,
             )
-        ok = await live_postgres_backend.declare_lineage(successor_id)
-        assert ok
+        # Verify pre-call state — must be NULL before declare_lineage stamps.
         async with live_postgres_backend.acquire() as conn:
-            row = await conn.fetchrow(
+            pre = await conn.fetchval(
                 "SELECT lineage_declared_at FROM core.identities WHERE agent_id = $1",
                 successor_id,
             )
-        assert row["lineage_declared_at"] is not None
+        assert pre is None
+        ok = await live_postgres_backend.declare_lineage(successor_id)
+        assert ok is True
+        async with live_postgres_backend.acquire() as conn:
+            post = await conn.fetchval(
+                "SELECT lineage_declared_at FROM core.identities WHERE agent_id = $1",
+                successor_id,
+            )
+        assert post is not None
     finally:
         await _cleanup(live_postgres_backend, [parent_id, successor_id])
 
@@ -174,6 +181,63 @@ async def test_demote_lineage_returns_false_for_unknown_agent(
     assert ok is False
 
 
+@pytest.mark.asyncio
+async def test_demote_lineage_clears_declared_at_and_last_eval_at(
+    live_postgres_backend, seeded_pair,
+):
+    """demote clears lineage_declared_at and lineage_last_eval_at so a
+    future re-declaration starts a fresh grace and cadence cycle."""
+    backend = live_postgres_backend
+    # Stamp lineage_last_eval_at first so we have something non-NULL to
+    # observe being cleared.
+    await backend.stamp_lineage_eval(seeded_pair.successor_id)
+    async with backend.acquire() as conn:
+        pre = await conn.fetchrow(
+            "SELECT lineage_declared_at, lineage_last_eval_at "
+            "FROM core.identities WHERE agent_id = $1",
+            seeded_pair.successor_id,
+        )
+    assert pre["lineage_declared_at"] is not None
+    assert pre["lineage_last_eval_at"] is not None
+
+    ok = await backend.demote_lineage(
+        seeded_pair.successor_id, reason="r1_unsupported",
+    )
+    assert ok is True
+
+    async with backend.acquire() as conn:
+        post = await conn.fetchrow(
+            "SELECT lineage_declared_at, lineage_last_eval_at "
+            "FROM core.identities WHERE agent_id = $1",
+            seeded_pair.successor_id,
+        )
+    assert post["lineage_declared_at"] is None
+    assert post["lineage_last_eval_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_demote_lineage_skipped_for_already_archived_row(
+    live_postgres_backend, seeded_pair,
+):
+    """Once a row is archived, demote_lineage is a no-op (returns False)."""
+    backend = live_postgres_backend
+    ok_archive = await backend.archive_lineage(seeded_pair.successor_id)
+    assert ok_archive is True
+    ok_demote = await backend.demote_lineage(
+        seeded_pair.successor_id, reason="post_promotion_divergence",
+    )
+    assert ok_demote is False
+    async with backend.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT lineage_archived_at, lineage_demoted_at "
+            "FROM core.identities WHERE agent_id = $1",
+            seeded_pair.successor_id,
+        )
+    # Archive timestamp preserved; no demote stamp written.
+    assert row["lineage_archived_at"] is not None
+    assert row["lineage_demoted_at"] is None
+
+
 # ---------------------------------------------------------------------------
 # archive_lineage — grace expiration
 # ---------------------------------------------------------------------------
@@ -196,6 +260,86 @@ async def test_archive_lineage_marks_archived_keeps_parent(
     assert row["parent_agent_id"] is not None  # retained as audit anchor
     assert row["lineage_archived_at"] is not None
     assert row["provisional_lineage"] is False
+
+
+@pytest.mark.asyncio
+async def test_archive_lineage_clears_confirmed_at(
+    live_postgres_backend, confirmed_pair,
+):
+    """archive_lineage clears confirmed_at to prevent a zombie
+    'archived but confirmed' combination. The FSM never archives
+    confirmed rows in practice, but the helper's contract should not
+    leave that invariant to the caller."""
+    backend = live_postgres_backend
+    async with backend.acquire() as conn:
+        pre = await conn.fetchval(
+            "SELECT confirmed_at FROM core.identities WHERE agent_id = $1",
+            confirmed_pair.successor_id,
+        )
+    assert pre is not None  # precondition
+    ok = await backend.archive_lineage(confirmed_pair.successor_id)
+    assert ok is True
+    async with backend.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT confirmed_at, lineage_archived_at "
+            "FROM core.identities WHERE agent_id = $1",
+            confirmed_pair.successor_id,
+        )
+    assert row["confirmed_at"] is None
+    assert row["lineage_archived_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_archive_lineage_clears_declared_at_and_last_eval_at(
+    live_postgres_backend, seeded_pair,
+):
+    """archive clears lineage_declared_at and lineage_last_eval_at so a
+    future re-declaration starts a fresh grace and cadence cycle."""
+    backend = live_postgres_backend
+    await backend.stamp_lineage_eval(seeded_pair.successor_id)
+    async with backend.acquire() as conn:
+        pre = await conn.fetchrow(
+            "SELECT lineage_declared_at, lineage_last_eval_at "
+            "FROM core.identities WHERE agent_id = $1",
+            seeded_pair.successor_id,
+        )
+    assert pre["lineage_declared_at"] is not None
+    assert pre["lineage_last_eval_at"] is not None
+
+    ok = await backend.archive_lineage(seeded_pair.successor_id)
+    assert ok is True
+
+    async with backend.acquire() as conn:
+        post = await conn.fetchrow(
+            "SELECT lineage_declared_at, lineage_last_eval_at "
+            "FROM core.identities WHERE agent_id = $1",
+            seeded_pair.successor_id,
+        )
+    assert post["lineage_declared_at"] is None
+    assert post["lineage_last_eval_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_archive_lineage_skipped_for_already_demoted_row(
+    live_postgres_backend, seeded_pair,
+):
+    """Once a row is demoted, archive_lineage is a no-op (returns False)."""
+    backend = live_postgres_backend
+    ok_demote = await backend.demote_lineage(
+        seeded_pair.successor_id, reason="r1_unsupported",
+    )
+    assert ok_demote is True
+    ok_archive = await backend.archive_lineage(seeded_pair.successor_id)
+    assert ok_archive is False
+    async with backend.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT lineage_demoted_at, lineage_archived_at "
+            "FROM core.identities WHERE agent_id = $1",
+            seeded_pair.successor_id,
+        )
+    # Demote timestamp preserved; no archive stamp written.
+    assert row["lineage_demoted_at"] is not None
+    assert row["lineage_archived_at"] is None
 
 
 # ---------------------------------------------------------------------------
