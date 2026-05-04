@@ -1836,10 +1836,10 @@ class TestIssue165Provenance:
 
     def test_tag_does_not_clobber_existing_keys(self):
         from src.knowledge_graph import tag_provenance_source
-        existing = {"system_version": "v2.12.0", "captured_at": "2026-04-25"}
+        existing = {"system_version": "v2.13.0", "captured_at": "2026-04-25"}
         out = tag_provenance_source(existing, "explicit_store")
         assert out["source"] == "explicit_store"
-        assert out["system_version"] == "v2.12.0"
+        assert out["system_version"] == "v2.13.0"
         assert out["captured_at"] == "2026-04-25"
         # Existing source must not be overwritten
         with_existing_source = {"source": "preserved"}
