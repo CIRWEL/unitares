@@ -1,8 +1,8 @@
-# UNITARES Install Playbook (macOS, zero-assumption)
+# Unitares Install Playbook (macOS, zero-assumption)
 
 **Goal:** take a blank macOS install to a state where the governance MCP server is serving on `http://localhost:8767`, an MCP client can perform a check-in successfully, and the dashboard is reachable.
 
-**Audience:** anyone with admin on a Mac and shell familiarity. No prior knowledge of UNITARES, EISV, AGE, or the project's history is assumed.
+**Audience:** anyone with admin on a Mac and shell familiarity. No prior knowledge of Unitares, EISV, AGE, or the project's history is assumed.
 
 **This doc is grep-verifiable** against `docs/install/cross-machine-surface.md`. If a step claims a value that isn't either (a) the canonical default in source or (b) something the playbook tells you to set, it's a bug — file an issue.
 
@@ -78,7 +78,7 @@ ls "$(brew --prefix postgresql@17)/lib/postgresql/age.dylib"
 ## Step 3 — Create the database, install extensions, apply schema
 
 ```bash
-git clone https://github.com/CIRWEL/unitares.git
+git clone https://github.com/cirwel/unitares.git
 cd unitares
 
 createdb -h localhost -p 5432 governance

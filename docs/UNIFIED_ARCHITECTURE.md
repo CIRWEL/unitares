@@ -1,11 +1,11 @@
-# UNITARES Architecture
+# Unitares Architecture
 
 **How agents check in, how state evolves, how verdicts are issued.**
 
 Status: canonical prose summary. If this file and runtime code disagree, trust [dev/CANONICAL_SOURCES.md](dev/CANONICAL_SOURCES.md) and the referenced runtime files.
 
 ```
-  Any AI Agent                                    UNITARES Server
+  Any AI Agent                                    Unitares Server
   (Cursor, Claude Code,                           (port 8767)
    Claude Desktop, CLI, ...)
   ============================                    ========================
@@ -140,7 +140,7 @@ Agents contribute discoveries to a shared graph (PostgreSQL + AGE):
 
 ## Case Study: Lumen (Embodied Agent)
 
-One of the registered agents is [Lumen](https://github.com/CIRWEL/anima-mcp) — an embodied creature on a Raspberry Pi 4 that checks in to UNITARES every ~180 seconds (configurable via `ANIMA_GOVERNANCE_INTERVAL_SECONDS`).
+One of the registered agents is [Lumen](https://github.com/cirwel/anima-mcp) — an embodied creature on a Raspberry Pi 4 that checks in to Unitares every ~180 seconds (configurable via `ANIMA_GOVERNANCE_INTERVAL_SECONDS`).
 
 What makes Lumen distinctive as an agent:
 
@@ -148,6 +148,6 @@ What makes Lumen distinctive as an agent:
 - **Autonomous drawing** driven by a local EISV instance (DrawingEISV) that shares the same math but runs independently — coherence modulates how long Lumen draws and how picky it is about saving
 - **Proprioceptive loop** — the light sensor reads Lumen's own LEDs, making clarity partly self-referential
 
-Lumen demonstrates that UNITARES can govern agents with very different architectures — from ephemeral CLI agents that check in once to persistent embodied systems with continuous sensor streams. The same EISV dynamics, the same verdicts, the same knowledge graph.
+Lumen demonstrates that Unitares can govern agents with very different architectures — from ephemeral CLI agents that check in once to persistent embodied systems with continuous sensor streams. The same EISV dynamics, the same verdicts, the same knowledge graph.
 
-For Lumen's internal architecture (sensors, neural bands, DrawingEISV, LED pipeline), see [anima-mcp](https://github.com/CIRWEL/anima-mcp).
+For Lumen's internal architecture (sensors, neural bands, DrawingEISV, LED pipeline), see [anima-mcp](https://github.com/cirwel/anima-mcp).

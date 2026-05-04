@@ -4,7 +4,7 @@ Status: thin infrastructure reference. Use this for storage/backing-service fact
 
 ## Canonical Rule
 
-The canonical UNITARES database is whatever instance `DB_POSTGRES_URL` points to. Query that instance directly.
+The canonical Unitares database is whatever instance `DB_POSTGRES_URL` points to. Query that instance directly.
 
 ## Current Storage Model
 

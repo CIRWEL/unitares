@@ -1,5 +1,5 @@
 /**
- * UNITARES Dashboard — State Manager
+ * Unitares Dashboard — State Manager
  *
  * Simple pub/sub state container wrapping dashboard globals.
  * Modules read/write via state.get()/state.set() instead of bare globals.

@@ -1,5 +1,5 @@
 /**
- * UNITARES Dashboard — Resident Fleet Panel
+ * Unitares Dashboard — Resident Fleet Panel
  *
  * Renders a card per "always-on" agent (residents) at the top of the dashboard.
  * Residents are operator-configurable via UNITARES_RESIDENT_AGENTS (env) or

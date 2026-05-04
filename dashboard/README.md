@@ -1,4 +1,4 @@
-# UNITARES Governance Dashboard
+# Unitares Governance Dashboard
 
 **Created:** December 30, 2025
 **Last Updated:** April 2026

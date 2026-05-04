@@ -1,8 +1,8 @@
-# UNITARES Operator Runbook
+# Unitares Operator Runbook
 
 Status: live operator guide. Use for local operational procedures and triage, not for architecture truth.
 
-This is the simplest local operator path for running UNITARES governance on the Mac host.
+This is the simplest local operator path for running Unitares governance on the Mac host.
 
 ## Start
 

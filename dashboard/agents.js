@@ -1,5 +1,5 @@
 /**
- * UNITARES Dashboard — Agents Module
+ * Unitares Dashboard — Agents Module
  *
  * Agent rendering, filtering, detail modal, and export.
  * Extracted from dashboard.js to reduce monolith size.

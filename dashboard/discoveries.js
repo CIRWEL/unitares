@@ -1,5 +1,5 @@
 /**
- * UNITARES Dashboard — Discoveries Module
+ * Unitares Dashboard — Discoveries Module
  *
  * Discovery rendering, filtering, detail modal, and export.
  * Extracted from dashboard.js to reduce monolith size.

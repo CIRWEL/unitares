@@ -1,5 +1,5 @@
 /**
- * UNITARES Phase Space Visualization
+ * Unitares Phase Space Visualization
  *
  * Renders agents as particles in the E-I phase plane.
  * Basin contours, flow field, and live updates via WebSocket.

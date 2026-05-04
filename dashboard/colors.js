@@ -1,5 +1,5 @@
 /**
- * UNITARES Dashboard — Metric Color Utility
+ * Unitares Dashboard — Metric Color Utility
  *
  * Single source of truth for EISV metric colors, risk thresholds,
  * and heatmap gradients. Replaces 5 duplicated color computations.
