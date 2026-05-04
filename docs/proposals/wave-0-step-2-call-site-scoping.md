@@ -1,100 +1,210 @@
-# Wave 0 step 2 — coordination-failure call-site scoping
+# Wave 0 step 2 — coordination-failure call-site scoping (v0.2 post-council)
 
-**Purpose:** scope the four `coordination_failure.*` event-type emit sites for `audit.coordination_events` (PR #342). One pass; no code yet — surface the design choices first so the implementation PR ships with operator-anchored decisions instead of inferences.
+**Purpose:** scope the four `coordination_failure.*` emit families for `audit.coordination_events` (PR #342). v0.1 of this doc went out for council review (3-agent: dialectic-knowledge-architect, feature-dev:code-reviewer, live-verifier in parallel, adversarial framing). Council returned **1 BLOCK + 2 CONCERN-ONLY with near-BLOCK items** plus 4 factual REFUTED claims. v0.2 folds every finding.
 
-**Read this with:** `docs/proposals/beam-footprint-roadmap-v0.md` §86–110 (the envelope spec) and `src/coordination_events.py` (the emitter from #342).
+**Read this with:** `docs/proposals/beam-footprint-roadmap-v0.md` §86–110 (envelope spec), `src/coordination_events.py` (emitter from #342), the v0.1 council reports (in PR #342 thread).
+
+## v0.1 → v0.2 council changes
+
+| Finding | Origin | v0.2 fix |
+|---|---|---|
+| **BLOCK**: 1c "lossless" framing wrong — auth/refused/DNS fail same way on retry | code-reviewer | **Dropped 1c.** Bootstrap-failure path now writes a structured stderr line; Chronicler sweeps stderr into the table on next healthy connect. §1 below. |
+| **BLOCK**: emitter raises inside `except` clauses → masks original exception | code-reviewer | **Mandatory** `try/except Exception: logger.warning(...)` wrapper at every wired site. Pattern locked in §"Mandatory wrapper pattern" below. |
+| **REFUTED**: `_load_binding_from_redis` has NO `CancelledError` site — only `TimeoutError` | live-verifier | **Phantom site removed.** Real CancelledError sites in `background_tasks.py` substituted (verified: lines 415 + 423). §2. |
+| **REFUTED**: `ExecutorPool` has no `submit()` method, no pending-count metric | live-verifier | **3a re-scoped** as "build the metric, then wire it." LOC estimate revised ~50→~120. §3. |
+| **REFUTED**: `@mcp_tool` wrapper has no `agent_id` or pool reference | live-verifier | **Pool/agent_id source explicit** — wrapper extracts agent_id from `arguments`; pool fetched via module-level `get_pool()`. §4. |
+| **REFUTED**: line anchors drifted (203-213 not 208-219; 193 not 173; 4 indexes not 3) | live-verifier | All anchors corrected throughout. |
+| **C5 (near-BLOCK)**: `payload.subtype` violates §110 spirit — same anti-pattern one field deeper | architect | **Migration 035 regex bumped to `^(coordination_failure)(\.[a-z_]+)+$`** (sub-namespace allowed). All sub-discriminators land in event_type: `coordination_failure.mcp_handler_timeout.identity_step`, etc. |
+| **C3 (CONCERN)**: mcp_handler_timeout + anyio_cancellation co-occur — no dedup story | architect | **`incident_id` UUID** added to payload contract. All events fired from one root cause share an incident_id. Dashboard-side aggregation does the dedup; no special server logic. §"Dedup contract" below. |
+| **C1 (near-BLOCK)**: "spurious CancelledError" lacks structural discriminator | architect | Replaced pinned-list scoping with **explicit named sub-types per call site** (`coordination_failure.anyio_cancellation.background_task`, `.executor_loop`, etc.). Each site documents its discriminator at landing time; no implicit "spurious vs expected" classification. §2. |
+| **C2 (near-BLOCK)**: Wave 1 exit criterion evaluable on incomplete data during 2A→2B→2C window | architect | **Wave 1 clock starts only when 2C lands**, per the new §"Wave 1 readiness gate" below. PR descriptions enforce this. |
+| **N1 (architect)**: ~7 silent commitments not on decisions list | architect | All promoted. Decisions table now has 12 rows. |
+
+## The four event_type families (v0.2)
+
+Migration 035's regex now allows sub-namespaces (post-council change above). Wave 0 step 2 wires these specific event_types — all start with `coordination_failure.`:
+
+| Family | Sub-types in Wave 0 step 2 | Source |
+|---|---|---|
+| `asyncpg_connect_error` | bootstrap, runtime | §1 |
+| `anyio_cancellation` | background_task, executor_loop | §2 |
+| `executor_pool_exhaustion` | acquire_pending_high_water | §3 |
+| `mcp_handler_timeout` | tool_decorator, resident_progress, identity_step | §4 |
+
+## Mandatory wrapper pattern (every wired site)
+
+Every `await emit_event(...)` call MUST be wrapped:
+
+```python
+try:
+    await emit_event(
+        pool,
+        service=...,
+        event_type=...,
+        payload={"incident_id": str(incident_id), ...},
+    )
+except Exception as emit_exc:  # noqa: BLE001 — observability MUST NOT mask the real bug
+    logger.warning(
+        "coordination_events emit failed (event_type=%s): %r — original exception preserved",
+        event_type,
+        emit_exc,
+    )
+```
+
+Per code-reviewer BLOCK-2: every wired site is inside an `except` clause; an emitter that raises would replace the original `ConnectionError`/`TimeoutError`/`CancelledError` with the emit-failure traceback. The wrapper makes that impossible by structural discipline. Reviewers MUST reject any PR that emits without this wrapper.
+
+## Dedup contract (incident_id)
+
+When multiple event_type rows fire from one root cause (e.g., MCP handler timeout caused by anyio task-group cancellation that cancelled an asyncpg query), each emit's `payload.incident_id` MUST be the same UUID. Generated at the outermost emit site of the cluster; passed down via the exception chain (or via a contextvar if the chain is broken).
+
+Dashboard / Sentinel rules aggregate by `incident_id` for true incident counts. Raw event_type counts remain useful for "which class fires most" but are explicitly NOT incident counts.
+
+This is the only protection against double-counting that the doc commits to. Roadmap §129's "zero coordination-class incidents" is evaluated against `COUNT(DISTINCT payload->>'incident_id')`, not raw row count.
+
+## Wave 1 readiness gate
+
+Wave 1's exit criterion (roadmap §129: "the 14-day window AND the Wave 0 incident-feed must both hold") is now formally **gated on Wave 0 step 2C landing**. The 14-day window cannot start counting before all four event_type families have a wired emitter. Otherwise Wave 1 would pass on under-counted data — exactly what architect C2 surfaced.
+
+PR descriptions for 2A and 2B MUST include a row in the test plan table:
+
+| Wave 1 readiness | This PR contributes _______ event_type families. _______ remain before clock can start. |
 
 ---
 
-## 1. `coordination_failure.asyncpg_connect_error` — clean chokepoint
+## §1. `coordination_failure.asyncpg_connect_error`
 
-**Where:** `src/db/postgres_backend.py:208-219` `_create_pool`.
+**Two sub-types per call-site:**
 
-```python
-except asyncio.TimeoutError:
-    raise ConnectionError(...)
-except Exception as e:
-    raise ConnectionError(f"Failed to connect to PostgreSQL ... {e}") from e
+### 1.bootstrap
+
+**Where:** `src/db/postgres_backend.py:203-213` `_create_pool` (line range corrected post-live-verifier).
+
+**Status of pool at raise:** None. `_create_pool` returns the pool to `_ensure_pool` (line 175); the assignment to `self._pool` happens after return. So at raise time, `self._pool is None`.
+
+**Path:** stderr structured-log line, NOT a separate `asyncpg.connect`. Reasoning per architect C4 + code-reviewer BLOCK-1: a fresh connect with the same credentials would fail the same way for the most-diagnostic cases (auth, refused, DNS). The architecturally honest answer is "we cannot reach the table when the table's substrate is down."
+
+**Stderr line format** (single-line JSON, parseable by Chronicler sweeper):
+
+```json
+{"_coord_event":true,"service":"governance_mcp","event_type":"coordination_failure.asyncpg_connect_error.bootstrap","payload":{"error_class":"OSError","db_url_hash":"abc123","timeout_s":5.0,"attempt":1,"incident_id":"<uuid>"},"context":{...}}
 ```
 
-**Plan:** add `await emit_event(pool=None_or_self, service="governance_mcp", event_type=ASYNCPG_CONNECT_ERROR, payload={...})` before each `raise`. Payload: `{error_class, db_url_hash, timeout_s, attempt}`.
+**Chronicler sweeper** (separate Wave 0 step 3 work — runs on its existing daily cadence): `tail -F /Users/cirwel/Library/Logs/governance-mcp-stderr.log | grep '_coord_event' | jq | INSERT into audit.coordination_events`. Buffered between sweeps; loss bounded to "events from windows where governance-mcp was down AND Chronicler hadn't run yet" — a small tail.
 
-**Choice point — emit before the pool exists:** the very first connect error is the one we most want to log, but there's no pool to write to yet. Options:
-- **(a)** Lazy retry — buffer the event in-memory and emit after the next successful connect lands. Lossless but couples observability to recovery.
-- **(b)** Skip the bootstrap-failure case — only emit on subsequent connect errors after the pool has been up. Simple but misses the most diagnostic event.
-- **(c) [recommended]** Use a separate short-lived `asyncpg.connect` direct-INSERT (no pool, no transaction) just for the event. Slow path for the failure case, which is fine — failures are rare; the cost is bounded.
+### 1.runtime
 
-## 2. `coordination_failure.anyio_cancellation` — scope question
+**Where:** every connection-acquire failure within an established pool (e.g., `asyncpg.InterfaceError` on `pool.acquire()`). Wired at the `ExecutorPool.acquire` failure path in `src/db/executor_pool.py`.
 
-**Where:** ~10 `except (asyncio.)CancelledError` sites across `src/background_tasks.py`, `src/knowledge_graph_lifecycle.py`, etc. Most are normal lifecycle (shutdown, cycle timeout, deliberate cancel).
+**Path:** normal `await emit_event(pool=self_or_global, ...)` — pool is established, table is reachable. Use the mandatory wrapper.
 
-**The problem:** emitting on EVERY `CancelledError` would be noisy and useless. The roadmap's intent is the *spurious* cancellations from the anyio-asyncio conflict (CLAUDE.md "Known Issue") — when the MCP SDK's task group cancels an asyncpg/Redis call mid-flight without a real shutdown signal.
+---
 
-**Choice point — what counts as "spurious":**
-- **(a) [recommended]** Only emit when CancelledError fires INSIDE a known-conflict path: `_load_binding_from_redis` (identity_step.py), `deep_health_probe_task` (background_tasks.py:380), and any `run_in_executor` call that wraps a sync DB client. Pin the emit site list explicitly in the PR description; reviewer audits each.
-- **(b)** Emit on every CancelledError, tag `payload.expected: True|False` based on whether the task name is in a known-shutdown allowlist. Higher signal volume, ambiguous classification.
-- **(c)** Defer — wait for Wave 1's Sentinel-on-BEAM canary to surface real conflict events first, then instrument the specific paths it identifies. Punts the measurement we said we needed.
+## §2. `coordination_failure.anyio_cancellation`
 
-## 3. `coordination_failure.executor_pool_exhaustion` — needs probe target
+**Sub-types in Wave 0 step 2:**
 
-**Where:** `src/db/executor_pool.py` is the dedicated background-thread pool that isolates asyncpg from anyio. "Exhaustion" here means tasks queueing on the pool's submit-queue beyond a threshold, or the executor loop falling behind.
+### 2.background_task
 
-**The problem:** the existing ExecutorPool doesn't have an exhaustion signal. It just submits coroutines to the executor loop — backpressure is invisible until the queue grows unbounded.
+**Where:** `src/background_tasks.py` — verified CancelledError catch sites at:
+- line 78 (in `_supervised_create_task` outer guard)
+- line 147 (in `wait_for` timeout-and-cancel path)
+- line 172, line 178, line 213 (per-task except)
+- line 415 + 423 in `deep_health_probe_task`
 
-**Choice point — where to measure:**
-- **(a) [recommended]** Add a counter at `ExecutorPool.submit` for `pending_count`; emit when `pending_count > threshold` (e.g., 50) within a 1-min window. Coarse but actionable. Threshold is operator-tunable.
-- **(b)** Wrap `asyncio.wait_for` around each submit with timeout=2s; emit on TimeoutError. Catches latency spikes but fires on *any* slow query, not just exhaustion.
-- **(c)** Defer — instrument when we have a real pool exhaustion incident to characterize. Punts.
+**Approach:** instrument the OUTER supervisor (`_supervised_create_task` line 78 area). Single emit point; payload carries `task_name` so per-task attribution lands without per-site instrumentation. Per architect C1 — explicit-named sub-type means future maintainers see the contract in the event_type, not in implicit "is this spurious" judgment.
 
-## 4. `coordination_failure.mcp_handler_timeout` — clean chokepoint
+### 2.executor_loop
+
+**Where:** `src/db/executor_pool.py` — when the executor loop's main task receives a CancelledError that wasn't operator-initiated (e.g., GC cancelled the pool's lifecycle task during anyio teardown).
+
+**Approach:** wrap the executor loop's main coroutine in a try/except that distinguishes shutdown-initiated cancel (a flag the operator sets) from external cancel.
+
+**NOT a Wave 0 step 2 wired site:** `_load_binding_from_redis` (live-verifier REFUTED — function has no CancelledError catch, only TimeoutError; would require ADDING a behavior change to instrument). Re-evaluate after the dashboard surfaces actual anyio incident volume.
+
+---
+
+## §3. `coordination_failure.executor_pool_exhaustion`
+
+### 3.acquire_pending_high_water
+
+**Where:** `src/db/executor_pool.py`. Live-verified state: NO `submit()` method. Operations go through `acquire() -> _AcquireContext -> _await_on_loop`.
+
+**Implementation shape (re-scoped post-council):**
+- Add `self._pending = 0` + `threading.Lock` to `ExecutorPool.__init__`
+- Increment in `_AcquireContext.__aenter__`, decrement in `__aexit__` (need to thread the counter ref into the context)
+- Add `pending_count` property
+- Periodic check task on the main loop: every 30s, if `pending_count > THRESHOLD` (env-tunable, default 50), emit ONCE per high-water episode (debounced — re-emit only after pending drops below threshold and rises again)
+
+**LOC estimate (revised):** ~120 LOC + tests, NOT ~50. Includes `_AcquireContext` refactor to carry a counter ref.
+
+**Re-evaluation gate:** if the implementation lift is genuinely > 200 LOC (e.g., `_AcquireContext` lifecycle is more entangled than the live-verifier surfaced), defer to "deferred-pending-real-incident" rather than ship a half-baked metric.
+
+---
+
+## §4. `coordination_failure.mcp_handler_timeout`
+
+**Sub-types in Wave 0 step 2:**
+
+### 4.tool_decorator
 
 **Where:** `src/mcp_handlers/decorators.py:108` `@mcp_tool` wrapper's `except asyncio.TimeoutError`.
 
-```python
-except asyncio.TimeoutError:
-    logger.warning(f"Tool '{tool_name}' timed out after {timeout}s")
-    return [error_response(...)]
-```
+**Pool source (corrected post-live-verifier):** wrapper has NO context-injected pool. Use module-level `from src.db import get_pool` and call `get_pool()` inside the except path. CLAUDE.md anyio caveat applies — `get_pool()` MUST be already-initialized at this point (it is — handlers fire after pool init). Document this as a load-order assumption.
 
-**Plan:** add `await emit_event(pool, service="governance_mcp", event_type=MCP_HANDLER_TIMEOUT, payload={tool_name, timeout_s, elapsed_s, agent_id})` before the `return`. The pool is reachable via the existing handler-context (every MCP handler has a DB connection available).
+**agent_id source:** extract from `arguments.get("agent_id")` or `arguments.get("client_session_id")` if the tool injected it. May be None — that's fine, the column is nullable.
 
-**Choice point — secondary timeout sites:**
-- `resident_progress.py:96` — wraps an INSERT in `asyncio.wait_for(_insert(), timeout=4.5)`. Emits a separate `coordination_failure.mcp_handler_timeout` with payload distinguishing tool-level vs sub-operation timeout.
-- `identity_step.py:173` — Redis fallback path with 500ms timeout. Same event_type, payload.subtype="identity_step".
+### 4.resident_progress
 
-**Recommended:** ship the decorator chokepoint in PR A; secondary sites in a follow-up PR after the dashboard surfaces what the volume looks like.
+**Where:** `src/mcp_handlers/resident_progress.py:95` `await asyncio.wait_for(_insert(), timeout=4.5)` (line 95 not 96 — except clause is 96).
+
+### 4.identity_step
+
+**Where:** `src/mcp_handlers/middleware/identity_step.py:193` `_load_binding_from_redis` 500ms `wait_for` (line 193 not 173 per live-verifier REFUTED).
 
 ---
 
-## Recommended PR shape
+## Recommended PR shape (v0.2)
 
-**Wave 0 step 2A — clean chokepoints (small, low-risk):**
-- `coordination_failure.asyncpg_connect_error` (path **1c** above)
-- `coordination_failure.mcp_handler_timeout` at the decorator chokepoint only
-- ~50 LOC + tests
+**Wave 0 step 2A — clean chokepoints:**
+- 1.bootstrap (stderr structured log, no DB write)
+- 1.runtime (ExecutorPool.acquire failure path)
+- 4.tool_decorator
+- ~80 LOC + tests + module-level `get_pool` documentation
+- Wave 1 readiness: contributes 2/4 families (asyncpg_connect_error, mcp_handler_timeout)
 
-**Wave 0 step 2B — anyio + executor (scoped, needs operator decisions):**
-- `coordination_failure.anyio_cancellation` per **2a**
-- `coordination_failure.executor_pool_exhaustion` per **3a** with tunable threshold
-- ~150 LOC + tests + a tunable threshold env var
+**Wave 0 step 2B — anyio + executor:**
+- 2.background_task (supervisor-level)
+- 2.executor_loop
+- 3.acquire_pending_high_water (with the counter refactor)
+- ~150-200 LOC + tests
+- Wave 1 readiness: contributes 2/4 families (anyio_cancellation, executor_pool_exhaustion)
+- After 2B lands, Wave 1's 14-day clock can start
 
-**Wave 0 step 2C — secondary timeout sites:**
-- After step 3 (Chronicler projection) lands and dashboard shows timeout volume
+**Wave 0 step 2C — secondary timeout sub-types + Chronicler stderr sweeper:**
+- 4.resident_progress, 4.identity_step
+- Chronicler stderr-line → audit.coordination_events sweeper (carries 1.bootstrap events into the table)
+- ~80 LOC + tests
+- Wave 1 readiness: complete; dashboard panel can land in step 4
 
-Splitting 2A from 2B/C keeps the high-confidence emits unblocked by the scope-decision emits.
-
-## Decisions you need to make
+## Decisions you need to make (v0.2 — 12 rows)
 
 | # | Choice | My recommendation |
 |---|---|---|
-| 1 | Bootstrap-failure asyncpg event path | **1c** — short-lived direct-INSERT |
-| 2 | Spurious CancelledError scoping | **2a** — pinned site list, audited |
-| 3 | Executor exhaustion measurement | **3a** — pending_count threshold |
-| 4 | Secondary timeout sites | Defer to step 2C |
-| 5 | PR splitting | 2A + 2B + 2C as separate PRs |
+| 1 | Bootstrap-failure asyncpg event path | Stderr structured-log + Chronicler sweep (post-council pivot) |
+| 2 | Spurious CancelledError scoping | Per-site explicit sub-types; no implicit "spurious vs expected" classification |
+| 3 | Executor exhaustion measurement | `pending_count` counter via `_AcquireContext` refactor (~120 LOC, not ~50) |
+| 4 | Sub-namespace `event_type` instead of `payload.subtype` | Migration 035 regex amended (this PR); all sub-discriminators in event_type |
+| 5 | Dedup of co-occurring events | `payload.incident_id` UUID; dashboard aggregates by it |
+| 6 | Wave 1 readiness gate | 14-day clock starts only when 2C lands; PR descriptions enforce |
+| 7 | Mandatory wrapper at emit sites | Yes — locked pattern, reviewer BLOCK if missing |
+| 8 | Emit timing relative to original `raise` | After the `raise` would lose the event on process death; before the `raise` adds latency. **Recommendation: before** — observability beats latency in the failure path |
+| 9 | Pool source at decorator chokepoint | Module-level `from src.db import get_pool`; load-order assumption documented |
+| 10 | Sentinel rule design timing | Wait until 2C lands so rules can reference all 4 families |
+| 11 | PR splitting | 2A (clean) + 2B (counter refactor) + 2C (secondary + sweeper) |
+| 12 | Counter-refactor risk threshold | If 2B implementation crosses 200 LOC, defer 3 to "wait for real incident" rather than over-build |
 
-If you accept the recommendations as a block, say "ship 2A" or "ship all" and I take it from there. If you want a different shape on any row, name it and I redirect.
+If you accept the v0.2 recommendations as a block: "ship 2A". If you want to redirect any row, name it. If you want a third council pass on this revision, say so — the architect lane explicitly noted this is a "fold then re-pass" situation.
 
 ---
 
-**Cost estimate:** 2A is ~1hr including tests. 2B is ~3hr because of the threshold-tuning and the per-site audit on the CancelledError list. 2C waits on Chronicler projection (step 3). The roadmap's "days, not weeks" framing fits if 2A+2B land cleanly without re-scope churn.
+**Cost estimate (revised):** 2A is ~2hr including tests + Chronicler-sweeper-stub. 2B is ~5hr (the counter refactor is the variable). 2C is ~3hr. Roadmap's "days, not weeks" framing still fits if 2A+2B+2C land in sequence without re-scope churn.

@@ -111,6 +111,20 @@ def test_validate_event_type_rejects_unknown_family():
         _validate_event_type("coordination_recovery.something")
 
 
+def test_validate_event_type_accepts_sub_namespace():
+    """Sub-namespaces extend the event_type contract (council C5): subtype
+    discrimination lives in event_type, NOT in payload.subtype.
+
+    Examples that MUST pass:
+      coordination_failure.mcp_handler_timeout                    (one segment)
+      coordination_failure.mcp_handler_timeout.identity_step      (two segments)
+      coordination_failure.mcp_handler_timeout.resident_progress  (alt subtype)
+    """
+    _validate_event_type("coordination_failure.mcp_handler_timeout.identity_step")
+    _validate_event_type("coordination_failure.mcp_handler_timeout.resident_progress")
+    _validate_event_type("coordination_failure.anyio_cancellation.background_task")
+
+
 def test_validate_event_type_rejects_missing_subtype():
     with pytest.raises(ValueError, match="family.subtype"):
         _validate_event_type("coordination_failure")

@@ -53,12 +53,18 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- event_type namespace CHECK. Wave 0 lands the coordination_failure.* family.
+-- Sub-namespaces extend by appending '.<lowercase_subtype>' (e.g.
+-- 'coordination_failure.mcp_handler_timeout.identity_step') so call-site
+-- discriminators land as part of the event_type contract — NOT as ad-hoc
+-- payload subtype enums (council architect C5: "subtype-in-payload re-creates
+-- the §110 anti-pattern one field deeper").
+--
 -- Future waves (e.g. coordination_recovery.*, coordination_lifecycle.*) extend
 -- by adding the family prefix here, never by reusing existing values.
 DO $$ BEGIN
     ALTER TABLE audit.coordination_events
         ADD CONSTRAINT coordination_events_event_type_namespace
-        CHECK (event_type ~ '^(coordination_failure)\.[a-z_]+$');
+        CHECK (event_type ~ '^(coordination_failure)(\.[a-z_]+)+$');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- payload + context MUST be JSON objects (not bare null/scalar/array).

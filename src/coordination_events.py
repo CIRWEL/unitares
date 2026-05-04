@@ -112,24 +112,33 @@ def _build_context() -> dict[str, Any]:
 
 def _validate_event_type(event_type: str) -> None:
     """Mirror of migration 035's regex CHECK on event_type, raised client-side
-    so callers get a precise typed error before the DB rejects."""
+    so callers get a precise typed error before the DB rejects.
+
+    Sub-namespaces are ALLOWED — `coordination_failure.mcp_handler_timeout` and
+    `coordination_failure.mcp_handler_timeout.identity_step` both pass. Per the
+    council architect C5 finding (post-v0.1 review): subtype discrimination
+    belongs in the event_type contract, not in a payload subtype enum.
+    """
     if not isinstance(event_type, str):
         raise ValueError(f"event_type must be a string, got {type(event_type).__name__}")
     parts = event_type.split(".")
-    if len(parts) != 2:
+    if len(parts) < 2:
         raise ValueError(
-            f"event_type {event_type!r} must be 'family.subtype' (RFC roadmap §94)"
+            f"event_type {event_type!r} must be 'family.subtype' or "
+            f"'family.subtype.subsubtype' (RFC roadmap §94)"
         )
-    family, subtype = parts
+    family = parts[0]
     if family != "coordination_failure":
         raise ValueError(
             f"event_type {event_type!r}: family {family!r} not in Wave 0 set "
             f"({{'coordination_failure'}}). Add via migration when extending."
         )
-    if not subtype or not all(c.islower() or c == "_" for c in subtype):
-        raise ValueError(
-            f"event_type {event_type!r}: subtype must be lowercase + underscores"
-        )
+    for segment in parts[1:]:
+        if not segment or not all(c.islower() or c == "_" for c in segment):
+            raise ValueError(
+                f"event_type {event_type!r}: every segment must be "
+                f"lowercase + underscores (failed segment: {segment!r})"
+            )
 
 
 async def emit_event(
