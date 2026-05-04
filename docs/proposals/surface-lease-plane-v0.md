@@ -1,7 +1,7 @@
 ---
-status: v0.11+ (Phase A SHIPPED 2026-05-03 via PR #305; post-Phase-A amendments: §7.5 v0.9 Pi remote_heartbeat TTL, §7.2.8/9 v0.10 payload-shape + scheme grammar, §7.13 v0.11 substrate-state separation; §7.13.3 v0.11.3 reviewer-judgment-at-review-time accepted)
+status: v0.11+ (Phase A SHIPPED 2026-05-03 via PR #305; post-Phase-A amendments: §7.5 v0.9 Pi remote_heartbeat TTL, §7.2.8/9 v0.10 payload-shape + scheme grammar, §7.13 v0.11 substrate-state separation; §7.13.3 v0.11.3 reviewer-judgment-at-review-time accepted; Phase B promotion eligibility window opens 2026-05-16 for `dialectic:/` per §6.2 ordering — earliest date any surface_kind satisfies §6.1.1's 14-day advisory-window minimum given Phase A close on 2026-05-02; mechanical evaluator at `scripts/lease_plane/evaluate_phase_b_promotion.py`)
 authored: 2026-04-30
-amended: 2026-04-30 (v0.1–v0.8 same session); 2026-05-02 (v0.9 §7.5); 2026-05-02 (v0.10 §7.2.8/9); 2026-05-03 (v0.11 §7.13 substrate-state separation)
+amended: 2026-04-30 (v0.1–v0.8 same session); 2026-05-02 (v0.9 §7.5); 2026-05-02 (v0.10 §7.2.8/9); 2026-05-03 (v0.11 §7.13 substrate-state separation); 2026-05-04 (status: Phase B eligibility window + evaluator pointer)
 council_pass_1: 2026-04-30
 ack_pass_1: 2026-04-30
 author_session: agent-68437d77-65c (claude_code-claude_68437d77)
