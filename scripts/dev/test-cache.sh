@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # test-cache.sh — tree-hash pytest cache
 #
-# Hashes all tracked Python files in src/, tests/, agents/.
+# Hashes all tracked Python files in src/, tests/, agents/, governance_core/.
+# governance_core/ is included because src/ imports from it (`from governance_core
+# import X`); changes there must invalidate the cache, but the dir was originally
+# omitted and produced false-HIT cached-green when only core changed.
 # If tests already passed against this exact tree state, prints
 # the cached summary and exits 0 without re-running pytest.
 #
@@ -33,7 +36,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --- compute tree hash ---
-TREE_HASH=$(git ls-files -- 'src/*.py' 'tests/*.py' 'agents/*.py' | sort | xargs cat | shasum -a 256 | cut -d' ' -f1)
+TREE_HASH=$(git ls-files -- 'src/*.py' 'tests/*.py' 'agents/*.py' 'governance_core/*.py' | sort | xargs cat | shasum -a 256 | cut -d' ' -f1)
 CACHE_FILE="$CACHE_DIR/$TREE_HASH"
 
 # --- cache hit (fast path, no lock) ---

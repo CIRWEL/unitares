@@ -69,10 +69,16 @@ def test_process_update(monitor):
 
 def test_multi_updates(monitor):
     """Test multiple updates"""
-    print("\n3. Testing 20 updates...")
+    # Was 20 iterations (~108s wall — each process_update is ~5s). The
+    # assertion is "at least one EISV component evolved by > 0.001" — 5
+    # iterations satisfy that with the same random-input distribution.
+    # Stress / convergence properties live in the dedicated
+    # test_lambda1_bounds_under_stress / test_convergence_over_time tests.
+    iterations = 5
+    print(f"\n3. Testing {iterations} updates...")
 
     results = []
-    for i in range(20):
+    for i in range(iterations):
         agent_state = {
             'parameters': np.random.randn(128) * 0.01,
             'ethical_drift': np.random.rand(3) * 0.1,
@@ -82,7 +88,7 @@ def test_multi_updates(monitor):
         result = monitor.process_update(agent_state)
         results.append(result)
 
-    print(f"   ✅ Completed 20 updates")
+    print(f"   ✅ Completed {iterations} updates")
     print(f"   - Final E: {results[-1]['metrics']['E']:.3f}")
     print(f"   - Final I: {results[-1]['metrics']['I']:.3f}")
     print(f"   - Final S: {results[-1]['metrics']['S']:.3f}")

@@ -20,6 +20,7 @@ Usage:
         response["synthesis"] = synthesis
 """
 
+import asyncio
 from typing import Optional, List, Dict, Any
 import os
 
@@ -114,8 +115,6 @@ async def call_local_llm(
         extra_kwargs["extra_body"] = {"reasoning": {"effort": "none"}}
 
     try:
-        import asyncio
-
         # Run synchronous OpenAI call in executor to avoid blocking
         loop = asyncio.get_running_loop()
 
@@ -562,7 +561,6 @@ async def is_llm_available() -> bool:
 
     # Quick ping test
     try:
-        import asyncio
         loop = asyncio.get_running_loop()
 
         def _ping():

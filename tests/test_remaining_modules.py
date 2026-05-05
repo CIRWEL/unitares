@@ -608,15 +608,20 @@ class TestCallLocalLLM:
 
     @pytest.mark.asyncio
     async def test_timeout_returns_none(self):
+        # Patch asyncio.wait_for to actually raise TimeoutError so we exercise
+        # the `except asyncio.TimeoutError` handler in call_local_llm. The
+        # prior version blocked an executor thread for 5s via time.sleep and
+        # asserted None, which passed for the wrong reason — the lambda
+        # implicitly returned None, never tripping the timeout path. Net win:
+        # ~5s saved per full run AND the test now matches its name.
         mock_client = MagicMock()
 
-        def slow_call(**kwargs):
-            time.sleep(5)
-
-        mock_client.chat.completions.create.side_effect = slow_call
+        async def _raise_timeout(*args, **kwargs):
+            raise asyncio.TimeoutError()
 
         with patch("src.mcp_handlers.support.llm_delegation.OPENAI_AVAILABLE", True), \
-             patch("src.mcp_handlers.support.llm_delegation._get_ollama_client", return_value=mock_client):
+             patch("src.mcp_handlers.support.llm_delegation._get_ollama_client", return_value=mock_client), \
+             patch("src.mcp_handlers.support.llm_delegation.asyncio.wait_for", side_effect=_raise_timeout):
             result = await call_local_llm("test", timeout=0.01)
             assert result is None
 
