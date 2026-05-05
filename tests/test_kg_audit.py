@@ -91,6 +91,18 @@ class TestScoreDiscovery:
         result = _score_discovery(d, lifecycle)
         assert result["bucket"] == "healthy"
 
+    def test_healthy_with_related_links(self):
+        """Entry with related_to links should be 'healthy' regardless of age.
+
+        Related-to is a structural anchor — entries cited via related_to are
+        load-bearing even without replies. Symmetric with responses_from.
+        """
+        from src.knowledge_graph_lifecycle import _score_discovery, KnowledgeGraphLifecycle
+        d = _make_discovery(age_days=60, related_to=["disc-anchor"])
+        lifecycle = KnowledgeGraphLifecycle()
+        result = _score_discovery(d, lifecycle)
+        assert result["bucket"] == "healthy"
+
     def test_aging_entry(self):
         """Entry 10 days old with no activity should be 'aging'."""
         from src.knowledge_graph_lifecycle import _score_discovery, KnowledgeGraphLifecycle
