@@ -692,6 +692,51 @@ class IdentityMixin:
                 successor_id,
             )
 
+    async def select_lineage_eval_candidates(
+        self,
+        *,
+        sweep_cadence_hours: int = 6,
+        limit: int = 100,
+    ) -> List[str]:
+        """R2 PR 4: agents with provisional or confirmed lineage whose
+        ``lineage_last_eval_at`` is older than ``sweep_cadence_hours``
+        (or NULL).
+
+        Excludes terminal-state rows (``lineage_archived_at IS NOT NULL``
+        or ``lineage_demoted_at IS NOT NULL``) — the FSM's terminal-state
+        guard would skip them anyway, but excluding here saves the
+        round-trip and matches the partial-index predicate from
+        migration 036 so the planner can use
+        ``idx_identities_provisional_eval``.
+
+        Ordering: ``NULLS FIRST`` so never-evaluated rows are picked up
+        first. ``LIMIT`` prevents one cycle from doing unbounded work;
+        remaining candidates are picked up on the next tick.
+
+        Uses ``make_interval(hours => $1)`` rather than
+        ``($1 || ' hours')::interval`` — the former is type-safe (integer
+        parameter, no string concatenation).
+        """
+        async with self.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT agent_id
+                  FROM core.identities
+                 WHERE parent_agent_id IS NOT NULL
+                   AND lineage_archived_at IS NULL
+                   AND lineage_demoted_at IS NULL
+                   AND (provisional_lineage = TRUE OR confirmed_at IS NOT NULL)
+                   AND (
+                       lineage_last_eval_at IS NULL
+                    OR lineage_last_eval_at < now() - make_interval(hours => $1)
+                   )
+                 ORDER BY lineage_last_eval_at NULLS FIRST
+                 LIMIT $2
+                """,
+                int(sweep_cadence_hours), int(limit),
+            )
+        return [r["agent_id"] for r in rows]
+
     async def read_lineage_state(
         self, successor_id: str
     ) -> Optional[Dict[str, Any]]:

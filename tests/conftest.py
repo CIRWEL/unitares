@@ -147,6 +147,11 @@ def _isolate_db_backend(monkeypatch):
     # explicit stub avoids the AsyncMock auto-child coroutine-leak
     # pattern noted in R1 v3.2-E.
     mock_backend.read_lineage_state.return_value = None
+    # R2 PR 4 — lineage-eval sweeper candidate selector. Default to an
+    # empty list so tests that don't seed candidates exercise the
+    # zero-work cycle path. Explicit stub avoids the AsyncMock auto-child
+    # coroutine-leak pattern.
+    mock_backend.select_lineage_eval_candidates.return_value = []
     # R2 PR 3 — cross-role pre-check reads `metadata.tags[0]`. Default
     # to None so the charitable orphan branch fires by default in unit
     # tests that don't seed a class tag (per the helper's contract:
