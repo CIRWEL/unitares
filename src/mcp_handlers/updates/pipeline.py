@@ -27,19 +27,28 @@ class _EnrichmentEntry(NamedTuple):
     order: int
     name: str
     is_async: bool
+    lite_safe: bool = False
 
 
 _ENRICHMENTS: List[_EnrichmentEntry] = []
 
 
-def enrichment(order: int):
-    """Register a function in the enrichment pipeline at *order*."""
+def enrichment(order: int, *, lite_safe: bool = False):
+    """Register a function in the enrichment pipeline at *order*.
+
+    lite_safe=True marks the enrichment as response-shaping only — safe to
+    skip when the caller requested response_mode='minimal' (the lite path
+    used by embedded brokers like anima-broker that read action+margin and
+    discard the rest). Default False keeps existing behavior for callers
+    that use non-lite modes.
+    """
     def decorator(fn: Callable) -> Callable:
         _ENRICHMENTS.append(_EnrichmentEntry(
             fn=fn,
             order=order,
             name=fn.__name__,
             is_async=inspect.iscoroutinefunction(fn),
+            lite_safe=lite_safe,
         ))
         _ENRICHMENTS.sort(key=lambda e: e.order)
         return fn
@@ -54,8 +63,12 @@ async def run_enrichment_pipeline(ctx) -> None:
     runs serially today; this instrumentation is the prerequisite for
     deciding which enrichments are safe to parallelize.
     """
+    is_lite = (getattr(ctx, "arguments", None) or {}).get("response_mode") == "minimal"
     timings: List[tuple[str, int]] = []
     for entry in _ENRICHMENTS:
+        if is_lite and entry.lite_safe:
+            timings.append((entry.name, -1))  # -1 sentinel = skipped (lite)
+            continue
         start = time.perf_counter()
         try:
             if entry.is_async:
@@ -67,7 +80,9 @@ async def run_enrichment_pipeline(ctx) -> None:
         timings.append((entry.name, int((time.perf_counter() - start) * 1000)))
 
     if timings:
-        rendered = " ".join(f"{name}={ms}ms" for name, ms in timings)
+        rendered = " ".join(
+            f"{name}={'skip' if ms < 0 else f'{ms}ms'}" for name, ms in timings
+        )
         logger.info(f"[enrichment_phases] {rendered}")
 
 
