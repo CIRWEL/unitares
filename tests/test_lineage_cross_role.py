@@ -262,3 +262,210 @@ async def test_read_class_tag_live_db_empty_tags(live_postgres_backend):
         assert result is None
     finally:
         await _cleanup(live_postgres_backend, [agent_id])
+
+
+# ---------------------------------------------------------------------------
+# PR 3 council fixes — re-declaration reset + symmetric rejection clear.
+# Live-DB tests for the new mixin helpers `reset_lineage_for_redeclaration`
+# (architect F1) and `clear_lineage_declaration` (reviewer #2). Both
+# shapes need a real postgres because they exercise full row updates —
+# a mocked `execute()` would silently agree with any SQL we wrote.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_redeclaration_after_archive_resets_terminal_markers(
+    live_postgres_backend,
+):
+    """Re-onboarding the same successor after archive should reset
+    `lineage_archived_at` so the FSM can evaluate the new declaration.
+    Without this, the FSM's terminal-state guard would permanently
+    skip evaluation and the lineage would be silently dead while the
+    response surfaces "provisional".
+    """
+    import json
+    from tests.db.conftest import _cleanup, _uuid_suffix
+
+    suffix = _uuid_suffix()
+    pid = "r2-redecl-parent-" + suffix
+    sid = "r2-redecl-succ-" + suffix
+    try:
+        async with live_postgres_backend.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO core.agents (id, api_key) VALUES ($1, 'test-key'), "
+                "($2, 'test-key') ON CONFLICT (id) DO NOTHING",
+                pid, sid,
+            )
+            await conn.execute(
+                "INSERT INTO core.identities (agent_id, api_key_hash, status, metadata) "
+                "VALUES ($1, 'test-hash', 'active', $2::jsonb)",
+                pid, json.dumps({"tags": ["ephemeral"]}),
+            )
+            await conn.execute(
+                "INSERT INTO core.identities (agent_id, api_key_hash, status, metadata, "
+                "parent_agent_id, lineage_archived_at) "
+                "VALUES ($1, 'test-hash', 'active', $2::jsonb, $3, now())",
+                sid, json.dumps({"tags": ["ephemeral"]}), pid,
+            )
+        state_before = await live_postgres_backend.read_lineage_state(sid)
+        assert state_before is not None
+        assert state_before["lineage_archived_at"] is not None
+        ok = await live_postgres_backend.reset_lineage_for_redeclaration(sid)
+        assert ok is True
+        state_after = await live_postgres_backend.read_lineage_state(sid)
+        assert state_after is not None
+        assert state_after["lineage_archived_at"] is None
+        assert state_after["lineage_demoted_at"] is None
+        assert state_after["confirmed_at"] is None
+        assert state_after["provisional_lineage"] is False
+        assert state_after["chain_obs_count"] == 0
+        assert state_after["lineage_last_eval_at"] is None
+        assert state_after["lineage_declared_at"] is None
+    finally:
+        await _cleanup(live_postgres_backend, [pid, sid])
+
+
+@pytest.mark.asyncio
+async def test_reset_lineage_no_op_for_active_row(live_postgres_backend):
+    """Reset is a no-op (returns False) for rows not in terminal state."""
+    from tests.db.conftest import _cleanup, _uuid_suffix
+
+    sid = "r2-reset-noop-" + _uuid_suffix()
+    try:
+        async with live_postgres_backend.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO core.agents (id, api_key) VALUES ($1, 'test-key') "
+                "ON CONFLICT (id) DO NOTHING",
+                sid,
+            )
+            await conn.execute(
+                "INSERT INTO core.identities (agent_id, api_key_hash, status) "
+                "VALUES ($1, 'test-hash', 'active')",
+                sid,
+            )
+        ok = await live_postgres_backend.reset_lineage_for_redeclaration(sid)
+        assert ok is False
+    finally:
+        await _cleanup(live_postgres_backend, [sid])
+
+
+@pytest.mark.asyncio
+async def test_clear_lineage_declaration_clears_both_parent_and_spawn_reason(
+    live_postgres_backend,
+):
+    """Cross-role rejection helper clears `parent_agent_id` AND
+    `spawn_reason` symmetrically (per S8c convention)."""
+    from tests.db.conftest import _cleanup, _uuid_suffix
+
+    suffix = _uuid_suffix()
+    pid = "r2-clear-parent-" + suffix
+    sid = "r2-clear-test-" + suffix
+    try:
+        async with live_postgres_backend.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO core.agents (id, api_key) VALUES ($1, 'test-key'), "
+                "($2, 'test-key') ON CONFLICT (id) DO NOTHING",
+                pid, sid,
+            )
+            await conn.execute(
+                "INSERT INTO core.identities (agent_id, api_key_hash, status) "
+                "VALUES ($1, 'test-hash', 'active')",
+                pid,
+            )
+            await conn.execute(
+                "INSERT INTO core.identities (agent_id, api_key_hash, status, "
+                "parent_agent_id, spawn_reason) "
+                "VALUES ($1, 'test-hash', 'active', $2, 'subagent')",
+                sid, pid,
+            )
+        ok = await live_postgres_backend.clear_lineage_declaration(sid)
+        assert ok is True
+        async with live_postgres_backend.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT parent_agent_id, spawn_reason FROM core.identities "
+                "WHERE agent_id = $1",
+                sid,
+            )
+        assert row["parent_agent_id"] is None
+        assert row["spawn_reason"] is None
+    finally:
+        await _cleanup(live_postgres_backend, [pid, sid])
+
+
+@pytest.mark.asyncio
+async def test_r2_pre_check_and_declare_rejection_clears_parent_and_emits_audit(
+    live_postgres_backend, monkeypatch,
+):
+    """End-to-end: cross-role rejection clears `parent_agent_id` AND
+    `spawn_reason` and emits `lineage_cross_role_rejected` audit
+    (closes reviewer-test-gap #4 from PR 3 council).
+
+    Also wires `get_db()` to the live backend (the autouse
+    `_isolate_db_backend` fixture replaces it with a no-op mock by
+    default — `_r2_pre_check_and_declare` resolves the backend
+    internally, so the mock would otherwise short-circuit
+    `read_class_tag` to None and the cross-role check would
+    charitably-accept).
+    """
+    import json
+    from tests.db.conftest import _cleanup, _uuid_suffix
+    import src.db as _db_mod
+    monkeypatch.setattr(_db_mod, "get_db", lambda: live_postgres_backend)
+    monkeypatch.setattr(_db_mod, "_db_instance", live_postgres_backend)
+    from src.mcp_handlers.identity.handlers import _r2_pre_check_and_declare
+
+    suffix = _uuid_suffix()
+    pid = "r2-e2e-reject-parent-" + suffix
+    sid = "r2-e2e-reject-succ-" + suffix
+    try:
+        async with live_postgres_backend.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO core.agents (id, api_key) VALUES ($1, 'test-key'), "
+                "($2, 'test-key') ON CONFLICT (id) DO NOTHING",
+                pid, sid,
+            )
+            await conn.execute(
+                "INSERT INTO core.identities (agent_id, api_key_hash, status, metadata) "
+                "VALUES ($1, 'test-hash', 'active', $2::jsonb)",
+                pid, json.dumps({"tags": ["embodied"]}),
+            )
+            await conn.execute(
+                "INSERT INTO core.identities (agent_id, api_key_hash, status, metadata, "
+                "parent_agent_id, spawn_reason) "
+                "VALUES ($1, 'test-hash', 'active', $2::jsonb, $3, 'new_session')",
+                sid, json.dumps({"tags": ["ephemeral"]}), pid,
+            )
+
+        class FakeMeta:
+            tags = ["ephemeral"]
+            parent_agent_id = pid
+            spawn_reason = "new_session"
+
+        meta = FakeMeta()
+        result = await _r2_pre_check_and_declare(sid, pid, "test_succ", meta)
+        state = result[0] if isinstance(result, tuple) else result
+        assert state == "rejected_cross_role"
+        # In-memory metadata cleared symmetrically.
+        assert meta.parent_agent_id is None
+        assert meta.spawn_reason is None
+        # Storage row: both columns NULL.
+        async with live_postgres_backend.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT parent_agent_id, spawn_reason FROM core.identities "
+                "WHERE agent_id = $1",
+                sid,
+            )
+            audit = await conn.fetch(
+                "SELECT event_type, payload FROM audit.events "
+                "WHERE agent_id = $1 AND event_type = 'lineage_cross_role_rejected'",
+                sid,
+            )
+        assert row["parent_agent_id"] is None
+        assert row["spawn_reason"] is None
+        assert len(audit) >= 1
+    finally:
+        async with live_postgres_backend.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM audit.events WHERE agent_id = $1", sid,
+            )
+        await _cleanup(live_postgres_backend, [pid, sid])

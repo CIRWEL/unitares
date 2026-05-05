@@ -523,11 +523,17 @@ def _build_identity_diag_payload_for_request(
     status: str,
     identity_resolution_outcome: Optional[str] = None,
     provisional_lineage: bool = False,
+    lineage_state: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build the standard identity-success diag payload for `arguments` + `model_type`.
 
     Extracted from handle_identity_adapter so per-PATH resolvers can produce
     the same payload shape without the inner-function closure.
+
+    Fast-path callers (monitor cache, archived warning) MUST omit
+    ``lineage_state`` (default ``None``) — those paths skip the DB read
+    that would derive it. Slow paths derive via
+    ``derive_lineage_state(read_lineage_state(uuid))``.
     """
     from .shared import make_client_session_id
 
@@ -555,6 +561,7 @@ def _build_identity_diag_payload_for_request(
         identity_status=status,
         identity_resolution_outcome=identity_resolution_outcome,
         provisional_lineage=provisional_lineage,
+        lineage_state=lineage_state,
     )
 
 
@@ -758,10 +765,20 @@ async def _try_resume_by_agent_uuid_direct(
         set_session_resolution_source("agent_uuid_direct")
     except Exception:
         pass
-    # R2 PR 3: surface provisional_lineage on the slow PATH 0 resume.
+    # R2 PR 3: surface provisional_lineage + lineage_state on the slow
+    # PATH 0 resume. Slow path is already DB-bound, so the
+    # `read_lineage_state` read is in budget and lets us derive
+    # lineage_state from the same row (single round-trip, consistent
+    # snapshot). Council fix: identity() now matches onboard()'s
+    # field surface.
     _r2_prov = False
+    _r2_state: Optional[str] = None
     try:
-        _r2_prov = await get_db().is_lineage_provisional(_direct_uuid)
+        _row = await get_db().read_lineage_state(_direct_uuid)
+        if isinstance(_row, dict):
+            _r2_prov = bool(_row.get("provisional_lineage"))
+            from src.identity.lineage_lifecycle import derive_lineage_state
+            _r2_state = derive_lineage_state(_row)
     except Exception:
         pass
     payload = _build_identity_diag_payload_for_request(
@@ -772,6 +789,7 @@ async def _try_resume_by_agent_uuid_direct(
         status="resumed",
         identity_resolution_outcome="resumed",
         provisional_lineage=_r2_prov,
+        lineage_state=_r2_state,
     )
     payload.update({
         "resumed": True,
@@ -886,14 +904,20 @@ async def _try_resume_by_session_key(
         if success:
             label = arguments.get("name")
 
-    # R2 PR 3: surface provisional_lineage at top level. Slow path is
-    # already DB-bound here (label set, etc.), so the extra read is in
-    # budget. The fast resume paths above (monitor cache, archived
-    # warning) default to False — those callers can re-query via
-    # `identity()` slow path if they need the flag.
+    # R2 PR 3: surface provisional_lineage + lineage_state at top level.
+    # Slow path is already DB-bound here (label set, etc.), so the row
+    # read is in budget. The fast resume paths above (monitor cache,
+    # archived warning) default to False / None — those callers can
+    # re-query via `identity()` slow path if they need the flag.
+    # Council fix: identity() now matches onboard()'s field surface.
     _r2_prov = False
+    _r2_state: Optional[str] = None
     try:
-        _r2_prov = await get_db().is_lineage_provisional(agent_uuid)
+        _row = await get_db().read_lineage_state(agent_uuid)
+        if isinstance(_row, dict):
+            _r2_prov = bool(_row.get("provisional_lineage"))
+            from src.identity.lineage_lifecycle import derive_lineage_state
+            _r2_state = derive_lineage_state(_row)
     except Exception:
         pass
 
@@ -905,6 +929,7 @@ async def _try_resume_by_session_key(
         status="resumed",
         identity_resolution_outcome=existing_identity.get("identity_resolution_outcome") or "resumed",
         provisional_lineage=_r2_prov,
+        lineage_state=_r2_state,
     )
     payload.update({
         "resumed": True,
@@ -1139,6 +1164,23 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
         except Exception as e:
             logger.debug(f"[IDENTITY] Stable session bind failed (non-fatal): {e}")
 
+    # R2 PR 3 council fix: derive provisional_lineage + lineage_state
+    # from the persisted row so identity()'s primary response surface
+    # matches onboard()'s. Single read, single derive — fast paths that
+    # already returned earlier never reach this site.
+    _r2_prov_main = False
+    _r2_state_main: Optional[str] = None
+    try:
+        _row_main = await get_db().read_lineage_state(agent_uuid)
+        if isinstance(_row_main, dict):
+            _r2_prov_main = bool(_row_main.get("provisional_lineage"))
+            from src.identity.lineage_lifecycle import derive_lineage_state
+            _r2_state_main = derive_lineage_state(_row_main)
+    except Exception as _e_lineage:
+        logger.debug(
+            f"[R2] read_lineage_state in identity() main path failed (non-fatal): {_e_lineage}"
+        )
+
     response_data = build_identity_response_data(
         agent_uuid=agent_uuid,
         agent_id=final_agent_id,
@@ -1153,6 +1195,8 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
         resumed=False if result.get("created") else (True if result.get("source") else None),
         session_continuity=result.get("session_continuity"),
         verbose=verbose,
+        provisional_lineage=_r2_prov_main,
+        lineage_state=_r2_state_main,
     )
 
     # Auto-bind: automatically perform session binding so agents don't need a separate bind_session call
@@ -2107,15 +2151,13 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             # branches set _lineage_for_response explicitly above and
             # we honor that — only override when this onboard call was
             # the resume branch (no fresh declaration this call).
+            # Council fix: delegated to `derive_lineage_state` so the
+            # cascade lives in one place (shared with identity()).
             if _lineage_for_response == "no_lineage_declared" and _r2_lineage_row.get("parent_agent_id"):
-                if _r2_lineage_row.get("lineage_archived_at") is not None:
-                    _lineage_for_response = "archived"
-                elif _r2_lineage_row.get("lineage_demoted_at") is not None:
-                    _lineage_for_response = "demoted"
-                elif _r2_lineage_row.get("provisional_lineage"):
-                    _lineage_for_response = "provisional"
-                elif _r2_lineage_row.get("confirmed_at") is not None:
-                    _lineage_for_response = "confirmed"
+                from src.identity.lineage_lifecycle import derive_lineage_state
+                _derived = derive_lineage_state(_r2_lineage_row)
+                if _derived is not None:
+                    _lineage_for_response = _derived
     except Exception as e:
         logger.debug(f"[R2] read_lineage_state failed (non-fatal): {e}")
 
@@ -2494,25 +2536,26 @@ async def _r2_pre_check_and_declare(
     backend = get_db()
 
     if rejection is not None:
-        # Clear parent_agent_id from the storage row first so the
-        # downstream FSM never reads it back.
+        # Clear parent_agent_id AND spawn_reason from the storage row
+        # first so the downstream FSM never reads them back. PR 3
+        # council fix (reviewer #2): the original rejection path only
+        # cleared parent_agent_id; spawn_reason became asymmetric.
+        # `clear_lineage_declaration` keeps both columns in sync.
         try:
-            async with backend.acquire() as conn:
-                await conn.execute(
-                    "UPDATE core.identities SET parent_agent_id = NULL, "
-                    "updated_at = now() WHERE agent_id = $1",
-                    agent_uuid,
-                )
+            await backend.clear_lineage_declaration(agent_uuid)
         except Exception as e:
             logger.warning(
-                f"[R2] cross-role: failed to clear parent_agent_id for "
+                f"[R2] cross-role: failed to clear lineage declaration for "
                 f"{agent_uuid[:8]}...: {e}"
             )
         # Clear in-memory metadata so the same handler call's response
         # reflects the rejection (e.g. predecessor block omitted).
+        # Council fix: also clear spawn_reason for symmetry with the
+        # storage-side clear above.
         if meta is not None:
             try:
                 meta.parent_agent_id = None
+                meta.spawn_reason = None
             except Exception:
                 pass
         # Emit audit event. _emit_audit is fail-soft inside; this
@@ -2537,6 +2580,41 @@ async def _r2_pre_check_and_declare(
             f"successor={rejection['successor_class']})"
         )
         return "rejected_cross_role", rejection
+
+    # PR 3 council fix (architect F1): if the row is already in a
+    # terminal state (archived after grace expiry, or demoted), the
+    # FSM's terminal-state guard would permanently skip evaluation
+    # even after `declare_lineage` stamps a fresh
+    # `lineage_declared_at` — `lineage_archived_at` /
+    # `lineage_demoted_at` are still set, so the FSM short-circuits
+    # to `skipped_reason="terminal_state"` and the lineage is
+    # silently dead while the response surfaces "provisional".
+    # Reset terminal markers atomically here so re-onboarding actually
+    # re-enters the FSM with a clean slate. Audit anchor for the prior
+    # terminal state survives in `audit.events` (lineage_grace_expired
+    # / lineage_demoted from the FSM's prior tick).
+    try:
+        existing_state = await backend.read_lineage_state(agent_uuid)
+        if existing_state and (
+            existing_state.get("lineage_archived_at") is not None
+            or existing_state.get("lineage_demoted_at") is not None
+        ):
+            try:
+                reset = await backend.reset_lineage_for_redeclaration(agent_uuid)
+                if reset:
+                    logger.info(
+                        f"[R2] reset_lineage_for_redeclaration: cleared terminal "
+                        f"state for {agent_uuid[:8]}... (re-declaring lineage to "
+                        f"{parent_id[:8]}...)"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"[R2] reset_lineage_for_redeclaration failed: {e}"
+                )
+    except Exception as e:
+        logger.debug(
+            f"[R2] read_lineage_state pre-redeclare check failed (non-fatal): {e}"
+        )
 
     # Accept path — stamp lineage_declared_at (idempotent) + emit
     # the lineage_declared audit. The FSM (PR 2) and sweeper (PR 4)

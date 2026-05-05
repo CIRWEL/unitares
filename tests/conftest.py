@@ -135,6 +135,12 @@ def _isolate_db_backend(monkeypatch):
     mock_backend.increment_chain_obs_count.return_value = 0
     mock_backend.stamp_lineage_eval.return_value = None
     mock_backend.are_lineages_provisional.return_value = {}
+    # R2 PR 3 council fixes — re-declaration reset and symmetric
+    # rejection clear. Default False so unit tests that don't seed a
+    # terminal-state row exercise the no-op branch (matches the live
+    # helper contract for active rows).
+    mock_backend.reset_lineage_for_redeclaration.return_value = False
+    mock_backend.clear_lineage_declaration.return_value = False
     # R2 PR 2 — lineage FSM single-query read. Default to None so tests
     # that don't seed a provisional/confirmed row exercise the
     # `no_parent` skip path. Per the R2 plan §"Test 10 (meta)" this

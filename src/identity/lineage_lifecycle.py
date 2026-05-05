@@ -141,6 +141,49 @@ async def _emit_audit(
         )
 
 
+def derive_lineage_state(row: Optional[Dict[str, Any]]) -> Optional[str]:
+    """R2 PR 3 council fix: derive the response-facing ``lineage_state``
+    string from a row's storage columns.
+
+    Returns ``None`` if no row was read (caller decides default — fast
+    paths in ``identity()`` historically omit the field rather than
+    inventing one). Otherwise returns one of:
+
+    - ``"no_lineage_declared"`` — ``parent_agent_id`` is NULL (no edge),
+      OR no terminal/intermediate marker is set. The charitable default
+      for an inert / freshly-created row.
+    - ``"archived"`` — ``lineage_archived_at`` is set (grace expired).
+    - ``"demoted"`` — ``lineage_demoted_at`` is set. Rare in practice:
+      ``demote_lineage`` also clears ``parent_agent_id``, so by the time
+      a reader sees this row the parent is usually NULL and the
+      ``no_lineage_declared`` branch fires first. Kept for completeness
+      and for the (transient) post-rollback shape.
+    - ``"provisional"`` — ``provisional_lineage`` is TRUE.
+    - ``"confirmed"`` — ``confirmed_at`` is set and the row is not
+      provisional.
+
+    Used by both the onboard handler (resume branch row-read) and the
+    identity handler (slow-path resume) so the cascade stays in one
+    place. Callers that already know the lineage state for the current
+    request (e.g. just after ``_r2_pre_check_and_declare`` returns
+    ``"provisional"`` or ``"rejected_cross_role"``) should NOT use this
+    helper — they have a more authoritative answer than the row read.
+    """
+    if row is None:
+        return None
+    if not row.get("parent_agent_id"):
+        return "no_lineage_declared"
+    if row.get("lineage_archived_at") is not None:
+        return "archived"
+    if row.get("lineage_demoted_at") is not None:
+        return "demoted"
+    if row.get("provisional_lineage"):
+        return "provisional"
+    if row.get("confirmed_at") is not None:
+        return "confirmed"
+    return "no_lineage_declared"
+
+
 async def pre_check_cross_role(
     parent_id: str,
     successor_class: Optional[str],

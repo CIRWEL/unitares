@@ -483,6 +483,86 @@ class IdentityMixin:
                 rows = 0
             return rows > 0
 
+    async def reset_lineage_for_redeclaration(self, successor_id: str) -> bool:
+        """R2 PR 3 council fix: clear terminal-state markers
+        (``lineage_archived_at``, ``lineage_demoted_at``, ``confirmed_at``,
+        ``provisional_lineage``, ``provisional_score_id``,
+        ``chain_obs_count``, ``lineage_last_eval_at``,
+        ``lineage_declared_at``) so a fresh declaration can re-enter the FSM.
+
+        Called by ``_r2_pre_check_and_declare`` when a successor is being
+        re-declared (i.e., the row already has ``lineage_archived_at`` OR
+        ``lineage_demoted_at`` set). Without this reset, the FSM's
+        terminal-state short-circuit (PR 2) would permanently skip the
+        row even though ``parent_agent_id`` was just freshly set —
+        the lineage would be silently dead while the response surfaces
+        ``provisional``.
+
+        The audit anchor for the prior terminal state is preserved in
+        ``audit.events`` via the prior ``lineage_grace_expired`` /
+        ``lineage_demoted`` event — the column-level history is
+        intentionally cleared so the new lineage starts from a clean
+        state. This is the operational analogue of the "fork in v1.1"
+        open question: we don't model a fork edge — the new declaration
+        simply starts fresh.
+
+        Returns True if the row was in a terminal state and was reset;
+        False otherwise (no-op for active or non-existent rows).
+        """
+        async with self.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE core.identities
+                   SET lineage_archived_at = NULL,
+                       lineage_demoted_at = NULL,
+                       confirmed_at = NULL,
+                       provisional_lineage = FALSE,
+                       provisional_score_id = NULL,
+                       chain_obs_count = 0,
+                       lineage_last_eval_at = NULL,
+                       lineage_declared_at = NULL,
+                       updated_at = now()
+                 WHERE agent_id = $1
+                   AND (lineage_archived_at IS NOT NULL OR lineage_demoted_at IS NOT NULL)
+                """,
+                successor_id,
+            )
+            try:
+                rows = int((result or "UPDATE 0").split()[-1])
+            except Exception:
+                rows = 0
+            return rows > 0
+
+    async def clear_lineage_declaration(self, agent_id: str) -> bool:
+        """R2 PR 3 council fix: cross-role rejection helper.
+
+        Clears ``parent_agent_id`` AND ``spawn_reason`` from
+        ``core.identities`` (symmetric clear, per the S8c convention
+        that these two columns move together). Called by
+        ``_r2_pre_check_and_declare`` when the cross-role envelope check
+        rejects a declaration; replaces the prior inline ``UPDATE`` so
+        the rejection surface stays consistent with the rest of the
+        lineage helpers in this mixin.
+
+        Returns True if a row was updated, False otherwise.
+        """
+        async with self.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE core.identities
+                SET parent_agent_id = NULL,
+                    spawn_reason = NULL,
+                    updated_at = now()
+                WHERE agent_id = $1
+                """,
+                agent_id,
+            )
+            try:
+                rows = int((result or "UPDATE 0").split()[-1])
+            except Exception:
+                rows = 0
+            return rows > 0
+
     async def demote_lineage(self, successor_id: str, *, reason: str) -> bool:
         """R2: provisional/confirmed → demoted.
 
@@ -684,10 +764,11 @@ class IdentityMixin:
         metadata = row["metadata"]
         if metadata is None:
             return None
-        # asyncpg returns JSONB as dict by default. Defensive: handle
-        # the str case in case a custom codec ever wraps the
-        # connection (mirrors the `_row_to_identity` shape below at
-        # line ~699).
+        # asyncpg here returns JSONB as a str (no custom codec is
+        # registered on the pool — see src/db/postgres_backend.py).
+        # The PR 3 council live verifier called this dead code, but
+        # `test_read_class_tag_live_db_returns_first_tag` proves the
+        # str branch is the live path. Decode defensively.
         if isinstance(metadata, str):
             try:
                 metadata = json.loads(metadata)

@@ -637,3 +637,59 @@ async def test_read_lineage_state_returns_none_for_unknown_agent(live_postgres_b
     """Single-query path returns None for missing rows."""
     state = await live_postgres_backend.read_lineage_state("nonexistent-xyz")
     assert state is None
+
+
+# ---------------------------------------------------------------------------
+# PR 3 council fix — derive_lineage_state cascade.
+# Pure-Python helper, no DB / mock needed. Closes test gap from
+# reviewer #1 — onboard() and identity() now share this cascade.
+# ---------------------------------------------------------------------------
+
+
+def test_derive_lineage_state_cascade():
+    """Cover every branch of the response-facing cascade."""
+    from src.identity.lineage_lifecycle import derive_lineage_state
+
+    # No row read → None (caller decides default).
+    assert derive_lineage_state(None) is None
+
+    # Empty row → no parent → no_lineage_declared.
+    assert derive_lineage_state({}) == "no_lineage_declared"
+    assert derive_lineage_state({"parent_agent_id": None}) == "no_lineage_declared"
+
+    # Archived (terminal): parent set + lineage_archived_at.
+    assert derive_lineage_state({
+        "parent_agent_id": "p", "lineage_archived_at": "2026-01-01",
+    }) == "archived"
+
+    # Demoted (rare with parent — see helper docstring).
+    assert derive_lineage_state({
+        "parent_agent_id": "p", "lineage_demoted_at": "2026-01-01",
+    }) == "demoted"
+
+    # Provisional (intermediate).
+    assert derive_lineage_state({
+        "parent_agent_id": "p", "provisional_lineage": True,
+    }) == "provisional"
+
+    # Confirmed.
+    assert derive_lineage_state({
+        "parent_agent_id": "p",
+        "confirmed_at": "2026-01-01",
+        "provisional_lineage": False,
+    }) == "confirmed"
+
+    # Parent set but no flag/timestamp → orphan-ish; charitable default.
+    assert derive_lineage_state({
+        "parent_agent_id": "p",
+    }) == "no_lineage_declared"
+
+    # Terminal beats provisional/confirmed when both are set (transient
+    # rollback shape — should not happen in practice, but the cascade
+    # is well-defined).
+    assert derive_lineage_state({
+        "parent_agent_id": "p",
+        "lineage_archived_at": "2026-01-01",
+        "provisional_lineage": True,
+        "confirmed_at": "2026-01-01",
+    }) == "archived"
