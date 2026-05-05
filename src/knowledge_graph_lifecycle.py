@@ -452,8 +452,16 @@ def _score_discovery(discovery, lifecycle: KnowledgeGraphLifecycle) -> Dict[str,
     related = getattr(discovery, "related_to", []) or []
     activity_score = len(responses) + len(related)
 
-    # Bucket classification
-    if last_activity_days <= AUDIT_HEALTHY_DAYS or len(responses) > 0:
+    # Bucket classification.
+    #
+    # Both link kinds count as "alive in the system":
+    #   - responses_from = active conversation (someone replied)
+    #   - related_to     = structural anchor (someone cross-referenced)
+    # An entry that's heavily cited via related_to but never replied to is
+    # still load-bearing — keeping the healthy guard symmetric in both link
+    # types prevents foundational notes from sliding into candidate_for_archive
+    # just because nobody responded to them.
+    if last_activity_days <= AUDIT_HEALTHY_DAYS or activity_score > 0:
         bucket = "healthy"
     elif last_activity_days <= AUDIT_AGING_DAYS:
         bucket = "aging"
