@@ -117,6 +117,7 @@ async def test_all_latest_excludes_bootstrap_only_agents(db):
     assert all(r.identity_id != identity_id for r in rows)
 
 
+@pytest.mark.serial
 @pytest.mark.asyncio
 async def test_all_latest_includes_measured_after_bootstrap(db):
     """Bootstrap then real check-in: the agent shows up with the measured row."""

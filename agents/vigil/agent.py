@@ -222,10 +222,22 @@ def _collect_health_state(
 
 
 def run_pytest(project_dir: Path, label: str) -> Tuple[bool, int, int, str]:
-    """Run pytest on a project. Returns (passed, n_passed, n_failed, summary)."""
+    """Run pytest on a project. Returns (passed, n_passed, n_failed, summary).
+
+    Routes through scripts/dev/test-cache.sh when present so concurrent agent
+    runs serialize on /tmp/unitares-test-cache.lock (cross-invocation lock).
+    The 50-min hung-pytest incident at 2026-05-04 traced to raw pytest spawns
+    bypassing the wrapper, hammering Postgres+Redis, and never exiting. Falls
+    back to direct pytest for projects without the wrapper (e.g. anima-mcp).
+    """
+    test_cache = project_dir / "scripts" / "dev" / "test-cache.sh"
+    if test_cache.exists():
+        cmd = [str(test_cache), "--", "-q", "--tb=line", "-x"]
+    else:
+        cmd = [sys.executable, "-m", "pytest", "tests/", "-q", "--tb=line", "-x"]
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "pytest", "tests/", "-q", "--tb=line", "-x"],
+            cmd,
             cwd=str(project_dir),
             capture_output=True,
             text=True,

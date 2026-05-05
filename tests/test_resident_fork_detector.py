@@ -177,6 +177,7 @@ async def test_no_collision_no_event_no_rename():
     mock_db.agent_has_tag.assert_not_called()
 
 
+@pytest.mark.serial
 @pytest.mark.asyncio
 async def test_agent_has_tag_sql_roundtrip(live_postgres_backend):
     """Integration test against live Postgres: verify agent_has_tag SQL is

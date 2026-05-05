@@ -58,6 +58,7 @@ addopts = ["-v"]
 markers = [
     "smoke: Fast smoke tests for pre-push validation (target <60s)",
     "slow: Stress / convergence / multi-iteration tests (>30s after trim). Default suite still runs them; deselect with `pytest -m 'not slow'` for fast iteration.",
+    "serial: Tests that share global state (real Postgres, file locks, MCP server singletons) and fail under pytest-xdist parallel execution. test-cache.sh --parallel runs `-m 'not serial'` under xdist then `-m serial` sequentially.",
 ]
 filterwarnings = [
     "ignore::ResourceWarning",

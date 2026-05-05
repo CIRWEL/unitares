@@ -17,6 +17,12 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
+# All tests in this module hit the real shared Postgres backend; running them
+# in parallel under pytest-xdist races on identity rows, schemas, and
+# transactional state. Module-level marker is more honest than per-function
+# decoration since the whole file is fundamentally non-parallelizable.
+pytestmark = pytest.mark.serial
+
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))

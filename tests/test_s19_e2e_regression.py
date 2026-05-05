@@ -153,6 +153,7 @@ async def test_http_token_resume_for_substrate_anchored_uuid_is_refused(db):
 # =============================================================================
 
 
+@pytest.mark.serial
 @pytest.mark.asyncio
 async def test_uds_path_with_matching_attestation_passes(db):
     """When the kernel-attested peer matches the registry (label + exec +
