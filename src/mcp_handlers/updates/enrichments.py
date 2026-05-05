@@ -12,13 +12,16 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from src.logging_utils import get_logger
+from src.thread_identity import (
+    LINEAGE_SPAWN_REASONS,
+    classify_episode_fork,
+    fork_honest_message,
+)
 
 from .context import UpdateContext
 from .pipeline import enrichment
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
-
-_LINEAGE_SPAWN_REASONS = frozenset({"new_session", "subagent", "explicit", "compaction"})
 
 # ─── Identity Reminder ─────────────────────────────────────────────────
 
@@ -1515,11 +1518,13 @@ def _classify_fork(
     spawn_reason: Optional[str],
 ) -> tuple[str, bool]:
     """Return the R6 episode-fork kind and identity-lineage boolean."""
-    has_child_uuid = bool(parent_uuid and agent_uuid and agent_uuid != parent_uuid)
-    if has_child_uuid:
-        return ("identity_lineage", True)
-
-    if spawn_reason in _LINEAGE_SPAWN_REASONS and not parent_uuid:
+    episode_fork_kind, identity_lineage_fork = classify_episode_fork(
+        position,
+        agent_uuid,
+        parent_uuid,
+        spawn_reason,
+    )
+    if spawn_reason in LINEAGE_SPAWN_REASONS and not parent_uuid:
         logger.warning(
             "[R6_SYNC_RACE] spawn_reason=%s recognized as lineage but "
             "parent_agent_id is None on ctx.meta - possible AgentMetadata sync "
@@ -1528,12 +1533,7 @@ def _classify_fork(
             spawn_reason,
             agent_uuid,
         )
-        return ("identity_lineage", True)
-
-    if position > 1:
-        return ("sibling_locus", False)
-
-    return ("none", False)
+    return episode_fork_kind, identity_lineage_fork
 
 
 def _fork_honest_message(
@@ -1542,27 +1542,7 @@ def _fork_honest_message(
     spawn_reason: Optional[str],
 ) -> str:
     """Build the thin process_agent_update fork message from R6 v2."""
-    if episode_fork_kind == "sibling_locus":
-        return (
-            "You share a registry UUID with prior process-instances under this "
-            "thread, but you are a distinct subject - fresh process-instance, "
-            "no child UUID minted. Memory access (KG, project files, "
-            "harness-side caches) may be available; whether you have integrated "
-            "it is yours to demonstrate, not asserted."
-        )
-
-    if episode_fork_kind == "identity_lineage":
-        parent_display = parent_uuid or "unknown"
-        spawn_display = spawn_reason or "unknown"
-        return (
-            "You are a distinct subject (a fresh UUID under declared parent "
-            f"{parent_display}, spawn_reason {spawn_display}). Lineage was "
-            "declared at this fork event; whether it becomes confirmed is "
-            "governed by R2's protocol (see provisional_lineage flag and "
-            "downstream R1 evaluation)."
-        )
-
-    return "You are the first observation under this thread. No fork."
+    return fork_honest_message(episode_fork_kind, parent_uuid, spawn_reason)
 
 @enrichment(order=230)
 def enrich_thread_identity(ctx: UpdateContext) -> None:
