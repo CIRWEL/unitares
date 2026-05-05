@@ -290,14 +290,19 @@ class TestRunAgedCandidateArchive:
 
     @pytest.mark.asyncio
     async def test_caps_at_max_per_cycle(self, monkeypatch):
-        """Cap respected: only N entries archived per cycle even if more eligible."""
+        """Cap respected: only N entries archived per cycle even if more eligible.
+
+        Mock returns exactly ``max_per_cycle * 3`` entries — that's the
+        ``top_n`` the audit is called with, so this matches the production
+        contract (server respects top_n; we just slice harder).
+        """
         monkeypatch.setenv("VIGIL_AUTO_ARCHIVE_MAX_PER_CYCLE", "3")
         agent = _make_agent()
         agent.with_hygiene = True
         client = AsyncMock()
         client.audit_knowledge = AsyncMock(return_value=_audit_with_top_stale([
-            {"id": f"e{i}", "bucket": "candidate_for_archive", "last_activity_days": 120}
-            for i in range(10)
+            {"id": f"e{i}", "bucket": "candidate_for_archive", "last_activity_days": 120, "activity_score": 0}
+            for i in range(9)
         ]))
         client.call_tool = AsyncMock(return_value={"success": True})
         result = await agent._run_aged_candidate_archive(client)
@@ -356,6 +361,80 @@ class TestRunAgedCandidateArchive:
         result = await agent._run_aged_candidate_archive(client)
         assert result["archived"] == 0
         client.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_entries_with_related_links(self):
+        """Defense-in-depth: entries with related_to (activity_score>0) are not archived.
+
+        The bucket classifier in _score_discovery only checks responses_from
+        for the healthy guard, not related_to. An entry that's heavily
+        cross-linked but never replied to can land in candidate_for_archive
+        despite being load-bearing. We re-check activity_score here.
+        """
+        agent = _make_agent()
+        agent.with_hygiene = True
+        client = AsyncMock()
+        client.audit_knowledge = AsyncMock(return_value=_audit_with_top_stale([
+            {"id": "isolated", "bucket": "candidate_for_archive", "last_activity_days": 120, "activity_score": 0},
+            {"id": "linked", "bucket": "candidate_for_archive", "last_activity_days": 120, "activity_score": 3},
+        ]))
+        client.call_tool = AsyncMock(return_value={"success": True})
+        result = await agent._run_aged_candidate_archive(client)
+        assert result["candidates_seen"] == 1
+        assert client.call_tool.call_count == 1
+        archived_id = client.call_tool.call_args.args[1]["discovery_id"]
+        assert archived_id == "isolated"
+
+    @pytest.mark.asyncio
+    async def test_high_sev_uses_error_code_first(self):
+        """Prefer the structured error_code over substring matching."""
+        agent = _make_agent()
+        agent.with_hygiene = True
+        client = AsyncMock()
+        client.audit_knowledge = AsyncMock(return_value=_audit_with_top_stale([
+            {"id": "hi-sev", "bucket": "candidate_for_archive", "last_activity_days": 120, "activity_score": 0},
+        ]))
+        client.call_tool = AsyncMock(side_effect=[
+            # Server returns a refactored error message without "high-severity"
+            # but still emits the structured error_code. Old substring check
+            # would miss this.
+            {"success": False, "error": "Permission denied: severity-locked.", "error_code": "PERMISSION_DENIED"},
+            {"success": True},
+        ])
+        result = await agent._run_aged_candidate_archive(client)
+        assert result["archived"] == 1
+        assert client.call_tool.call_count == 2
+        assert client.call_tool.call_args_list[1].args[1]["status"] == "closed"
+
+    @pytest.mark.asyncio
+    async def test_non_dict_response_does_not_crash(self):
+        """Server returning non-dict (None, primitive) is reported, not raised."""
+        agent = _make_agent()
+        agent.with_hygiene = True
+        client = AsyncMock()
+        client.audit_knowledge = AsyncMock(return_value=_audit_with_top_stale([
+            {"id": "weird", "bucket": "candidate_for_archive", "last_activity_days": 120, "activity_score": 0},
+        ]))
+        client.call_tool = AsyncMock(return_value=None)
+        result = await agent._run_aged_candidate_archive(client)
+        assert result["archived"] == 0
+        assert any("non-dict" in e for e in result["errors"])
+
+    @pytest.mark.asyncio
+    async def test_age_threshold_env_override(self, monkeypatch):
+        """VIGIL_AUTO_ARCHIVE_AGE_DAYS=45 should make 60-day entries eligible."""
+        monkeypatch.setenv("VIGIL_AUTO_ARCHIVE_AGE_DAYS", "45")
+        agent = _make_agent()
+        agent.with_hygiene = True
+        client = AsyncMock()
+        client.audit_knowledge = AsyncMock(return_value=_audit_with_top_stale([
+            {"id": "e1", "bucket": "candidate_for_archive", "last_activity_days": 60, "activity_score": 0},
+            {"id": "e2", "bucket": "candidate_for_archive", "last_activity_days": 40, "activity_score": 0},
+        ]))
+        client.call_tool = AsyncMock(return_value={"success": True})
+        result = await agent._run_aged_candidate_archive(client)
+        assert result["candidates_seen"] == 1
+        assert client.call_tool.call_args.args[1]["discovery_id"] == "e1"
 
 
 # =============================================================================
