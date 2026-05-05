@@ -1448,9 +1448,14 @@ class TestEdgeCases:
     def monitor(self):
         return UNITARESMonitor("test-edge", load_state=False)
 
+    @pytest.mark.slow
     def test_many_rapid_updates(self, monitor):
         """30 rapid updates should not crash or produce invalid state."""
-        for i in range(30):
+        # Was 30 iterations (~160s wall). Cut to 10: per-iteration EISV-bounds
+        # assertion is identical at every step, so 10 catches the same class
+        # of regression as 30 (any per-update bound violation). The "rapid"
+        # claim is qualitative; 10 sequential calls is still a sequence.
+        for i in range(10):
             result = monitor.process_update({
                 'response_text': f"Update {i}.",
                 'complexity': (i % 10) / 10.0,
@@ -1727,19 +1732,27 @@ class TestFullLifecycle:
         assert mon.state.update_count == 1
         assert 'simulation' not in real_result
 
+    @pytest.mark.slow
     def test_convergence_over_time(self):
         """Many low-drift updates should converge toward stable state."""
+        # Was 50 iterations (~271s wall). Cut to 25: I starts at 0.8 (default
+        # state) and the assertion is `I > 0.5` after low-drift updates — a
+        # "doesn't degrade" check, not a convergence-rate check. 25 still
+        # catches regressions where stable inputs cause I to slowly decay.
+        # If convergence rate becomes load-bearing, restore 50 and split off
+        # a separate rate-of-convergence test with explicit trajectory asserts.
+        iterations = 25
         mon = UNITARESMonitor("convergence-test", load_state=False)
 
-        for _ in range(50):
+        for _ in range(iterations):
             mon.process_update({
                 'response_text': 'Stable response.',
                 'complexity': 0.3,
                 'ethical_drift': [0.001, 0.001, 0.001],
             })
 
-        # After 50 stable updates, system should show some convergence characteristics
-        assert mon.state.update_count == 50
+        # After many stable updates, system should show some convergence characteristics
+        assert mon.state.update_count == iterations
         # I should be reasonably high (system integrity maintains/improves)
         assert mon.state.I > 0.5
         # Coherence should be valid

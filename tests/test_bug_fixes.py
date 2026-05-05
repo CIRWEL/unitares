@@ -7,6 +7,7 @@ Test script to verify bug fixes:
 
 import sys
 import numpy as np
+import pytest
 from src.governance_monitor import UNITARESMonitor
 
 def test_identical_parameters():
@@ -156,20 +157,29 @@ def test_varied_parameters():
     # We just verify the coherence system runs without error
 
 
+@pytest.mark.slow
 def test_lambda1_bounds_under_stress():
     """Test 3: λ₁ bounds under extreme conditions"""
+    # Iteration count was 50 (~329s wall — process_update is ~5-7s each).
+    # Cut to 20: still varies length/complexity across the same 0.3+0.01*i
+    # / 0.4+0.01*i ramp shape (bottom 40%), still asserts per-iteration
+    # bounds via lambda1_values append + min/max check. A regression that
+    # produces a bounds violation will trip within 20 iters as readily as 50.
+    # If you specifically need to detect *slow* drift across 30+ iters,
+    # bump this back up or move the slow form to a separate stress lane.
+    iterations = 20
     print("\n" + "=" * 70)
     print("TEST 3: λ₁ Bounds Under Stress")
     print("=" * 70)
 
     monitor = UNITARESMonitor(agent_id="test_stress")
 
-    print("\nRunning 50 updates with high drift to stress-test λ₁ bounds...")
+    print(f"\nRunning {iterations} updates with high drift to stress-test λ₁ bounds...")
     print()
 
     lambda1_values = []
 
-    for i in range(50):
+    for i in range(iterations):
         # High drift parameters
         params = [
             0.3 + 0.01 * i,  # Varying length
@@ -202,7 +212,7 @@ def test_lambda1_bounds_under_stress():
     lambda1_min = min(lambda1_values)
     lambda1_max = max(lambda1_values)
 
-    print(f"λ₁ range over 50 updates: {lambda1_min:.4f} to {lambda1_max:.4f}")
+    print(f"λ₁ range over {iterations} updates: {lambda1_min:.4f} to {lambda1_max:.4f}")
 
     assert lambda1_min >= 0.05, f"λ₁ min {lambda1_min:.4f} below minimum 0.05"
     assert lambda1_max <= 0.20, f"λ₁ max {lambda1_max:.4f} above maximum 0.20"

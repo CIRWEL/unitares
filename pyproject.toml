@@ -57,6 +57,7 @@ addopts = ["-v"]
 # HTML: add `--cov-report=html` to a full run when needed (22MB+ per run).
 markers = [
     "smoke: Fast smoke tests for pre-push validation (target <60s)",
+    "slow: Stress / convergence / multi-iteration tests (>30s after trim). Default suite still runs them; deselect with `pytest -m 'not slow'` for fast iteration.",
 ]
 filterwarnings = [
     "ignore::ResourceWarning",
