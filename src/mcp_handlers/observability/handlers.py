@@ -76,8 +76,13 @@ async def handle_observe_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
             logger.debug(f"Label DB lookup failed for '{target}': {e}")
 
         if not resolved:
-            # Fallback: search in-memory metadata by label
-            await mcp_server.load_metadata_async(force=True)
+            # Fallback: search in-memory metadata by label.
+            # Was force=True; dropped because the in-memory dict is kept current
+            # by the regular write paths (process_agent_update / onboard /
+            # background load), and a full PG reload here would block all
+            # other handlers ~16s per call. If the agent isn't in memory,
+            # the DB lookup above already missed it.
+            await mcp_server.load_metadata_async()
             for uuid, meta in mcp_server.agent_metadata.items():
                 if getattr(meta, 'label', None) == target:
                     resolved = uuid
@@ -90,8 +95,12 @@ async def handle_observe_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
                 f"Agent '{target}' not found. Use list_agents to see available agents.",
                 recovery={"related_tools": ["list_agents"]}
             )]
-    # Reload metadata from PostgreSQL (async) and verify agent exists
-    await mcp_server.load_metadata_async(force=True)
+    # Verify agent exists. Was force=True full reload; dropped — the
+    # in-memory dict is kept current by the write paths, so reloading all
+    # 3221 agents to look up one is overkill. If the agent is genuinely
+    # missing from in-memory, force-reloading will not surface it (the
+    # DB row was already there or wasn't).
+    await mcp_server.load_metadata_async()
     if agent_id not in mcp_server.agent_metadata:
         return [error_response(
             f"Agent '{target}' not found in active metadata. They may need to check in first.",
@@ -161,8 +170,12 @@ async def handle_observe_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
 async def handle_compare_agents(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Compare governance patterns across multiple agents"""
     from src.governance_monitor import UNITARESMonitor
-    # Reload metadata to get latest state (handles multi-process sync) - non-blocking
-    await mcp_server.load_metadata_async(force=True)
+    # Was force=True with a "non-blocking" comment that was wrong — the
+    # implementation does 3221 sequential per-agent cache.set awaits
+    # (~16s per call). Drop force; in-memory cache is fresh enough for
+    # comparison via process_agent_update / onboard / background loads,
+    # and per-agent state hydration below uses load_monitor_state directly.
+    await mcp_server.load_metadata_async()
     
     agent_ids = arguments.get("agent_ids", [])
     if not agent_ids or len(agent_ids) < 2:
@@ -308,9 +321,12 @@ async def handle_compare_me_to_similar(arguments: Dict[str, Any]) -> Sequence[Te
     if error:
         return [error]
     
-    # Reload metadata to get latest state
-    await mcp_server.load_metadata_async(force=True)
-    
+    # Was force=True; dropped per Wave 0 follow-up. ensure_hydrated below
+    # loads the requesting agent's state directly (single-agent fetch),
+    # which is the only state this handler actually needs fresh — the
+    # comparison cohort is read from already-in-memory metadata.
+    await mcp_server.load_metadata_async()
+
     # Get current agent's metrics
     monitor = mcp_server.get_or_create_monitor(agent_id)
     await ensure_hydrated(monitor, agent_id)
@@ -553,9 +569,18 @@ async def handle_detect_anomalies(arguments: Dict[str, Any]) -> Sequence[TextCon
     """Detect anomalies across agents"""
     from src.governance_monitor import UNITARESMonitor
     import asyncio
-    
-    # Reload metadata from PostgreSQL (async)
-    await mcp_server.load_metadata_async(force=True)
+
+    # Wave 0 follow-up: was force=True, which forced a full PostgreSQL
+    # reload + 3221 sequential per-agent cache.set awaits on every call.
+    # That's the same anti-pattern list_agents removed (see
+    # src/mcp_handlers/lifecycle/query.py:41 — "A forced full DB reload
+    # here caused 14s+ timeouts and ClosedResourceError crashes").
+    # In-memory metadata is kept current by process_agent_update / onboard
+    # / background load paths; using it for fleet-overview tools accepts
+    # at most a few seconds staleness in exchange for not blocking the
+    # shared event loop. Concurrent observe calls were also the cause of
+    # bystander timeouts on list_agents post-2A merge.
+    await mcp_server.load_metadata_async()
     
     agent_ids = arguments.get("agent_ids")
     anomaly_types = arguments.get("anomaly_types", ["risk_spike", "coherence_drop"])
@@ -703,9 +728,14 @@ async def handle_aggregate_metrics(arguments: Dict[str, Any]) -> Sequence[TextCo
     """Get fleet-level health overview"""
     from src.governance_monitor import UNITARESMonitor
     import numpy as np
-    
-    # Reload metadata to get latest state (handles multi-process sync) - non-blocking
-    await mcp_server.load_metadata_async(force=True)
+
+    # Wave 0 follow-up: was force=True, comment claimed "non-blocking" but
+    # the implementation blocks ~16s per call (3221 sequential awaits on
+    # metadata_cache.set in the loader). Same anti-pattern as the prior
+    # list_agents incident (lifecycle/query.py:41). Drop force; in-memory
+    # cache is kept current by process_agent_update / onboard / background
+    # paths and is fresh enough for fleet-aggregate use.
+    await mcp_server.load_metadata_async()
     
     agent_ids = arguments.get("agent_ids")
     include_health_breakdown = arguments.get("include_health_breakdown", True)
