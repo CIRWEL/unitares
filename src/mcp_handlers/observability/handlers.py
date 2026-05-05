@@ -31,7 +31,6 @@ def _agent_display_name(agent_id: str) -> str | None:
 @mcp_tool("observe_agent", timeout=15.0, register=False)
 async def handle_observe_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Observe another agent's governance state with pattern analysis"""
-    from src.governance_monitor import UNITARESMonitor
     # Resolve the TARGET agent to observe.
     # Accept "target_agent_id" (preferred) or "agent_id" (legacy, only if it
     # doesn't match the caller's session-bound UUID — avoids self-observe).
@@ -189,10 +188,12 @@ async def handle_compare_agents(arguments: Dict[str, Any]) -> Sequence[TextConte
     
     compare_metrics = arguments.get("compare_metrics") or ["risk_score", "coherence", "E", "I", "S", "V"]
     
-    # Get metrics for all agents
-    agents_data = []
+    # Get metrics for all agents — parallelized in batches (same shape as
+    # detect_anomalies). For fleets of 50 agents this drops per-call wall-clock
+    # from N sequential executor hops to N/batch_size.
     loop = asyncio.get_running_loop()
-    for agent_id in agent_ids:
+
+    async def _per_agent(agent_id: str) -> Dict[str, Any] | None:
         # Resolve label to UUID if needed (consistent with observe_agent)
         try:
             if not (len(agent_id) == 36 and agent_id.count('-') == 4):
@@ -208,44 +209,58 @@ async def handle_compare_agents(arguments: Dict[str, Any]) -> Sequence[TextConte
         # skip" behavior, but gated on metadata (in-memory, no I/O).
         meta = mcp_server.agent_metadata.get(agent_id)
         if not meta or int(getattr(meta, "total_updates", 0) or 0) == 0:
-            continue
+            return None
 
         monitor = await loop.run_in_executor(None, mcp_server.get_or_create_monitor, agent_id)
         await ensure_hydrated(monitor, agent_id)
+        if not monitor:
+            return None
 
-        if monitor:
-            metrics = monitor.get_metrics()
-            
-            # Calculate health_status consistently with process_agent_update
-            # Use health_checker.get_health_status() instead of metrics.get("status")
-            risk_score = metrics.get("risk_score") or metrics.get("current_risk")
-            coherence = float(monitor.state.coherence) if monitor.state else None
-            void_active = bool(monitor.state.void_active) if monitor.state else False
-            
-            health_status_obj, _ = mcp_server.health_checker.get_health_status(
-                risk_score=risk_score,
-                coherence=coherence,
-                void_active=void_active
-            )
-            
-            # Guard against None values for agents with 0 updates
-            # dict.get default is only used when key is ABSENT; if key exists with value=None, it returns None
-            _risk = metrics.get("risk_score") or metrics.get("current_risk") or metrics.get("mean_risk") or 0.0
-            _state = monitor.state
-            agents_data.append({
-                "agent_id": agent_id,
-                "current_risk": metrics.get("current_risk"),  # Recent trend (last 10) - USED FOR HEALTH STATUS
-                "risk_score": float(_risk),  # Governance/operational risk
-                "phi": metrics.get("phi"),  # Primary physics signal
-                "verdict": metrics.get("verdict"),  # Primary governance signal
-                "mean_risk": metrics.get("mean_risk") or 0.0,  # Overall mean (all-time average) - for historical context
-                "coherence": float(_state.coherence if _state and _state.coherence is not None else 0.5),
-                "E": float(_state.E if _state and _state.E is not None else 0.5),
-                "I": float(_state.I if _state and _state.I is not None else 0.5),
-                "S": float(_state.S if _state and _state.S is not None else 0.5),
-                "V": float(_state.V if _state and _state.V is not None else 0.0),
-                "health_status": health_status_obj.value  # Use consistent calculation
-            })
+        metrics = monitor.get_metrics()
+
+        # Calculate health_status consistently with process_agent_update
+        # Use health_checker.get_health_status() instead of metrics.get("status")
+        risk_score = metrics.get("risk_score") or metrics.get("current_risk")
+        coherence = float(monitor.state.coherence) if monitor.state else None
+        void_active = bool(monitor.state.void_active) if monitor.state else False
+
+        health_status_obj, _ = mcp_server.health_checker.get_health_status(
+            risk_score=risk_score,
+            coherence=coherence,
+            void_active=void_active
+        )
+
+        # Guard against None values for agents with 0 updates
+        # dict.get default is only used when key is ABSENT; if key exists with value=None, it returns None
+        _risk = metrics.get("risk_score") or metrics.get("current_risk") or metrics.get("mean_risk") or 0.0
+        _state = monitor.state
+        return {
+            "agent_id": agent_id,
+            "current_risk": metrics.get("current_risk"),  # Recent trend (last 10) - USED FOR HEALTH STATUS
+            "risk_score": float(_risk),  # Governance/operational risk
+            "phi": metrics.get("phi"),  # Primary physics signal
+            "verdict": metrics.get("verdict"),  # Primary governance signal
+            "mean_risk": metrics.get("mean_risk") or 0.0,  # Overall mean (all-time average) - for historical context
+            "coherence": float(_state.coherence if _state and _state.coherence is not None else 0.5),
+            "E": float(_state.E if _state and _state.E is not None else 0.5),
+            "I": float(_state.I if _state and _state.I is not None else 0.5),
+            "S": float(_state.S if _state and _state.S is not None else 0.5),
+            "V": float(_state.V if _state and _state.V is not None else 0.0),
+            "health_status": health_status_obj.value  # Use consistent calculation
+        }
+
+    agents_data = []
+    batch_size = 10
+    for i in range(0, len(agent_ids), batch_size):
+        batch = agent_ids[i:i + batch_size]
+        batch_results = await asyncio.gather(
+            *[_per_agent(aid) for aid in batch], return_exceptions=True
+        )
+        for result in batch_results:
+            if isinstance(result, dict):
+                agents_data.append(result)
+            elif isinstance(result, Exception):
+                logger.warning(f"Error in compare_agents per-agent: {result}", exc_info=True)
     
     if len(agents_data) < 2:
         return [error_response(
@@ -316,7 +331,6 @@ async def handle_compare_me_to_similar(arguments: Dict[str, Any]) -> Sequence[Te
     
     IMPROVEMENT #5: Agent comparison templates
     """
-    from src.governance_monitor import UNITARESMonitor
     # SECURITY FIX: Require registered agent (prevents phantom agent_ids)
     agent_id, error = require_registered_agent(arguments)
     if error:
@@ -754,54 +768,83 @@ async def handle_aggregate_metrics(arguments: Dict[str, Any]) -> Sequence[TextCo
     verdict_counts = {"safe": 0, "caution": 0, "high-risk": 0}  # Behavioral verdict distribution
     
     loop = asyncio.get_running_loop()
-    for agent_id in agent_ids:
+
+    async def _per_agent(agent_id: str) -> Dict[str, Any] | None:
         # Skip agents with no measured activity — seed defaults would skew the
         # aggregate (coherence inflated, etc.).
         meta = mcp_server.agent_metadata.get(agent_id)
         if not meta or int(getattr(meta, "total_updates", 0) or 0) == 0:
-            continue
+            return None
 
         monitor = await loop.run_in_executor(None, mcp_server.get_or_create_monitor, agent_id)
         await ensure_hydrated(monitor, agent_id)
+        if not monitor:
+            return None
 
-        if monitor:
-            agents_with_data += 1
-            metrics = monitor.get_metrics()
-            
-            # Aggregate risk_score and coherence
-            risk_score = metrics.get("risk_score") or metrics.get("current_risk")
-            if risk_score is not None:
-                risk_scores.append(float(risk_score))
-            elif monitor.state.risk_history:
-                # Fallback to risk_history if risk_score not available
-                history_values = [float(r) for r in monitor.state.risk_history[-10:]]  # Last 10 updates
-                risk_scores.extend(history_values)
-            coherence_scores.append(float(monitor.state.coherence))
-            
-            # Aggregate health status
-            status = metrics.get("status", "unknown")
-            health_statuses[status] = health_statuses.get(status, 0) + 1
-            
-            # Aggregate decisions
-            decision_stats = metrics.get("decision_statistics", {})
-            # Map old decisions to new system
-            proceed_count = decision_stats.get("proceed", 0) + decision_stats.get("approve", 0) + decision_stats.get("reflect", 0) + decision_stats.get("revise", 0)
-            pause_count = decision_stats.get("pause", 0) + decision_stats.get("reject", 0)
-            decision_counts["proceed"] += proceed_count
-            decision_counts["pause"] += pause_count
-            # Backward compatibility (keep old keys for compatibility)
-            decision_counts["approve"] = decision_stats.get("approve", 0)
-            decision_counts["reflect"] = decision_stats.get("reflect", 0) + decision_stats.get("revise", 0)
-            decision_counts["reject"] = decision_stats.get("reject", 0)
-            
-            # Aggregate verdict distribution from metrics
-            verdict = metrics.get("verdict")
-            if verdict and verdict in verdict_counts:
-                verdict_counts[verdict] += 1
+        metrics = monitor.get_metrics()
+        contrib_risk_scores: list[float] = []
+        risk_score = metrics.get("risk_score") or metrics.get("current_risk")
+        if risk_score is not None:
+            contrib_risk_scores.append(float(risk_score))
+        elif monitor.state.risk_history:
+            contrib_risk_scores.extend(float(r) for r in monitor.state.risk_history[-10:])
 
-            # Count total updates — prefer meta.total_updates (Postgres-backed)
-            meta = mcp_server.agent_metadata.get(agent_id)
-            total_updates += meta.total_updates if meta else monitor.state.update_count
+        decision_stats = metrics.get("decision_statistics", {}) or {}
+        proceed_count = (
+            decision_stats.get("proceed", 0)
+            + decision_stats.get("approve", 0)
+            + decision_stats.get("reflect", 0)
+            + decision_stats.get("revise", 0)
+        )
+        pause_count = decision_stats.get("pause", 0) + decision_stats.get("reject", 0)
+        verdict = metrics.get("verdict")
+
+        return {
+            "risk_scores": contrib_risk_scores,
+            "coherence": float(monitor.state.coherence),
+            "status": metrics.get("status", "unknown"),
+            "proceed": proceed_count,
+            "pause": pause_count,
+            "approve": decision_stats.get("approve", 0),
+            "reflect": decision_stats.get("reflect", 0) + decision_stats.get("revise", 0),
+            "reject": decision_stats.get("reject", 0),
+            "verdict": verdict if verdict in verdict_counts else None,
+            "total_updates": meta.total_updates if meta else monitor.state.update_count,
+        }
+
+    # Parallelize per-agent work in batches (same shape as detect_anomalies).
+    # Aggregation runs sequentially over gather results so the
+    # backward-compat decision_counts overwrite (approve/reflect/reject) stays
+    # deterministic in agent_ids order.
+    batch_size = 10
+    contributions: list[Dict[str, Any]] = []
+    for i in range(0, len(agent_ids), batch_size):
+        batch = agent_ids[i:i + batch_size]
+        batch_results = await asyncio.gather(
+            *[_per_agent(aid) for aid in batch], return_exceptions=True
+        )
+        for result in batch_results:
+            if isinstance(result, dict):
+                contributions.append(result)
+            elif isinstance(result, Exception):
+                logger.warning(f"Error in aggregate_metrics per-agent: {result}", exc_info=True)
+
+    for c in contributions:
+        agents_with_data += 1
+        risk_scores.extend(c["risk_scores"])
+        coherence_scores.append(c["coherence"])
+        health_statuses[c["status"]] = health_statuses.get(c["status"], 0) + 1
+        decision_counts["proceed"] += c["proceed"]
+        decision_counts["pause"] += c["pause"]
+        # Backward compatibility: these OVERWRITE per-agent rather than sum.
+        # Preserved from the prior sequential implementation; downstream
+        # consumers expect the last-agent-wins shape.
+        decision_counts["approve"] = c["approve"]
+        decision_counts["reflect"] = c["reflect"]
+        decision_counts["reject"] = c["reject"]
+        if c["verdict"]:
+            verdict_counts[c["verdict"]] += 1
+        total_updates += c["total_updates"]
     
     # Compute aggregate statistics
     aggregate_data = {
