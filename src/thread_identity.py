@@ -14,6 +14,8 @@ from __future__ import annotations
 import hashlib
 from typing import Optional
 
+LINEAGE_SPAWN_REASONS = frozenset({"subagent", "compaction"})
+
 
 def generate_thread_id(session_key: str) -> str:
     """
@@ -67,20 +69,70 @@ def infer_spawn_reason(
     return "new_session"
 
 
-_REASON_DESCRIPTIONS = {
-    "compaction": "context compaction (context window reset)",
-    "subagent": "subagent spawn (Task tool)",
-    "new_session": "new session start",
-    "explicit": "explicit fork request",
-}
+def classify_episode_fork(
+    position: int,
+    agent_uuid: Optional[str],
+    parent_uuid: Optional[str],
+    spawn_reason: Optional[str],
+) -> tuple[str, bool]:
+    """Return (episode_fork_kind, identity_lineage_fork) per R6 v2."""
+    has_child_uuid = bool(parent_uuid and agent_uuid and agent_uuid != parent_uuid)
+    if has_child_uuid:
+        return ("identity_lineage", True)
+
+    if spawn_reason in LINEAGE_SPAWN_REASONS and not parent_uuid:
+        return ("identity_lineage", True)
+
+    if position > 1:
+        return ("sibling_locus", False)
+
+    return ("none", False)
+
+
+def fork_honest_message(
+    episode_fork_kind: str,
+    parent_uuid: Optional[str],
+    spawn_reason: Optional[str],
+) -> str:
+    """Build the R6 honest-message text shared by thin and rich contexts."""
+    if episode_fork_kind == "sibling_locus":
+        return (
+            "You share a registry UUID with prior process-instances under this "
+            "thread, but you are a distinct subject - fresh process-instance, "
+            "no child UUID minted. Memory access (KG, project files, "
+            "harness-side caches) may be available; whether you have integrated "
+            "it is yours to demonstrate, not asserted."
+        )
+
+    if episode_fork_kind == "identity_lineage":
+        parent_display = parent_uuid or "unknown"
+        spawn_display = spawn_reason or "unknown"
+        return (
+            "You are a distinct subject (a fresh UUID under declared parent "
+            f"{parent_display}, spawn_reason {spawn_display}). Lineage was "
+            "declared at this fork event; whether it becomes confirmed is "
+            "governed by R2's protocol (see provisional_lineage flag and "
+            "downstream R1 evaluation)."
+        )
+
+    return "You are the first observation under this thread. No fork."
+
+
+def _agent_uuid_at_position(position: int, all_nodes: list[dict]) -> Optional[str]:
+    for node in all_nodes:
+        if node.get("thread_position") == position:
+            return node.get("agent_id")
+    return None
 
 
 def build_fork_context(
     thread_id: str,
     position: int,
     parent_uuid: Optional[str],
-    spawn_reason: str,
+    spawn_reason: Optional[str],
     all_nodes: list[dict],
+    *,
+    agent_uuid: Optional[str] = None,
 ) -> dict:
     """
     Build the fork context dict that the onboard response embeds.
@@ -88,10 +140,18 @@ def build_fork_context(
     This is the kintsugi structure — the legible discontinuity map.
 
     Returns dict with: thread_id, position, spawn_reason, predecessor,
-    thread_size, is_root, is_fork, honest_message.
+    thread_size, is_root, is_fork, episode_fork_kind,
+    identity_lineage_fork, honest_message.
     """
     is_root = position == 1
     is_fork = position > 1
+    current_uuid = agent_uuid or _agent_uuid_at_position(position, all_nodes)
+    episode_fork_kind, identity_lineage_fork = classify_episode_fork(
+        position,
+        current_uuid,
+        parent_uuid,
+        spawn_reason,
+    )
 
     # Find predecessor
     predecessor = None
@@ -122,31 +182,6 @@ def build_fork_context(
                 "label": prev_node.get("label"),
             }
 
-    # Build honest message
-    thread_short = thread_id[:12]
-    reason_str = _REASON_DESCRIPTIONS.get(spawn_reason, spawn_reason or "unknown reason")
-
-    if is_root:
-        honest_message = (
-            f"You are node 1 in thread {thread_short}. "
-            "This is the start of this conversation thread."
-        )
-    else:
-        if predecessor and predecessor.get("label"):
-            pred_desc = predecessor["label"]
-        elif predecessor and predecessor.get("position"):
-            pred_desc = f"node {predecessor['position']}"
-        else:
-            pred_desc = "a previous instance"
-
-        honest_message = (
-            f"You are node {position} in thread {thread_short}. "
-            f"Your predecessor was {pred_desc} — "
-            f"a new context was created due to {reason_str}. "
-            "You share the same trajectory lineage but you are a distinct instance. "
-            "This discontinuity is real and has been recorded."
-        )
-
     return {
         "thread_id": thread_id,
         "position": position,
@@ -155,5 +190,11 @@ def build_fork_context(
         "thread_size": len(all_nodes),
         "is_root": is_root,
         "is_fork": is_fork,
-        "honest_message": honest_message,
+        "episode_fork_kind": episode_fork_kind,
+        "identity_lineage_fork": identity_lineage_fork,
+        "honest_message": fork_honest_message(
+            episode_fork_kind,
+            parent_uuid,
+            spawn_reason,
+        ),
     }

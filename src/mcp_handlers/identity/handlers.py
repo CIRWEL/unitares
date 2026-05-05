@@ -256,12 +256,14 @@ async def _assign_thread_for_new_agent(
 
     db = get_db()
     thread_id = thread_id_hint
+    thread_source = "hint" if thread_id_hint else "session"
 
     if not thread_id and parent_agent_id:
         try:
             parent_thread = await db.get_agent_thread_info(parent_agent_id)
             if parent_thread and parent_thread.get("thread_id"):
                 thread_id = parent_thread["thread_id"]
+                thread_source = "parent"
         except Exception as e:
             logger.debug(f"[THREAD] Could not read parent thread (non-fatal): {e}")
 
@@ -280,8 +282,10 @@ async def _assign_thread_for_new_agent(
         spawn_reason = infer_spawn_reason(arguments, prior_nodes)
 
     logger.info(
-        f"[THREAD] Agent {(agent_uuid or 'pending')[:8]}... -> thread {thread_id[:12]} "
-        f"position {thread_position} reason={spawn_reason}"
+        "[THREAD] Assigned new-agent thread position=%s source=%s reason_present=%s",
+        thread_position,
+        thread_source,
+        bool(spawn_reason),
     )
     return thread_id, thread_position, spawn_reason
 
@@ -2131,6 +2135,7 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                 parent_uuid=thread_info.get("parent_agent_id") or _parent_agent_id,
                 spawn_reason=_spawn_reason,
                 all_nodes=all_nodes,
+                agent_uuid=agent_uuid,
             )
     except Exception as e:
         logger.debug(f"[THREAD] Could not build thread context: {e}")

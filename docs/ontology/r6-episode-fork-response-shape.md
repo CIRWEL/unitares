@@ -1,14 +1,15 @@
 # R6 — Episode-fork vs identity-lineage-fork response-shape decision
 
-**Status:** Decision doc, revision pass 2, with 2026-05-05 prerequisite update.
-**Scope:** A response-shape decision under plan row R6 (`docs/ontology/plan.md`). Promotes two fields to plan row S22 for the **`process_agent_update` enrichment surface only**. Does NOT promote the broader candidate provenance envelope. Onboard-side rich `thread_context` prerequisites are now resolved, but R6's fork-discrimination fields are not yet promoted to that surface.
+**Status:** Decision doc, revision pass 3, with 2026-05-05 v2.1 onboard-side field-shape decision.
+**Scope:** A response-shape decision under plan row R6 (`docs/ontology/plan.md`). Promotes two fork-discrimination fields to plan row S22 for both `process_agent_update`'s thin `thread_context` and `onboard()`'s rich `thread_context`. Does NOT promote the broader candidate provenance envelope.
 **Author:** agent `eee3bea8-7353-48a9-bea6-a6e912992f6c` (claude_code), 2026-05-02.
 **Companion to:** `harness-substrate-plurality.md` (R6 design + candidate envelope), `r6-h1-h5-dogfood-20260429.md` (dogfood pass; April 30 forcing observation).
 
 **Revision history:**
 - v1 (2026-05-02 morning) — 5-value enum (`none / sibling_locus / continuation / compaction / identity_lineage`), spawn_reason allowlist classifier, both onboard + process_agent_update write sites in scope. Reviewed by parallel three-agent council (`dialectic-knowledge-architect` + `feature-dev:code-reviewer` + `live-verifier`). All three returned "withhold pending v2." Convergent forcing items: (1) classifier silently coerced unknown spawn_reasons (`cron`, `dispatch_auto_mint`, `resident_observer`, `resident_sync`, `auto_onboard_no_session`) into `sibling_locus`; (2) Lumen substrate-earned restart misclassified; (3) `continuation` had no predicate (dead enum from day one); (4) `build_fork_context` call site at `handlers.py:1946` already passes wrong kwargs (silently swallowed by try/except) — onboard-side `thread_context` is absent from all `force_new=true` responses (the v2 default); (5) v1 conflated force_new and resume paths — April 30 Mnemos observation was on the resume path, not force_new; (6) "Same registry subject" language smuggled performative-continuity that R2 v2 retired; (7) `compaction` not actually distinguishable from `identity_lineage` under v2 ontology; (8) `has_child_uuid` not derivable from current `build_fork_context` signature without adding a parameter.
-- **v2 (2026-05-02 afternoon) — current.** Scope narrowed to `process_agent_update` enrichment only. Enum collapsed to 3 values. Classifier rewritten to use structural rule with sync-race fallback. Lumen-restart documented as intentional collapse. Honest-message language passes through R2 v2's axiom-#12-aware filter. Onboard-side `build_fork_context` rebuild flagged as separate prerequisite work (see §"Out of R6 scope" below).
+- **v2 (2026-05-02 afternoon).** Scope narrowed to `process_agent_update` enrichment only. Enum collapsed to 3 values. Classifier rewritten to use structural rule with sync-race fallback. Lumen-restart documented as intentional collapse. Honest-message language passes through R2 v2's axiom-#12-aware filter. Onboard-side `build_fork_context` rebuild flagged as separate prerequisite work, now closed by v2.1 (see §"Former prerequisites and v2.1 closure" below).
 - **v2.1 prerequisite update (2026-05-05).** Onboard-side rich `thread_context` is no longer blocked on persistence. `force_new` thread policy is explicit: caller-provided `thread_id` wins; otherwise a declared parent's existing thread is inherited; otherwise the thread is derived from the session key. The handler now claims and persists `thread_id/thread_position` on the `force_new` path, and `resolve_session_identity` threads those values through `core.agents`, `core.identities.metadata`, and eager in-memory metadata hydration. Regression: `tests/test_identity_handlers.py::TestHandleOnboardV2::test_onboard_force_new_parent_joins_parent_thread`.
+- **v2.1 field-shape decision (2026-05-05).** The rich onboard surface gains the same top-level `episode_fork_kind`, `identity_lineage_fork`, and R6 honest-message semantics as the thin process-update surface. No nested variant. Existing rich fields (`thread_id`, `position`, `spawn_reason`, `predecessor`, `thread_size`, `is_root`, `is_fork`) are preserved. Implementation uses shared helpers in `src/thread_identity.py`; `process_agent_update` reuses those helpers to avoid drift.
 
 ---
 
@@ -18,9 +19,9 @@ Three runtime conditions verified by live-verifier council pass 2026-05-02:
 
 | Surface | Runtime status | Implication for R6 |
 |---|---|---|
-| `process_agent_update` `thread_context` (thin: `{thread_id, position, is_fork}`) | **Works.** Verified via direct call against running server. Source: `enrich_thread_identity` at `src/mcp_handlers/updates/enrichments.py:1509-1521`. | R6 v2 targets this surface. |
-| `onboard()` `thread_context` (rich: 8 keys per `build_fork_context`) | **Prerequisites resolved.** Call-site signature mismatch fixed by PR #284 (`eedf5203`). `force_new` now claims and persists thread membership before mint persistence. Parent-declared fresh agents join the parent's thread as the next node; unparented fresh agents become roots of a session-derived thread unless the caller supplies `thread_id`. | R6 v2.1 can now specify whether/how the thin fork-discrimination fields are added to the rich onboard surface. |
-| Runtime `spawn_reason` vocabulary | 6 observed values: `new_session` (1765), `resident_observer` (25), `explicit` (6), `dispatch_auto_mint` (4), `resident_sync` (2), `auto_onboard_no_session` (1). `compaction` and `subagent` not observed in production data. | R6 v2's classifier must handle all 6 runtime values correctly, *and* the unobserved `subagent`/`compaction` values that the codebase still emits via the SDK and onboard schemas. Achieved by structural-rule design. |
+| `process_agent_update` `thread_context` (thin: `{thread_id, position, is_fork}` plus R6 fields) | **Works.** Verified by focused tests in `tests/test_r6_episode_fork_enrichment.py`. Source: `enrich_thread_identity` uses shared helpers from `src/thread_identity.py`. | R6 v2 targets this surface; v2.1 keeps it shared with onboard. |
+| `onboard()` `thread_context` (rich: 10 keys per `build_fork_context`) | **Works.** Call-site signature mismatch fixed by PR #284 (`eedf5203`); `force_new` thread policy and persistence shipped 2026-05-05; v2.1 adds the R6 fields to the existing rich surface. | Rich shape is top-level and shape-compatible with the thin surface for the three shared keys: `episode_fork_kind`, `identity_lineage_fork`, `honest_message`. |
+| Runtime `spawn_reason` vocabulary | 6 observed values: `new_session` (1765), `resident_observer` (25), `explicit` (6), `dispatch_auto_mint` (4), `resident_sync` (2), `auto_onboard_no_session` (1). `compaction` and `subagent` not observed in production data. | R6 v2.1 handles observed values structurally. Parentless `new_session`/`explicit` are not lineage evidence by themselves; only parent/child UUID structure can make them lineage. Parentless fallback is narrowed to inherently parented fork reasons (`subagent`, `compaction`). |
 
 ---
 
@@ -50,6 +51,40 @@ The April 30 case was unambiguously (1). But the response field name and its boo
 - **`continuation`** (v1) had no predicate — silently dead from day one (architect F10 + code-reviewer F8).
 - **`compaction`** (v1) is not distinguishable from `identity_lineage` under v2 ontology — a fresh UUID with `parent_agent_id` and `spawn_reason="compaction"` is an identity-lineage fork; the spawn_reason field already carries the kind discrimination, so a separate enum value would be redundant (architect F3).
 
+### Rich onboard surface (v2.1)
+
+**Decision:** add the same R6 discriminator fields to `onboard()`'s rich `thread_context` as top-level fields, not a nested subobject.
+
+The rich shape remains the onboarding-oriented shape:
+
+```text
+thread_id
+position
+spawn_reason
+predecessor
+thread_size
+is_root
+is_fork
+episode_fork_kind
+identity_lineage_fork
+honest_message
+```
+
+Rationale:
+
+- Thin and rich surfaces now share the same three R6 keys (`episode_fork_kind`, `identity_lineage_fork`, `honest_message`), so consumers can read fork semantics without knowing which lifecycle surface produced the response.
+- Existing rich onboarding keys remain intact; callers that use `predecessor`, `thread_size`, or `is_root` are not forced through a new nested structure.
+- `is_fork` stays position-based for compatibility. `identity_lineage_fork` remains the scalar for the ontology-level lineage event.
+- `spawn_reason` remains descriptive metadata, not proof. A parentless `new_session` or `explicit` value does not imply `identity_lineage`; the parent/child UUID relation is the load-bearing signal.
+
+Implementation surfaces:
+
+- `src/thread_identity.py::classify_episode_fork`
+- `src/thread_identity.py::fork_honest_message`
+- `src/thread_identity.py::build_fork_context`
+- `src/mcp_handlers/updates/enrichments.py::enrich_thread_identity` reuses the shared helpers
+- `src/mcp_handlers/identity/handlers.py` passes the current `agent_uuid` into `build_fork_context` so self-parent substrate restarts and child UUID forks can be distinguished
+
 ### Deprecated (kept for compat, narrowed documented intent)
 
 `is_fork` (boolean) at `enrichments.py:1518`: currently `position > 1`. Kept value-compatible. Documented intent re-grounded: `is_fork` indicates "an event that is not the root node of this thread"; `episode_fork_kind` carries the actual ontology distinction. Future deferred decision (post-Phase 1): rename or retire `is_fork`.
@@ -59,11 +94,12 @@ The April 30 case was unambiguously (1). But the response field name and its boo
 ## The classifier (v2)
 
 ```python
-_LINEAGE_SPAWN_REASONS = {"new_session", "subagent", "explicit", "compaction"}
-# Note: "resident_observer", "dispatch_auto_mint", "resident_sync",
-# "auto_onboard_no_session" are intentionally NOT in this fallback set.
-# They are not known-lineage signals by themselves; if parent_uuid exists,
-# the structural has_child_uuid rule still wins.
+_LINEAGE_SPAWN_REASONS = {"subagent", "compaction"}
+# Note: "new_session", "explicit", "resident_observer",
+# "dispatch_auto_mint", "resident_sync", and "auto_onboard_no_session"
+# are intentionally NOT in this fallback set. They are not parentless
+# lineage signals by themselves; if parent_uuid exists, the structural
+# has_child_uuid rule still wins.
 
 def _classify_fork(
     position: int,
@@ -82,10 +118,11 @@ def _classify_fork(
     if has_child_uuid:
         return ("identity_lineage", True)
 
-    # Fallback: handler.py sync block (lines 1690-1698) silently swallows failures
+    # Fallback: handler.py sync block silently swallows parent-sync failures
     # syncing parent_agent_id from onboard args to AgentMetadata. If the sync failed
-    # but spawn_reason survived, classify as identity_lineage and log a warning so
-    # the silent misclassification surfaces in operator audit.
+    # but an inherently parented spawn_reason survived, classify as
+    # identity_lineage and log a warning so the silent misclassification
+    # surfaces in operator audit.
     if spawn_reason in _LINEAGE_SPAWN_REASONS and not parent_uuid:
         logger.warning(
             "[R6_SYNC_RACE] spawn_reason=%s recognized as lineage but "
@@ -113,12 +150,13 @@ def _classify_fork(
 | force_new + parent=self (substrate-earned restart, Lumen) | UUID == parent | None or `explicit` | varies | Falls through; if position > 1 → `sibling_locus`, else `none`. **Intentional collapse — see §"Substrate-earned restart."** |
 | Vigil cron mints child UUID with `spawn_reason="resident_observer"` | UUID differs from parent | `resident_observer` | varies | `identity_lineage` (via has_child_uuid) ✓ |
 | `dispatch_auto_mint` — fresh UUID, no parent declared | UUID present, parent_uuid=None | `dispatch_auto_mint` | 1 | `none` (no fork; involuntary fresh mint, not a sibling and not lineage) |
+| parentless fresh session | UUID present, parent_uuid=None | `new_session` | 1 | `none` (`new_session` is descriptive, not parentless lineage evidence) |
 | Subagent fork via SDK | UUID differs from parent | `subagent` | 1 | `identity_lineage` (via has_child_uuid) ✓ |
 | Compaction fork | UUID differs from parent | `compaction` | 1 | `identity_lineage` (via has_child_uuid); spawn_reason field carries "this was compaction" semantically ✓ |
 | Sync race: handler dropped parent_agent_id but spawn_reason survived | parent_uuid=None | `subagent` | 1 | Fallback fires → `identity_lineage` + warning ✓ |
 | Resume + position=1 (truly fresh thread) | UUID present, parent_uuid=None | varies | 1 | `none` |
 
-The structural rule (`has_child_uuid and parent_uuid → identity_lineage`) handles all 6 observed runtime spawn_reasons correctly without enumerating them. The known-lineage allowlist appears only in the sync-race fallback, where it's honest about being a defensive heuristic.
+The structural rule (`has_child_uuid and parent_uuid → identity_lineage`) handles all 6 observed runtime spawn_reasons correctly without enumerating them. The fallback allowlist appears only for sync-race handling and is intentionally narrow: `subagent` and `compaction` are the only current parentless spawn reasons that inherently imply a missing parent edge. `new_session` and `explicit` are not enough by themselves.
 
 ## Substrate-earned restart (intentional collapse, addresses architect F2)
 
@@ -172,20 +210,20 @@ Downstream consumers reading both fields get a complete picture: "this was decla
 | Readers of `is_fork` | None — value mathematically identical (proven above) | Forward — read new fields when available |
 | Readers of `position`, `thread_id` | None — preserved | None |
 | Schema consumers (Pydantic / JSON) | Output shape gains 2 keys + 1 text field; no required fields removed | None for v1; v2.1 may rename `is_fork` after enum consumers exist |
-| Existing `predecessor` field on onboard responses | Unchanged. R6 v2 does not touch the onboard-side response (out of scope). The two `predecessor` shapes that exist (top-level vs inside thread_context) per live-verifier F10 are pre-existing and out of R6 v2 scope. | None |
-| Honest-message text consumers | New `honest_message` key added to thin `thread_context` (was absent). Top-level `welcome_message` field at `identity_payloads.py:233-234` is verbose-only and unaffected by R6. | Forward — read `thread_context.honest_message` when present. |
+| Existing `predecessor` field on onboard responses | Preserved inside the rich `thread_context`. R6 v2.1 adds sibling keys but does not move `predecessor`. The two `predecessor` shapes that exist (top-level vs inside thread_context) per live-verifier F10 are pre-existing and remain separate. | None |
+| Honest-message text consumers | Thin `thread_context` gains `honest_message`; rich onboard `thread_context.honest_message` switches to the R6 axiom-#12-aware wording. Top-level `welcome_message` remains verbose-only and points at the same rich message. | Forward — read `thread_context.honest_message` when present. |
 
-## Out of R6 scope (flagged as prerequisite work)
+## Former prerequisites and v2.1 closure
 
-Three issues were real and ontology-relevant but explicitly not addressed by R6 v2. As of 2026-05-05, both persistence prerequisites have landed; the remaining work is the v2.1 response-shape decision for the onboard-side rich surface.
+Three issues were real and ontology-relevant but explicitly not addressed by R6 v2. As of 2026-05-05, both persistence prerequisites have landed and the v2.1 response-shape decision for the onboard-side rich surface is closed.
 
 1. **`build_fork_context` call-site fix — resolved 2026-05-02 by PR #284 (`eedf5203`).** Pre-existing bug verified by live-verifier 2026-05-02: handlers.py passed `agent_uuid=` / `nodes=` while `build_fork_context` expected `position` / `all_nodes`, so the bare `except` suppressed onboard-side `thread_context`. PR #284 aligned the call site and added `tests/test_thread_identity.py::test_handler_call_site_signature_contract` to pin the signature contract.
 
 2. **`force_new` path missing `thread_position` write to `core.agents` — resolved 2026-05-05.** Policy: explicit `thread_id` wins; otherwise declared parent thread wins; otherwise derive from the session key. The handler claims the position before mint persistence and passes `thread_id/thread_position` through `resolve_session_identity` into `core.agents`, `core.identities.metadata`, and eager metadata hydration.
 
-3. **Onboard-side R6 field promotion remains open.** The rich `thread_context` can now be built on `force_new` responses, but R6 v2 does not yet specify whether the rich onboard surface should gain `episode_fork_kind`, `identity_lineage_fork`, and the thin `honest_message` language verbatim or via a shape-compatible nested variant. R6 v2.1 should decide that surface explicitly.
+3. **Onboard-side R6 field promotion — resolved 2026-05-05 by v2.1.** The rich `thread_context` keeps its onboarding-specific fields and gains top-level `episode_fork_kind`, `identity_lineage_fork`, and the shared R6 `honest_message`. No nested variant.
 
-Each of these is independent of R6's primary value (process_agent_update enrichment). Shipping R6 v2 against the working surface delivers honest fork discrimination on the path that produced the April 30 forcing observation; the onboard surface is now unblocked for a narrow v2.1 response-shape pass.
+Each of these is independent of the broader R6 candidate envelope. R6 v2/v2.1 now delivers honest fork discrimination on the path that produced the April 30 forcing observation and on the onboard rich context that fresh process-instances read first.
 
 ## Test cases (v2 — consolidated into existing test file per code-reviewer F7)
 
@@ -208,6 +246,12 @@ For `enrich_thread_identity` integration:
 10. **Thin thread_context shape addition.** Call `process_agent_update` with a known fixture; assert response.thread_context contains `episode_fork_kind`, `identity_lineage_fork`, `honest_message`, plus preserved `thread_id`, `position`, `is_fork`.
 11. **`is_fork` compatibility.** For each of cases 1–9, assert `thread_context["is_fork"] == (position > 1)`. Separately assert identity-lineage-at-root sets `identity_lineage_fork=true` while leaving legacy `is_fork=false`.
 
+For `build_fork_context` / onboard rich-context integration (v2.1):
+
+12. **Rich shape addition.** Assert `build_fork_context` returns existing rich keys plus `episode_fork_kind`, `identity_lineage_fork`, and R6 `honest_message`.
+13. **Onboard parent-thread response.** `onboard(force_new=true, parent_agent_id=<parent>, spawn_reason="new_session")` joins the parent thread, returns `position=2`, keeps `predecessor.uuid=<parent>`, and sets `episode_fork_kind="identity_lineage"` / `identity_lineage_fork=true`.
+14. **Parentless `new_session` guard.** `position=1`, `parent_uuid=None`, `spawn_reason="new_session"` returns `episode_fork_kind="none"`; `position>1` returns `sibling_locus`. This prevents descriptive `new_session` from becoming parentless lineage evidence.
+
 ## Calibration / Phase 1 telemetry
 
 This change is structural, not behavioral. There is no `seeded → earned` calibration phase. Phase 1 telemetry collects, not predicts:
@@ -221,33 +265,30 @@ This change is structural, not behavioral. There is no `seeded → earned` calib
 ## Dependency map
 
 ```
-R6 v2 ─── promotes 2 fields to ───────── S22 (plan.md row, scope = process_agent_update only)
-R6 v2 ─── leaves un-promoted ──────── rest of candidate envelope (per harness-substrate-plurality.md §Design risks)
-R6 v2 ─── leaves un-addressed ────── onboard-side thread_context rebuild (gated on §"Out of R6 scope" prerequisites)
-R6 v2 ─── coordinates with ────────── S7 (KG provenance — new fields should propagate to KG entries written from process_agent_update)
+R6 v2/v2.1 ─ promotes 2 fields to ───── S22 (plan.md row, scope = thread_context fork discrimination on process_update + onboard)
+R6 v2/v2.1 ─ leaves un-promoted ───── rest of candidate envelope (per harness-substrate-plurality.md §Design risks)
+R6 v2/v2.1 ─ coordinates with ─────── S7 (KG provenance — new fields should propagate to KG entries written from process_agent_update)
 R6 v2 ─── coordinates with ────────── R2 v2 (R6's "declared" vs R2's "confirmed" — orthogonal signals; doc explicitly clarified)
 R6 v2 ─── informs ────────────────── R1 v3.2-F (resident-class deterministic-trajectory caveat — R6's identity_lineage classification will help R1's calibration partition cleanly)
-R6 v2 ─── does NOT block on ────── any deferred envelope fields
-R6 implementation row ─── blocks on ─── §"Out of R6 scope" prerequisite (1) — `build_fork_context` call-site fix
-                                       (or scope is narrowed at impl time to just `enrich_thread_identity`)
+R6 v2/v2.1 ─ does NOT block on ───── any deferred envelope fields
 ```
 
 ## Open questions for Kenny
 
-(v1 had 3 open questions. v2 has resolved 2 of them via the council pass: continuation drop [decided], `episode_id` separate field [decided — not in R6 scope]. Two new questions surfaced.)
+(v1 had 3 open questions. v2 resolved continuation drop and `episode_id` scope. v2.1 closes the onboard-side rich response-shape question. The remaining questions are telemetry/deferred-envelope questions, not blockers for the current fork-discrimination fields.)
 
-1. **Should the `build_fork_context` call-site fix (out-of-scope #1) ship as part of R6's implementation row, or as a separate row first?** Argument for same row: R6 implementation can't fully deliver onboard-side fields without it; tight coupling. Argument for separate row: it's a pre-existing bug that affects more than R6 (anyone reading the rich `thread_context` from onboard responses), and bundling it inflates R6 scope. **Recommendation: separate row, opened as a precondition. R6 implementation row narrows to enrichment-only until prereq lands.**
+1. **Resolved 2026-05-02:** `build_fork_context` call-site fix shipped separately as PR #284 (`eedf5203`), as recommended.
 
 2. **Should sync-race detection (`[R6_SYNC_RACE]` warning) escalate to an audit event for operator visibility?** Currently the proposal is just a warning log. Audit events provide queryable history; logs only surface in real-time inspection. Telemetry question depends on whether sync race is rare (log fine) or chronic (audit needed). **Recommendation: warning log in v1; promote to audit event in v1.1 if Phase 1 shows non-trivial frequency.**
 
-3. **`substrate_restart` as a fourth enum value if class_tags become available cheaply.** v2 documents the intentional collapse to `sibling_locus`; if S8a Phase 2 backfill makes `class_tags` available at the enrichment site without a DB read, R6 v2.1 could add `substrate_restart`. Or operator may decide collapse is correct ontology and not worth a fourth value. **Recommendation: defer; not in v1 scope.**
+3. **`substrate_restart` as a fourth enum value if class_tags become available cheaply.** v2/v2.1 documents the intentional collapse to `sibling_locus`; if `class_tags` become available at the enrichment site without a DB read, a later R6 v2.2 could add `substrate_restart`. Or operator may decide collapse is correct ontology and not worth a fourth value. **Recommendation: defer; not in current scope.**
 
 ## What this does NOT solve
 
-- **Onboard-side `thread_context`.** Out of R6 v2 scope per §"Out of R6 scope." Prerequisite fix needed first.
+- **Full provenance envelope on `onboard()`.** R6 v2.1 only adds fork-discrimination fields to the existing rich `thread_context`; it does not add harness/model/transport/locus/tool-surface metadata to onboard.
 - **Affordance state.** The April 30 Discord-permissions incident that prompted the broader candidate envelope is not addressed. `affordance_state` is the load-bearing field; out of scope.
 - **Cross-harness evidence vocabulary.** The `{name, success}` vs `{tool, is_bad}` mismatch from `harness-substrate-plurality.md` §"Evidence vocabulary" is a separate concern.
-- **Harness/model/transport metadata.** S22's broader scope includes recording these on every governance write. R6 v2 only handles fork-kind discrimination on one surface.
+- **Harness/model/transport metadata.** S22's broader scope includes recording these on every governance write. R6 v2/v2.1 only handles fork-kind discrimination on two lifecycle surfaces.
 - **Multi-generation chain semantics.** R2 v2 already specified per-link-only handling. R6 inherits the same posture: `episode_fork_kind` is per-event, not chain-aggregate.
 - **Substrate-earned restart discrimination.** Intentionally collapsed to `sibling_locus`. Revisit when class_tag signal is cheap at the enrichment site.
 
@@ -257,7 +298,7 @@ R6 implementation row ─── blocks on ─── §"Out of R6 scope" prerequi
 
 - v2 (this revision) addresses every forcing item. Three remaining open questions surfaced for operator decision rather than silently defaulted.
 
-- Future council pass on v2: should be lighter-touch — verify forcing items closed, check the structural-rule classifier against any new spawn_reason values that may appear post-deployment, confirm honest-message language survives independent reading. If v2 lands clean, R6 v2 design is acceptance-ready pending Kenny's three open questions.
+- Future council pass on v2/v2.1: should be lighter-touch — verify forcing items closed, check the structural-rule classifier against any new spawn_reason values that may appear post-deployment, confirm honest-message language survives independent reading, and confirm the parentless `new_session` guard is ontology-correct. If this lands clean, R6 fork-discrimination is acceptance-ready; remaining R6 work moves to dogfood evidence and the broader candidate envelope.
 
 ---
 

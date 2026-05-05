@@ -19,7 +19,9 @@ from src.mcp_handlers.updates.enrichments import _classify_fork, enrich_thread_i
     ),
     [
         (1, "agent-1", None, None, "none", False),
+        (1, "agent-1", None, "new_session", "none", False),
         (2, "agent-1", None, None, "sibling_locus", False),
+        (2, "agent-1", None, "new_session", "sibling_locus", False),
         (1, "child", "parent", "new_session", "identity_lineage", True),
         (1, "child", "parent", "subagent", "identity_lineage", True),
         (1, "child", "parent", "compaction", "identity_lineage", True),
@@ -144,7 +146,9 @@ def test_enrich_thread_identity_adds_r6_thin_shape_for_root():
     ),
     [
         ("1 root node", 1, "agent-1", None, None, "none", False),
+        ("1b root new_session no parent", 1, "agent-1", None, "new_session", "none", False),
         ("2 sibling-locus (April 30 case)", 2, "agent-1", None, None, "sibling_locus", False),
+        ("2b sibling-locus new_session no parent", 2, "agent-1", None, "new_session", "sibling_locus", False),
         ("3 identity-lineage via has_child_uuid", 1, "child", "parent", "new_session", "identity_lineage", True),
         ("4 subagent fork", 1, "child", "parent", "subagent", "identity_lineage", True),
         ("5 compaction fork", 1, "child", "parent", "compaction", "identity_lineage", True),

@@ -2253,6 +2253,9 @@ class TestHandleOnboardV2:
         assert thread_context["thread_id"] == parent_thread_id
         assert thread_context["position"] == 2
         assert thread_context["predecessor"]["uuid"] == parent_uuid
+        assert thread_context["episode_fork_kind"] == "identity_lineage"
+        assert thread_context["identity_lineage_fork"] is True
+        assert "Lineage was declared" in thread_context["honest_message"]
 
     @pytest.mark.asyncio
     async def test_onboard_with_model_type_gemini(self, patch_onboard_deps, mock_db, mock_redis):

@@ -6,6 +6,7 @@ import pytest
 from src.thread_identity import (
     generate_thread_id,
     infer_spawn_reason,
+    classify_episode_fork,
     build_fork_context,
 )
 
@@ -72,6 +73,42 @@ class TestInferSpawnReason:
         assert reason == "new_session"
 
 
+class TestClassifyEpisodeFork:
+    @pytest.mark.parametrize(
+        (
+            "position",
+            "agent_uuid",
+            "parent_uuid",
+            "spawn_reason",
+            "expected",
+        ),
+        [
+            (1, "agent-1", None, None, ("none", False)),
+            (2, "agent-1", None, None, ("sibling_locus", False)),
+            (1, "child", "parent", "new_session", ("identity_lineage", True)),
+            (1, "child", "parent", "subagent", ("identity_lineage", True)),
+            (1, "child", "parent", "compaction", ("identity_lineage", True)),
+            (1, "child", "parent", "resident_observer", ("identity_lineage", True)),
+            (1, "agent-1", None, "dispatch_auto_mint", ("none", False)),
+            (2, "lumen", "lumen", "explicit", ("sibling_locus", False)),
+        ],
+    )
+    def test_r6_v2_cases(
+        self,
+        position,
+        agent_uuid,
+        parent_uuid,
+        spawn_reason,
+        expected,
+    ):
+        assert classify_episode_fork(
+            position,
+            agent_uuid,
+            parent_uuid,
+            spawn_reason,
+        ) == expected
+
+
 class TestBuildForkContext:
     def test_root_node(self):
         ctx = build_fork_context(
@@ -85,8 +122,9 @@ class TestBuildForkContext:
         assert ctx["is_fork"] is False
         assert ctx["position"] == 1
         assert ctx["predecessor"] is None
-        assert "node 1" in ctx["honest_message"]
-        assert "start of this conversation" in ctx["honest_message"]
+        assert ctx["episode_fork_kind"] == "none"
+        assert ctx["identity_lineage_fork"] is False
+        assert ctx["honest_message"] == "You are the first observation under this thread. No fork."
 
     def test_fork_with_parent(self):
         nodes = [
@@ -99,14 +137,17 @@ class TestBuildForkContext:
             parent_uuid="uuid-1",
             spawn_reason="compaction",
             all_nodes=nodes,
+            agent_uuid="uuid-2",
         )
         assert ctx["is_root"] is False
         assert ctx["is_fork"] is True
         assert ctx["position"] == 2
         assert ctx["predecessor"]["uuid"] == "uuid-1"
         assert ctx["predecessor"]["label"] == "claude-sonnet"
-        assert "compaction" in ctx["honest_message"]
-        assert "distinct instance" in ctx["honest_message"]
+        assert ctx["episode_fork_kind"] == "identity_lineage"
+        assert ctx["identity_lineage_fork"] is True
+        assert "spawn_reason compaction" in ctx["honest_message"]
+        assert "Lineage was declared" in ctx["honest_message"]
 
     def test_fork_without_explicit_parent_uses_previous_position(self):
         nodes = [
@@ -120,9 +161,12 @@ class TestBuildForkContext:
             parent_uuid=None,
             spawn_reason="new_session",
             all_nodes=nodes,
+            agent_uuid="uuid-3",
         )
         assert ctx["predecessor"]["uuid"] == "uuid-2"
         assert ctx["predecessor"]["position"] == 2
+        assert ctx["episode_fork_kind"] == "sibling_locus"
+        assert ctx["identity_lineage_fork"] is False
 
     def test_thread_size(self):
         nodes = [
@@ -135,6 +179,7 @@ class TestBuildForkContext:
             parent_uuid=None,
             spawn_reason="new_session",
             all_nodes=nodes,
+            agent_uuid="uuid-4",
         )
         assert ctx["thread_size"] == 4
 
@@ -164,11 +209,14 @@ class TestBuildForkContext:
             parent_uuid=thread_info.get("parent_agent_id") or None,
             spawn_reason="subagent",
             all_nodes=all_nodes,
+            agent_uuid="uuid-2",
         )
         assert ctx["thread_id"] == "t-abc123def456ab"
         assert ctx["position"] == 2
         assert ctx["is_fork"] is True
         assert ctx["predecessor"]["uuid"] == "uuid-1"
+        assert ctx["episode_fork_kind"] == "identity_lineage"
+        assert ctx["identity_lineage_fork"] is True
 
     def test_subagent_spawn_reason_in_message(self):
         ctx = build_fork_context(
@@ -180,5 +228,32 @@ class TestBuildForkContext:
                 {"agent_id": "uuid-1", "thread_position": 1, "label": None},
                 {"agent_id": "uuid-2", "thread_position": 2, "label": None},
             ],
+            agent_uuid="uuid-2",
         )
-        assert "subagent spawn" in ctx["honest_message"]
+        assert "spawn_reason subagent" in ctx["honest_message"]
+        assert "R2's protocol" in ctx["honest_message"]
+
+    def test_rich_context_adds_shape_compatible_r6_keys(self):
+        ctx = build_fork_context(
+            thread_id="t-test",
+            position=1,
+            parent_uuid="parent",
+            spawn_reason="new_session",
+            all_nodes=[{"agent_id": "child", "thread_position": 1}],
+            agent_uuid="child",
+        )
+        assert set(ctx.keys()) == {
+            "thread_id",
+            "position",
+            "spawn_reason",
+            "predecessor",
+            "thread_size",
+            "is_root",
+            "is_fork",
+            "episode_fork_kind",
+            "identity_lineage_fork",
+            "honest_message",
+        }
+        assert ctx["is_fork"] is False
+        assert ctx["episode_fork_kind"] == "identity_lineage"
+        assert ctx["identity_lineage_fork"] is True
