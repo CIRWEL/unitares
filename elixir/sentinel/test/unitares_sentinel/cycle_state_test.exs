@@ -114,6 +114,84 @@ defmodule UnitaresSentinel.CycleStateTest do
              "2026-05-04T00:00:00.000000+00:00"
   end
 
+  # Council fold: reviewer Critical-1. Without the single-empty short-circuit,
+  # `pick_max("" >= "")` was true and returned canonical (`%{}`), silently
+  # dropping shadow's sibling keys when canonical was absent.
+  test "max-on-boot: only shadow exists with empty cursor — sibling keys preserved", ctx do
+    # canonical absent; shadow has forced_release_alarm with no cursor but
+    # other tracked sibling keys (real cycle-worker shape pre-first-emit).
+    File.write!(
+      ctx.shadow,
+      ~s({"forced_release_alarm": {"first_seen_at": "2026-05-04T00:00:00+00:00"}, "runtime": "shadow"})
+    )
+
+    state = CycleState.load(canonical: ctx.canonical, shadow: ctx.shadow)
+    # Must NOT be %{} — the sibling data has to survive boot.
+    assert get_in(state, ["forced_release_alarm", "first_seen_at"]) ==
+             "2026-05-04T00:00:00+00:00"
+    assert Map.get(state, "runtime") == "shadow"
+  end
+
+  test "max-on-boot: only canonical exists with empty cursor — sibling keys preserved", ctx do
+    File.write!(
+      ctx.canonical,
+      ~s({"forced_release_alarm": {"some_python_metadata": "preserve_me"}})
+    )
+
+    state = CycleState.load(canonical: ctx.canonical, shadow: ctx.shadow)
+    assert get_in(state, ["forced_release_alarm", "some_python_metadata"]) == "preserve_me"
+  end
+
+  # ---------------------------------------------------------------------------
+  # Cutover flag awareness (v0.1.2 §B3) — runtime: beam_canonical short-circuit.
+  # ---------------------------------------------------------------------------
+
+  test "cutover: shadow with runtime=beam_canonical — canonical is NOT read", ctx do
+    # Canonical has a NEWER cursor but the operator has cut over to BEAM.
+    # Per §B3, BEAM "stops reading STATE_FILE" once canonical → reading
+    # both and picking max would silently regress to Python's diagnostic
+    # write if the operator runs Python for any reason post-cutover.
+    File.write!(
+      ctx.canonical,
+      ~s({"forced_release_alarm": {"last_event_ts": "2026-05-10T00:00:00.000000+00:00"}})
+    )
+
+    File.write!(
+      ctx.shadow,
+      ~s({"runtime": "beam_canonical", "forced_release_alarm": {"last_event_ts": "2026-05-04T00:00:00.000000+00:00"}})
+    )
+
+    state = CycleState.load(canonical: ctx.canonical, shadow: ctx.shadow)
+    # Shadow wins despite older cursor — the runtime flag is load-bearing.
+    assert get_in(state, ["forced_release_alarm", "last_event_ts"]) ==
+             "2026-05-04T00:00:00.000000+00:00"
+    assert CycleState.get_runtime(state) == "beam_canonical"
+  end
+
+  test "cutover: shadow with runtime=python_canonical — falls back to max-on-boot", ctx do
+    # Rollback case: operator set runtime back to python_canonical to revert.
+    # Shadow's runtime flag is no longer "beam_canonical" so the short-circuit
+    # is OFF; max-on-boot resumes and picks the newer cursor (likely python's).
+    File.write!(
+      ctx.canonical,
+      ~s({"forced_release_alarm": {"last_event_ts": "2026-05-10T00:00:00.000000+00:00"}})
+    )
+
+    File.write!(
+      ctx.shadow,
+      ~s({"runtime": "python_canonical", "forced_release_alarm": {"last_event_ts": "2026-05-04T00:00:00.000000+00:00"}})
+    )
+
+    state = CycleState.load(canonical: ctx.canonical, shadow: ctx.shadow)
+    assert get_in(state, ["forced_release_alarm", "last_event_ts"]) ==
+             "2026-05-10T00:00:00.000000+00:00"
+  end
+
+  test "get_runtime/1 returns nil when no flag set (shadow mode default)", _ctx do
+    assert CycleState.get_runtime(%{"forced_release_alarm" => %{}}) == nil
+    assert CycleState.get_runtime(%{}) == nil
+  end
+
   # ---------------------------------------------------------------------------
   # Schema binding (v0.1.1 §Surface 1, retained in v0.1.2).
   # ---------------------------------------------------------------------------
@@ -177,6 +255,20 @@ defmodule UnitaresSentinel.CycleStateTest do
     assert CycleState.save(%{"forced_release_alarm" => %{"last_event_ts" => "2026-05-05T00:00:00+00:00"}}, path: ctx.shadow) == :ok
   end
 
+  # Council fold: reviewer Important-3. Encoding errors are caller-side bugs,
+  # NOT I/O errors — they MUST propagate. Python's save_state swallows only
+  # around atomic_write; json.dumps would raise TypeError for non-serializable
+  # values and that propagates. BEAM must match scope, not be broader.
+  test "save propagates Jason encoding errors (programming bugs are not I/O failures)", ctx do
+    # PIDs are not JSON-encodable — Jason.encode! raises Protocol.UndefinedError.
+    # If save catches this, the missing write is invisible to the caller.
+    state_with_pid = %{"forced_release_alarm" => %{"some_pid" => self()}}
+
+    assert_raise Protocol.UndefinedError, fn ->
+      CycleState.save(state_with_pid, path: ctx.shadow)
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # Single-site accessors (v0.1.2 verifier REFUTED — Python has one read site).
   # ---------------------------------------------------------------------------
@@ -225,18 +317,8 @@ defmodule UnitaresSentinel.CycleStateTest do
            "Python fixture cursor must be ISO-8601 (got: #{inspect(cursor)})"
   end
 
-  # ---------------------------------------------------------------------------
-  # Path resolution from config (v0.1.2 §B1).
-  # ---------------------------------------------------------------------------
-
-  test "default path resolves from :unitares_sentinel, :state_file_path config", ctx do
-    Application.put_env(:unitares_sentinel, :state_file_path, ctx.canonical)
-    on_exit(fn -> Application.delete_env(:unitares_sentinel, :state_file_path) end)
-
-    state = %{"forced_release_alarm" => %{"last_event_ts" => "2026-05-05T03:14:15+00:00"}}
-
-    # save with no opts uses config; load with no opts uses config.
-    :ok = CycleState.save(state)
-    assert CycleState.load() == state
-  end
+  # NOTE: The Application.put_env-based path-resolution test lives in a
+  # SEPARATE non-async module (`cycle_state_config_test.exs`) — Application
+  # env is global and races against other async tests in this module that
+  # call `save/1` / `load/0` with no opts. Council fold: reviewer Critical-2.
 end

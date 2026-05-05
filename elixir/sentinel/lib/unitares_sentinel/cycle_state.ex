@@ -45,6 +45,8 @@ defmodule UnitaresSentinel.CycleState do
 
   @forced_release_key "forced_release_alarm"
   @cursor_key "last_event_ts"
+  @runtime_key "runtime"
+  @runtime_beam_canonical "beam_canonical"
 
   @type t :: %{String.t() => term()}
 
@@ -60,10 +62,19 @@ defmodule UnitaresSentinel.CycleState do
   def load(opts \\ []) do
     {canonical, shadow} = resolve_paths(opts)
 
-    canonical_state = read_decode(canonical)
     shadow_state = read_decode(shadow)
 
-    pick_max(canonical_state, shadow_state)
+    # Cutover short-circuit (v0.1.2 §B3): once the shadow declares
+    # `runtime: "beam_canonical"`, BEAM stops reading the Python file.
+    # This honors §B3's "from then on the canonical reader stops touching
+    # the Python file" — without it, max-on-boot would let a stale Python
+    # cursor silently win after cutover.
+    if Map.get(shadow_state, @runtime_key) == @runtime_beam_canonical do
+      shadow_state
+    else
+      canonical_state = read_decode(canonical)
+      pick_max(canonical_state, shadow_state)
+    end
   end
 
   @doc """
@@ -78,10 +89,16 @@ defmodule UnitaresSentinel.CycleState do
   @spec save(map(), keyword()) :: :ok
   def save(state, opts \\ []) when is_map(state) do
     path = Keyword.get(opts, :path) || default_shadow_path()
-    normalized = state |> Jason.encode!() |> Jason.decode!()
+
+    # Normalize OUTSIDE the try block: caller-side encoding bugs (e.g.,
+    # a map containing a PID or a tuple) raise `Protocol.UndefinedError`
+    # and MUST propagate. Python's `save_state` only swallows around
+    # `atomic_write` — `json.dumps` happens on the same line and a
+    # TypeError there would also propagate. Mirror that scope.
+    encoded = state |> Jason.encode!() |> Jason.decode!() |> Jason.encode!()
 
     try do
-      :ok = AtomicWrite.write(path, Jason.encode!(normalized))
+      :ok = AtomicWrite.write(path, encoded)
     rescue
       e ->
         Logger.warning(
@@ -117,15 +134,27 @@ defmodule UnitaresSentinel.CycleState do
     Map.put(state, @forced_release_key, inner)
   end
 
-  # ---- internals ---------------------------------------------------------
+  @doc """
+  Read the cutover runtime flag from a state map (`"beam_canonical"`,
+  `"python_canonical"`, or `nil` when shadow mode is in effect).
+  Per v0.1.2 §B3 cutover protocol.
+  """
+  @spec get_runtime(t()) :: String.t() | nil
+  def get_runtime(state) when is_map(state), do: Map.get(state, @runtime_key)
 
-  defp resolve_paths(opts) do
-    canonical = Keyword.get(opts, :canonical) || resolve_canonical_from_config()
-    shadow = Keyword.get(opts, :shadow) || canonical <> ".beam"
-    {canonical, shadow}
-  end
+  @doc """
+  Resolve the canonical (Python) STATE_FILE path from config / env var.
 
-  defp resolve_canonical_from_config do
+  Public so the `mix sentinel.cursor_diff` task and any future Sentinel
+  diagnostic can share the resolution discipline — eliminates the drift
+  class flagged in the Surface 1 council fold (reviewer concern: two
+  copies of the resolution order).
+
+  Raises if neither `:unitares_sentinel, :state_file_path` (Application env)
+  nor `UNITARES_SENTINEL_STATE_FILE` (system env) is set.
+  """
+  @spec resolve_canonical_path() :: String.t()
+  def resolve_canonical_path do
     Application.get_env(:unitares_sentinel, :state_file_path) ||
       System.get_env("UNITARES_SENTINEL_STATE_FILE") ||
       raise """
@@ -136,7 +165,15 @@ defmodule UnitaresSentinel.CycleState do
       """
   end
 
-  defp default_shadow_path, do: resolve_canonical_from_config() <> ".beam"
+  # ---- internals ---------------------------------------------------------
+
+  defp resolve_paths(opts) do
+    canonical = Keyword.get(opts, :canonical) || resolve_canonical_path()
+    shadow = Keyword.get(opts, :shadow) || canonical <> ".beam"
+    {canonical, shadow}
+  end
+
+  defp default_shadow_path, do: resolve_canonical_path() <> ".beam"
 
   # Mirrors Python's load_state guard at agents/sentinel/agent.py:494-501:
   # missing file → %{}, decode failure → %{}, non-map decode → %{}.
@@ -149,16 +186,25 @@ defmodule UnitaresSentinel.CycleState do
     end
   end
 
-  # Max-on-boot: empty cursors lose to any non-empty cursor; ISO-8601 with
-  # zero-padded fields and consistent timezone offset is lex-comparable.
+  # Max-on-boot per v0.1.2 §B2.
+  #
+  # Single-empty short-circuit FIRST: when only one file decodes to a
+  # non-empty map, return that one unconditionally — never run the lex
+  # compare against an empty placeholder. The earlier shape (cursor
+  # compare with `||""` defaults) silently dropped sibling keys when
+  # one side was `%{"forced_release_alarm" => %{}}` and the other was
+  # truly absent. Surface 1 council fold catch.
+  defp pick_max(%{} = canonical, shadow) when map_size(canonical) == 0, do: shadow
+  defp pick_max(canonical, %{} = shadow) when map_size(shadow) == 0, do: canonical
+
   defp pick_max(canonical_state, shadow_state) do
     canonical_cursor = get_last_event_ts(canonical_state) || ""
     shadow_cursor = get_last_event_ts(shadow_state) || ""
 
-    cond do
-      canonical_state == %{} and shadow_state == %{} -> %{}
-      canonical_cursor >= shadow_cursor -> canonical_state
-      true -> shadow_state
+    if canonical_cursor >= shadow_cursor do
+      canonical_state
+    else
+      shadow_state
     end
   end
 end

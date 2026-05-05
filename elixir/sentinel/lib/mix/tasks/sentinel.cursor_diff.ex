@@ -25,7 +25,16 @@ defmodule Mix.Tasks.Sentinel.CursorDiff do
   def run(_args) do
     Application.ensure_all_started(:unitares_sentinel)
 
-    canonical = resolve_canonical()
+    # Single source of truth for path resolution lives in CycleState.
+    # Catch the raise to convert to Mix.raise/1 for tooling-friendly exit.
+    canonical =
+      try do
+        CycleState.resolve_canonical_path()
+      rescue
+        e in RuntimeError ->
+          Mix.raise("sentinel.cursor_diff: " <> Exception.message(e))
+      end
+
     shadow = canonical <> ".beam"
 
     canonical_state = read_state(canonical)
@@ -43,15 +52,6 @@ defmodule Mix.Tasks.Sentinel.CursorDiff do
     Mix.shell().info("  cursor:  #{format_cursor(shadow_cursor)}")
     Mix.shell().info("")
     Mix.shell().info("delta:     #{format_delta(canonical_cursor, shadow_cursor)}")
-  end
-
-  defp resolve_canonical do
-    Application.get_env(:unitares_sentinel, :state_file_path) ||
-      System.get_env("UNITARES_SENTINEL_STATE_FILE") ||
-      Mix.raise("""
-      sentinel.cursor_diff: STATE_FILE path not configured.
-      Set :unitares_sentinel, :state_file_path or UNITARES_SENTINEL_STATE_FILE.
-      """)
   end
 
   defp read_state(path) do
