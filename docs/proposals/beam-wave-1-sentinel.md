@@ -1,8 +1,183 @@
 # Wave 1 RFC: Sentinel-on-BEAM
 
-**Status:** DRAFT v0.1, 2026-05-05. No council pass yet — see §"Council pass" gate below.
+**Status:** v0.1.1, 2026-05-05. Council pass complete; binding amendment block follows. v0.1 draft body preserved below as historical record — **read V0.1.1 AMENDMENT first** for the binding spec.
 **Parent:** `docs/proposals/beam-footprint-roadmap-v0.md` v0.3 / v0.3.1 (operator-decision migration commit + council fold).
 **Sibling:** `docs/proposals/surface-lease-plane-v0.md` (Phase A complete, BEAM service running on `127.0.0.1:8788`).
+**Council pass v0.1.1 (2026-05-05):** dialectic-knowledge-architect (3B/1C/1N), feature-dev:code-reviewer (3B/2C), live-verifier (3 VERIFIED, 1 DRIFT — line numbers, 0 REFUTED). Six BLOCKs, three CONCERNs, one NIT, one DRIFT — all folded inline below.
+
+---
+
+## V0.1.1 AMENDMENT 2026-05-05 — council fold (binding spec)
+
+**Read this first.** v0.1 was drafted from a static read of the codebase and missed several load-bearing details. v0.1.1 supersedes the v0.1 spec on every point of conflict; v0.1 body is preserved below as historical record. This amendment IS the binding RFC.
+
+### B1 (architect) — Surface 5: `SESSION_FILE` and governance identity continuity
+
+v0.1 listed only four state surfaces. The session anchor at `~/.unitares/anchors/sentinel.json` is itself a load-bearing surface, not Open Question Q1.
+
+**Why it's load-bearing:**
+
+- `GovernanceAgent._ensure_identity` reads `agent_uuid` + `continuity_token` from this file. With `refuse_fresh_onboard=True` (`agents/sentinel/agent.py:477`), BEAM Sentinel will **refuse to start** if the anchor is missing or schema-skewed.
+- More critically: during shadow mode (per v0.1 §Surface 1), Python and BEAM Sentinel each call `process_agent_update` on every cycle. **Two parallel Sentinels writing to the same agent's per-agent state is a real per-agent state write**, not a "Sentinel doesn't write per-agent state" no-op as v0.1 framed it. The dashboard `/ws/eisv` stream picks up both runtimes' EISV updates and FleetState (which Sentinel itself ingests via WS, see C3 below) loops on its own observations.
+
+**Fold (binding):**
+
+- **No shadow mode for the agent_uuid.** Cutover is direct flip on identity: BEAM Sentinel re-uses the same agent_uuid + continuity_token by reading the existing `sentinel.json`. Python Sentinel's launchctl service is unloaded at the cutover moment; BEAM Sentinel's launchctl service is loaded immediately after.
+- **State format compatibility (binding):** BEAM Sentinel MUST NOT modify `sentinel.json` schema beyond what Python `GovernanceAgent` expects. Adding a `runtime: "beam"` field to metadata is OK (forwards-compat); modifying `agent_uuid` or `continuity_token` shape is forbidden.
+- **Backup before cutover:** `cp ~/.unitares/anchors/sentinel.json ~/.unitares/anchors/sentinel.json.pre-beam` is a binding step in the deploy procedure. Rollback restores from this backup.
+
+### B2 (architect) — Findings emit endpoint + fingerprint format
+
+v0.1 §Boundary said BEAM Sentinel calls `http://127.0.0.1:8767/v1/tools/call` with `tool=leave_note`. **This is wrong.**
+
+**Actual contract:** `agents/common/findings.py:18-19` posts to `http://localhost:8767/api/findings` with the JSON body shape defined in that file. The dedup fingerprint format at `agents/common/findings.py:24-32` is `compute_fingerprint(["sentinel", finding_type, violation_class, agent_id])` returning a 16-hex prefix. The server uses this fingerprint to suppress duplicates.
+
+**Fold (binding):**
+
+- Endpoint: `POST http://127.0.0.1:8767/api/findings`. Not `/v1/tools/call`.
+- Fingerprint format MUST match Python's exactly. The hash inputs (`["sentinel", finding_type, violation_class, agent_id]`) and the hex prefix length (16 chars) are binding.
+- **Tier 2 cross-runtime contract test (binding addition):** given identical (finding_type, violation_class, agent_id) inputs, BEAM and Python MUST produce identical 16-hex fingerprints. Without this test, dedup breaks silently and double-emit happens regardless of cutover semantics.
+
+### C3 (architect) — Asymmetry rationale corrected
+
+v0.1 argued findings can't shadow because "dashboard double-fires." Server-side dedup at `/api/findings` would actually suppress duplicates IF fingerprints match (B2). The real reason direct-flip is correct:
+
+**Sentinel's check_in cycle calls `process_agent_update` (governance EISV write) every cycle. Two parallel Sentinels emit two EISV streams. The WebSocket consumer at `agents/sentinel/agent.py:565` ingests the dashboard's `/ws/eisv` feed back into `FleetState` — Sentinel's own observations of itself become input to its analysis. Two parallel Sentinels create a self-ingestion loop, not just a dashboard double-fire.**
+
+**Fold:** v0.1 §Surface 2 rationale corrected. Direct-flip is binding; shadow mode for findings is structurally unsafe.
+
+### B5 (architect) — Q2 default + §Observability missing
+
+**Q2 resolution (binding):** REST. BEAM Sentinel calls governance MCP via `POST /api/findings` and `process_agent_update` via existing REST surface. NOT via hex.pm Elixir MCP SDK for Wave 1. Reasoning: MCP-direct from BEAM creates a cross-runtime protocol coupling that Wave 3 (which migrates the MCP server itself) would have to either preserve or break — exactly the substrate-tax pattern stop sign #4 is designed to catch. REST preserves the boundary contract that's already proven via lease plane Phase A.
+
+**§Observability (binding new section):**
+
+- BEAM Sentinel writes logs to the same path Python uses: `~/Library/Logs/unitares-sentinel-beam.log` (note `-beam` suffix to keep streams separate during shadow / for forensics post-cutover). Rotation: same `MAX_LOG_LINES=1000` semantics as Python (`agents/sentinel/agent.py:62`).
+- Log format MUST be parseable by existing `tail -f data/logs/...` workflows — structured logging via `Logger.metadata` is fine but the human-readable line MUST start with `[YYYY-MM-DDThh:mm:ss]`.
+- launchd plist `StandardErrorPath` and `StandardOutPath` redirect to `~/Library/Logs/unitares-sentinel-beam.{out,err}.log` for BEAM stack traces and supervisor output. Application-level findings + cycle progress go to the rotated `unitares-sentinel-beam.log`.
+
+### B1 (reviewer) — `atomic_write` equivalence
+
+v0.1 said `File.write/2` + `File.rename/2` is "equivalent to Python's `atomic_write`." It is not, in three ways:
+
+- Python's `atomic_write` (`agents/sdk/src/unitares_sdk/utils.py:17-48`) uses `tempfile.mkstemp` (creates 0o600) + `os.fchmod(fd, 0o600)` + `os.replace`. `File.write/2` creates with the process umask (typically 022 → 0o644 on launchd) — **mode regression on a security-relevant cursor file**.
+- Python's helper has a `finally:` cleanup of the orphan `.tmp` file. Bare Elixir `File.write/2 + File.rename/2` does not.
+- fsync is absent in both Python and Elixir paths (NIT-level on macOS APFS, but call it out so a future BLOCK doesn't surprise).
+
+**Fold (binding):**
+
+```elixir
+defmodule Sentinel.AtomicWrite do
+  def write(path, content) do
+    tmp = path <> ".tmp"
+    try do
+      :ok = File.write!(tmp, content)
+      :ok = File.chmod!(tmp, 0o600)
+      :ok = File.rename!(tmp, path)
+    rescue
+      e ->
+        File.rm(tmp)
+        reraise e, __STACKTRACE__
+    end
+  end
+end
+```
+
+This helper is binding for `.sentinel_state` writes. Direct `File.write/2` to the cursor path is forbidden.
+
+### B2 (reviewer) — `Mint.WebSocket` is not in the dep tree
+
+v0.1 named `Mint.WebSocket` without a hex package version pin and without specifying reconnect / ping behavior.
+
+**Fold (binding):**
+
+- **Hex package:** `{:mint_web_socket, "~> 1.0"}` added to `elixir/sentinel/mix.exs` deps.
+- **Consumer topology:** the WebSocket consumer is a `GenServer` (not a bare `Task`), owning the reconnect state explicitly. Reconnect on any error with 10s backoff (matching Python's `await asyncio.sleep(10)` at `agents/sentinel/agent.py:537`).
+- **Ping behavior:** disable application-level pings to match Python's `ping_interval=None` (`agents/sentinel/agent.py:521`). Loopback connection — TCP detects drops.
+- **Message buffering:** if reconnect happens mid-stream, BEAM Sentinel does NOT replay missed events. FleetState is rebuilt incrementally from current state on next message — same posture as Python.
+
+### C3 (reviewer) — Byte-equivalence downgraded to structural-equivalence
+
+v0.1 §Surface 2 promised "byte-equivalent where possible." Achievable on fingerprint inputs (B2 above) but NOT on full JSON body shape because:
+
+- Jason sorts map keys alphabetically by default; Python `json.dumps` preserves dict insertion order.
+- ISO-8601 timestamps: Postgrex's `DateTime.to_iso8601/1` produces `Z`-terminated strings; Python's `datetime.isoformat()` on tz-aware values produces `+00:00`-terminated strings.
+
+**Fold (binding):**
+
+- Tier 2 contract test asserts **structural equivalence + named-field contract**, not byte-equivalence. Required fields per finding type enumerated in test fixtures.
+- **Fingerprint test stays byte-equivalent** (16-hex-prefix string comparison).
+- v0.1 "byte-equivalent" claim retracted.
+
+### C4 (reviewer) — Audit-outbox NOT inherited; PeriodicWorker IS
+
+`elixir/lease_plane/lib/unitares_lease_plane/audit_outbox_forwarder.ex` projects `lease_plane.lease_plane_events` → `audit.tool_usage`. **Sentinel does NOT use this pattern** because Sentinel reads from `lease_plane_events` and emits to `/api/findings` over HTTP, not to a DB outbox.
+
+**Fold (binding):**
+
+- BEAM Sentinel implementation MUST NOT inherit `AuditOutboxForwarder` from lease plane. Cargo-cult risk warning explicit in this RFC.
+- BEAM Sentinel SHOULD inherit `PeriodicWorker` from lease plane (`elixir/lease_plane/lib/unitares_lease_plane/periodic_worker.ex`). The 300s analysis cycle maps cleanly onto `PeriodicWorker` with `interval_ms: 300_000`.
+- The `start_workers: false` test gate from `elixir/lease_plane/config/test.exs` SHOULD be inherited so ExUnit tests can drive cycles deterministically.
+
+### B5 (reviewer) — §Bootstrap spec (binding new section)
+
+v0.1 assumed `elixir/sentinel/` into existence with no app-skeleton spec.
+
+**Fold (binding):**
+
+- **OTP app name:** `:unitares_sentinel`. Module namespace: `UnitaresSentinel.*`.
+- **Path:** `elixir/sentinel/` (sibling to `elixir/lease_plane/`).
+- **`mix.exs` deps (minimum):**
+  - `{:postgrex, "~> 0.20"}` — Postgrex for `lease_plane_events` polling
+  - `{:jason, "~> 1.4"}` — JSON for findings emission
+  - `{:mint_web_socket, "~> 1.0"}` — WebSocket consumer (per B2 reviewer fold)
+  - `{:finch, "~> 0.18"}` — HTTP client for `/api/findings` POSTs (Mint-based, hex.pm production-grade)
+  - `{:stream_data, "~> 0.6", only: :test}` — property tests for fingerprint equivalence
+- **DB env var:** `UNITARES_SENTINEL_DATABASE_URL` (separate from `UNITARES_LEASE_PLANE_DATABASE_URL` so deployment can pin a read-only role for Sentinel). Falls back to `LEASE_PLANE_*` if unset (compat default).
+- **Bearer token env vars:** `LEASE_PLANE_BEARER_TOKEN` for lease plane API; `UNITARES_HTTP_API_TOKEN` for `/api/findings` (governance MCP).
+- **CI integration (binding):** `mix test` for `elixir/sentinel/` runs in the same CI gate as the Python suite. New CI step in `.github/workflows/` (or equivalent) to be added by the Wave 1 implementation PR. Tier 1 ExUnit tests + lease plane tests + Python suite all gate the merge.
+- **Test harness:** `test/test_helper.exs` boots Postgrex sandbox + a fixture for `lease_plane_events` rows. Reuses `elixir/lease_plane/test/support/` patterns where applicable.
+
+### N4 (architect) — Sibling app correct, stated for the record
+
+`elixir/lease_plane/mix.exs` is a flat single-app project (`Mix.Project`, not umbrella). Adding `elixir/sentinel/` as sibling matches existing topology and isolates Sentinel's deps. Umbrella promotion (single `elixir/mix.exs` over both apps) deferred to Wave 3+ when more apps land. **No change needed; stated here so the next reviewer doesn't re-litigate.**
+
+### Verifier DRIFT — Line citations off by +1
+
+v0.1 cited lines drafted against an earlier file state. Master HEAD `cf144993` line numbers (corrections):
+
+- `load_state` / `save_state`: `agents/sentinel/agent.py:492-510` (was 492-509)
+- `sentinel_finding`: `:597` (was 596)
+- `sentinel_forced_release_alarm`: `:682` (was 681)
+- `lease_plane_phase_b_transition`: `:734` (was 733 — verifier confirmed 734)
+- `lease_advisory_scope`: `:549-554` (verified, range fits)
+- `_poll_sync_forced_release` `asyncio.run()`: `:449-453` (verified exact)
+- `refuse_fresh_onboard=True`: `:477` (was 476)
+
+All patterns + counts confirmed by verifier. Citations updated; substance unchanged.
+
+### What V0.1.1 changes vs V0.1
+
+- §State migration: 5 surfaces (added Surface 5 — SESSION_FILE + identity continuity)
+- §Surface 1: atomic_write helper specified (§B1 reviewer)
+- §Surface 2: endpoint corrected to `/api/findings`; fingerprint contract binding
+- §Surface 2 rationale: corrected to WS/EISV self-ingestion loop, not dashboard double-fire
+- §BEAM↔Python boundary: REST resolved (Q2), endpoint correct, WebSocket consumer spec'd
+- §Test strategy: byte-equivalence downgraded to structural-equivalence + fingerprint byte-equivalence
+- §Observability: NEW SECTION (B5 architect)
+- §Bootstrap spec: NEW SECTION (B5 reviewer)
+- §AuditOutboxForwarder: explicit NOT-inherit warning + PeriodicWorker DO-inherit
+- Line citations corrected (verifier DRIFT)
+- Q1 promoted to Surface 5 (was open question)
+- Q2 resolved (was open question)
+
+### What V0.1.1 does NOT change
+
+- Migration commitment unchanged (operator decision under v0.3 stands).
+- Wave 1 = Sentinel-on-BEAM unchanged (lowest blast radius for agent-state DB layer).
+- Sibling Elixir app at `elixir/sentinel/` unchanged.
+- 4 stop signs unchanged.
+- Exit criteria gate on ODE profile result unchanged (v0.3.1 C1 fold preserved).
 
 ---
 
