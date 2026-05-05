@@ -1083,6 +1083,34 @@ class TestHandleDetectAnomalies:
             "Iris: Coherence dropped from 0.48 to 0.36 (0.12 change)"
         )
 
+    @pytest.mark.asyncio
+    async def test_does_not_force_full_metadata_reload(self):
+        """Regression: handle_detect_anomalies MUST NOT call load_metadata_async
+        with force=True. Same anti-pattern as handle_aggregate_metrics; see
+        Wave 0 follow-up to PR #348."""
+        id1 = "aaaaaaaa-bbbb-cccc-dddd-111111111111"
+        server = _build_mock_server(agent_ids=[id1])
+
+        with patch(_PATCH_SERVER, server), \
+             patch(_PATCH_CTX, return_value=None), \
+             patch(
+                 "src.pattern_analysis.analyze_agent_patterns",
+                 return_value={"anomalies": []},
+             ):
+            from src.mcp_handlers.observability.handlers import handle_detect_anomalies
+            await handle_detect_anomalies({})
+
+        for call in server.load_metadata_async.await_args_list:
+            assert call.kwargs.get("force", False) is False, (
+                f"handle_detect_anomalies called load_metadata_async with "
+                f"force=True (kwargs={call.kwargs})"
+            )
+            for arg in call.args:
+                assert arg is not True, (
+                    f"handle_detect_anomalies called load_metadata_async "
+                    f"with positional True (args={call.args})"
+                )
+
 
 # ---------------------------------------------------------------------------
 # handle_aggregate_metrics
@@ -1263,6 +1291,35 @@ class TestHandleAggregateMetrics:
 
         data = parse_result(result)
         assert data["aggregate"]["total_updates"] == 30
+
+    @pytest.mark.asyncio
+    async def test_does_not_force_full_metadata_reload(self):
+        """Regression: handle_aggregate_metrics MUST NOT call load_metadata_async
+        with force=True. The force-reload triggers 3221 sequential per-agent
+        cache.set awaits (~16s blocking), causing decorator timeouts and
+        bystander timeouts on concurrent handlers via shared event loop. See
+        Wave 0 follow-up to PR #348 — substrate-tax framing in CLAUDE.md.
+        Pin the regression so the slow path can't reappear silently."""
+        id1 = "aaaaaaaa-bbbb-cccc-dddd-111111111111"
+        server = _build_mock_server(agent_ids=[id1])
+
+        with patch(_PATCH_SERVER, server), \
+             patch(_PATCH_CTX, return_value=None):
+            from src.mcp_handlers.observability.handlers import handle_aggregate_metrics
+            await handle_aggregate_metrics({})
+
+        # The handler MUST call load_metadata_async (cache hint), but with NO
+        # force=True. Inspect every call's kwargs and any positional bool.
+        for call in server.load_metadata_async.await_args_list:
+            assert call.kwargs.get("force", False) is False, (
+                f"handle_aggregate_metrics called load_metadata_async with "
+                f"force=True (kwargs={call.kwargs}); this is the slow path"
+            )
+            for arg in call.args:
+                assert arg is not True, (
+                    f"handle_aggregate_metrics called load_metadata_async "
+                    f"with positional True (args={call.args}); equivalent to force=True"
+                )
 
 
 # ---------------------------------------------------------------------------
