@@ -869,6 +869,81 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
 
 # ─── Phase 5: Post-Update Side Effects ─────────────────────────────────
 
+async def _r2_post_update_hook(ctx: UpdateContext) -> None:
+    """R2 PR 5: post-update lineage trigger.
+
+    For agents with confirmed lineage, increment ``chain_obs_count``
+    (cheap single UPDATE — fine to ``await`` inline; matches the shape
+    of other UPDATEs already awaited in ``execute_post_update_effects``).
+
+    For agents with any lineage edge, dispatch ``evaluate_lineage_for``
+    in a tracked task (anyio-safe: must NOT inline-await R1's per-dim
+    DTW + audit write under the MCP handler's anyio task group).
+
+    Cadence guard inside the FSM (``eval_cadence`` default 1h) prevents
+    tight re-eval if multiple check-ins fire in the same window.
+
+    All paths fail-soft — failures here must not break the
+    ``process_agent_update`` response.
+    """
+    agent_id = ctx.agent_id
+    # Fast-path: most agents are orphan. Skip the DB roundtrip if the
+    # in-memory metadata has no parent_agent_id. The cache is set at
+    # onboard (PR 3 wiring) and reliably populated for declared-lineage
+    # agents in this process. The DB read remains the source of truth
+    # but we avoid hitting it for the orphan-majority case.
+    meta = getattr(ctx, "meta", None)
+    if not (meta is not None and getattr(meta, "parent_agent_id", None)):
+        return
+    try:
+        from src.db import get_db
+        backend = get_db()
+        if backend is None:
+            return
+        lineage = await backend.read_lineage_state(agent_id)
+        if not lineage or not lineage.get("parent_agent_id"):
+            return
+        # Confirmed lineage: increment chain counter (await OK — single UPDATE)
+        if (
+            lineage.get("confirmed_at") is not None
+            and not lineage.get("provisional_lineage")
+        ):
+            try:
+                await backend.increment_chain_obs_count(agent_id)
+            except Exception as e:
+                # Counter miscount is recoverable — sweeper will reconcile
+                # chain_obs_count on the next scheduled eval (≤6h). Keep at
+                # debug to avoid log noise on transient UPDATE failures.
+                logger.debug(
+                    f"[R2] increment_chain_obs_count failed for "
+                    f"{agent_id[:8]}...: {e}"
+                )
+        # Dispatch FSM eval (fire-and-forget; cadence guard inside)
+        try:
+            from src.background_tasks import create_tracked_task
+            from src.identity.lineage_lifecycle import evaluate_lineage_for
+            create_tracked_task(
+                evaluate_lineage_for(agent_id),
+                name=f"r2_lineage_eval_{agent_id[:8]}",
+            )
+        except Exception as e:
+            # Dispatch failure means R2 governance is silently degraded for
+            # this agent — FSM never runs for this check-in, lineage state
+            # stays stale until the sweeper picks it up (up to 6h later).
+            # Worth operator attention.
+            logger.warning(
+                f"[R2] lineage eval dispatch failed for "
+                f"{agent_id[:8]}...: {e}"
+            )
+    except Exception as e:
+        # Outer read failure means DB issue or schema drift — both warrant
+        # operator attention, not silent debug.
+        logger.warning(
+            f"[R2] post-update lineage hook failed for "
+            f"{agent_id[:8]}...: {e}"
+        )
+
+
 async def execute_post_update_effects(ctx: UpdateContext) -> None:
     """Health check, CIRS emissions, PG record, outcome events. All fail-safe."""
     mcp_server = ctx.mcp_server
@@ -1349,3 +1424,8 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
             "would have processed %d items for agent=%s",
             len(ctx.recent_tool_results), ctx.agent_id,
         )
+
+    # R2 PR 5: lineage hooks — chain_obs_count increment + evaluate_lineage_for
+    # dispatch. Fail-soft inside the helper. Placed at the end so trajectory
+    # row has been written and any preceding outcome events are flushed.
+    await _r2_post_update_hook(ctx)

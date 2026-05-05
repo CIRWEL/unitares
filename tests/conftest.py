@@ -126,6 +126,38 @@ def _isolate_db_backend(monkeypatch):
     mock_backend.mark_lineage_provisional.return_value = True
     mock_backend.confirm_lineage.return_value = True
     mock_backend.is_lineage_provisional.return_value = False
+    # R2 lineage lifecycle helpers (PR 1 — migration 036 + storage helpers).
+    # Per the R2 plan §"Test 10 (meta)" — explicit stubs avoid the
+    # AsyncMock auto-child coroutine-leak pattern noted in R1 v3.2-E.
+    mock_backend.declare_lineage.return_value = True
+    mock_backend.demote_lineage.return_value = True
+    mock_backend.archive_lineage.return_value = True
+    mock_backend.increment_chain_obs_count.return_value = 0
+    mock_backend.stamp_lineage_eval.return_value = None
+    mock_backend.are_lineages_provisional.return_value = {}
+    # R2 PR 3 council fixes — re-declaration reset and symmetric
+    # rejection clear. Default False so unit tests that don't seed a
+    # terminal-state row exercise the no-op branch (matches the live
+    # helper contract for active rows).
+    mock_backend.reset_lineage_for_redeclaration.return_value = False
+    mock_backend.clear_lineage_declaration.return_value = False
+    # R2 PR 2 — lineage FSM single-query read. Default to None so tests
+    # that don't seed a provisional/confirmed row exercise the
+    # `no_parent` skip path. Per the R2 plan §"Test 10 (meta)" this
+    # explicit stub avoids the AsyncMock auto-child coroutine-leak
+    # pattern noted in R1 v3.2-E.
+    mock_backend.read_lineage_state.return_value = None
+    # R2 PR 4 — lineage-eval sweeper candidate selector. Default to an
+    # empty list so tests that don't seed candidates exercise the
+    # zero-work cycle path. Explicit stub avoids the AsyncMock auto-child
+    # coroutine-leak pattern.
+    mock_backend.select_lineage_eval_candidates.return_value = []
+    # R2 PR 3 — cross-role pre-check reads `metadata.tags[0]`. Default
+    # to None so the charitable orphan branch fires by default in unit
+    # tests that don't seed a class tag (per the helper's contract:
+    # missing class on either side → accept). Explicit stub avoids the
+    # AsyncMock auto-child coroutine-leak pattern.
+    mock_backend.read_class_tag.return_value = None
     mock_backend.read_r1_calibration_state.return_value = {
         "calibration_status": "seeded",
         "seeded_since": None,
