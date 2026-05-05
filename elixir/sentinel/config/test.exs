@@ -1,7 +1,14 @@
 import Config
 
-# Skeleton-stage: skip starting the application supervisor in tests.
-# Test files exercise pure modules (e.g. AtomicWrite) without needing
-# the supervisor tree. Postgrex sandbox + supervisor children land in
-# follow-up PRs as the Surface 1–5 wires arrive.
-config :unitares_sentinel, start_application: false
+# Test mode: skip the application supervisor tree. Postgrex is started
+# manually by `test/test_helper.exs` (skip-if-unavailable pattern) so
+# integration tests run when governance_test is reachable and pure-logic
+# tests run regardless.
+config :unitares_sentinel,
+  start_application: false,
+  start_postgrex: false,
+  start_poller: false,
+  database_url:
+    System.get_env("UNITARES_SENTINEL_DATABASE_URL") ||
+      System.get_env("UNITARES_LEASE_PLANE_DATABASE_URL") ||
+      "postgresql://postgres:postgres@localhost:5432/governance_test"
