@@ -413,7 +413,7 @@ def enrich_detected_patterns(ctx: UpdateContext) -> None:
 
 # ─── Knowledge Surfacing ───────────────────────────────────────────────
 
-@enrichment(order=130)
+@enrichment(order=130, lite_safe=True)
 async def enrich_knowledge_surfacing(ctx: UpdateContext) -> None:
     """Surface top 3 relevant discoveries based on agent tags."""
     try:
@@ -928,7 +928,7 @@ def enrich_eisv_validation(ctx: UpdateContext) -> None:
 
 # ─── Learning Context ──────────────────────────────────────────────────
 
-@enrichment(order=210)
+@enrichment(order=210, lite_safe=True)
 async def enrich_learning_context(ctx: UpdateContext) -> None:
     """Surface agent's own history for in-context learning."""
     try:
@@ -1189,7 +1189,7 @@ async def enrich_websocket_broadcast(ctx: UpdateContext) -> None:
 
 # ─── Mirror Signals ───────────────────────────────────────────────────
 
-@enrichment(order=240)
+@enrichment(order=240, lite_safe=True)
 async def enrich_mirror_signals(ctx: UpdateContext) -> None:
     """Build actionable self-awareness signals for mirror response mode.
 
