@@ -1,6 +1,6 @@
 # S7 - KG Provenance Lineage Schema
 
-**Status:** Schema decision v0.1 + persistence round-trip + authoritative snapshot builder + aggregation helper + S22 context merge shipped. No migration.
+**Status:** Schema decision v0.1 + persistence round-trip + authoritative snapshot builder + aggregation helper + S22 context merge + index-readiness decision shipped. No lineage table or JSONB index migration.
 **Last Updated:** 2026-05-06
 **Scope:** Plan row S7 (`docs/ontology/plan.md`). Defines how KG discoveries should represent writer identity, lineage state, and chain aggregation without treating UUID continuity or declared parentage as automatically confirmed.
 **Builds on:** R1 provisional-lineage marking, R2 Phase 1 lineage lifecycle, R3 trust-tier annotation, R5 KG cite-and-extend, R6/S22 provenance envelope vocabulary.
@@ -35,6 +35,7 @@ The runtime does not yet use them consistently for S7:
 - The current chain builder lives at `src/identity/provenance_chain.py`. It walks `core.identities` via `read_lineage_state`, emits S7 `lineage_link.v1` records with R2 lifecycle columns, orders links root-to-writer, and stops with explicit reasons for missing parents, cycles, or max-depth cutoffs. The KG handler falls back to metadata-derived ancestry only when the authoritative DB snapshot path errors.
 - The read-side aggregation helper also lives at `src/identity/provenance_chain.py`. It evaluates `as_written` from the immutable snapshot and `current_valid` by rereading `core.identities`, excluding provisional links by default and clawing back demoted, archived, missing, or reparented links.
 - The S22 write-context helper lives at `src/provenance_context.py`. KG writes can now attach optional harness/model/transport/memory/tool/locus context under `provenance.s22_context`, while `process_agent_update` records the same shape in persisted `agent_state.provenance_context` when callers supply those fields.
+- The index-readiness helper lives at `src/identity/provenance_index_readiness.py`, with the read-only operator script `scripts/diagnostics/s7_provenance_index_readiness.py`. It counts S7/S22 JSONB rows, checks existing `knowledge.discoveries` indexes, optionally reads `pg_stat_statements`, and recommends "defer", "already_indexed", or "candidate" without emitting DDL.
 
 So S7 does not need a new table first. It needs the existing JSONB column to carry an ontology-correct chain snapshot and a query policy for current-valid aggregation.
 
@@ -50,6 +51,15 @@ Do not add a `lineage_edges` table in S7 v0.1. R2 intentionally keeps the canoni
 - a need to preserve every edge-state transition outside audit events.
 
 None of those are true yet.
+
+S7 v0.1 also does not add JSONB indexes by default. The current decision is:
+defer S7/S22 JSONB indexes until both row volume and observed JSONB query
+pressure cross the diagnostic thresholds. The default readiness gate is at
+least 1,000 S7/S22 JSONB rows and at least 25 observed JSONB predicate calls
+from logs, `pg_stat_statements`, or equivalent operator telemetry. If both
+thresholds are crossed, the diagnostic suggests partial GIN indexes for the
+missing surfaces; generated columns remain deferred until stable equality
+filters emerge.
 
 ## Field Contract
 
@@ -111,7 +121,7 @@ Provisional links are never included in default lineage-attributed aggregation. 
 3. **PR 2: authoritative snapshot builder.** Done 2026-05-06 in `src/identity/provenance_chain.py`. It walks `core.identities`, records R2 lifecycle columns per link, serializes timestamps, marks aggregation eligibility, and stops with `chain_stop_reason` instead of fabricating missing ancestry.
 4. **PR 3: aggregation helper.** Done 2026-05-06 in `src/identity/provenance_chain.py`. `evaluate_lineage_chain_aggregation` answers `as_written` vs `current_valid`; `aggregate_lineage_attribution` produces lineage-attributed counts without flipping existing stats endpoints. Provisional links are excluded by default and require explicit opt-in.
 5. **PR 4: S22 merge point.** Done 2026-05-06. `src/provenance_context.py` builds `s22.write_context.v1`; KG store attaches it under `provenance.s22_context`; `process_agent_update` records the same shape in `agent_state.provenance_context` for governance writes. Lineage facts remain in `provenance_chain`.
-6. **PR 5: indexing decision.** Next. Add JSONB or generated-column indexes only after query volume shows they are needed.
+6. **PR 5: indexing decision.** Done 2026-05-06. `src/identity/provenance_index_readiness.py` and `scripts/diagnostics/s7_provenance_index_readiness.py` codify the no-migration default: defer JSONB/generated-column indexes until row volume and observed JSONB query pressure justify them. Candidate DDL is advisory only.
 
 ## Non-Goals
 
@@ -125,6 +135,6 @@ Provisional links are never included in default lineage-attributed aggregation. 
 ## Open Questions
 
 1. Should the persisted `provenance_chain` include only active ancestors, or should it include terminal links visible in audit history? v0.1 says active/current chain only; terminal state is handled by current-valid queries and audit events.
-2. Should `current_valid` aggregation read live `core.identities` on every query, or materialize a compact validity cache? v0.1 says read live until volume proves otherwise.
+2. Should `current_valid` aggregation read live `core.identities` on every query, or materialize a compact validity cache? v0.1 says read live until volume proves otherwise; the index-readiness diagnostic is the first gate before any materialized cache or JSONB index work.
 3. Should multi-generation chain aggregation require every link confirmed, or allow partial confirmed prefixes? v0.1 says every link for default aggregation; partial prefixes require explicit query selection.
 4. Should R5 include ancestor parent memory once S7 lands? R5 v0.1 says no; revisit only after S7 PR 2 produces reliable chain snapshots.
