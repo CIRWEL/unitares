@@ -678,6 +678,42 @@ class TestStoreKnowledgeGraphAdditional:
         assert discovery.provenance_chain[-1]["relationship"] == "direct_parent"
         assert discovery.provenance_chain[-1]["source"] == "agent_metadata_fallback"
 
+    @pytest.mark.asyncio
+    async def test_store_with_s22_provenance_context(
+        self, patch_common, registered_agent
+    ):
+        _, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_store_knowledge_graph
+
+        result = await handle_store_knowledge_graph({
+            "agent_id": registered_agent,
+            "summary": "S22 context test",
+            "harness": "codex-cli",
+            "transport": "mcp-stdio",
+            "model_provider": "openai",
+            "model": "gpt-5.5",
+            "tool_surface": ["terminal", "mcp:unitares", "terminal"],
+            "memory_context": "repo+kg",
+            "locus": {"workspace": "/repo"},
+            "affordance_state": {"shell": True},
+            "episode_id": "episode-1",
+            "process_instance_id": "opaque-process",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        discovery = mock_graph.add_discovery.await_args.args[0]
+        context = discovery.provenance["s22_context"]
+        assert context["schema"] == "s22.write_context.v1"
+        assert context["context_source"] == "knowledge.store"
+        assert context["harness_type"] == "codex-cli"
+        assert context["transport"] == "mcp-stdio"
+        assert context["model_provider"] == "openai"
+        assert context["model"] == "gpt-5.5"
+        assert context["tool_surface"] == ["terminal", "mcp:unitares"]
+        assert context["memory_context"] == "repo+kg"
+        assert context["governance_mode"] == "explicit"
+
 
 # ============================================================================
 # handle_search_knowledge_graph - additional coverage

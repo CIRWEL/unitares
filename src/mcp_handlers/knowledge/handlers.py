@@ -558,6 +558,10 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
         provenance = None
         provenance_chain = None
         try:
+            from src.provenance_context import (
+                attach_s22_context,
+                build_s22_write_context,
+            )
             from ..identity.shared import _get_lineage  # Import lineage function
 
             meta = None
@@ -616,6 +620,13 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
                 meta,
                 _get_lineage,
             )
+            s22_context = build_s22_write_context(
+                arguments,
+                meta=meta,
+                context_source="knowledge.store",
+                default_governance_mode="explicit",
+            )
+            provenance = attach_s22_context(provenance, s22_context)
         except Exception as e:
             logger.debug(f"Could not capture provenance: {e}")  # Non-critical
 

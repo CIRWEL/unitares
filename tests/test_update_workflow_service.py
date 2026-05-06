@@ -327,6 +327,37 @@ async def test_run_process_update_workflow_real_spine_with_edge_mocks():
 
 
 @pytest.mark.asyncio
+async def test_process_update_records_s22_provenance_context():
+    harness = _make_real_spine_harness(response_text="Recorded context.")
+    harness.ctx.arguments.update({
+        "harness": "codex-cli",
+        "transport": "mcp-stdio",
+        "model_provider": "openai",
+        "model": "gpt-5.5",
+        "tool_surface": ["terminal", "mcp:unitares"],
+        "memory_context": "repo+kg",
+        "episode_id": "episode-1",
+        "process_instance_id": "opaque-process",
+    })
+
+    with _patch_real_spine_edges(harness):
+        await run_process_update_workflow(harness.ctx)
+
+    call_kwargs = harness.server.process_update_authenticated_async.await_args.kwargs
+    context = call_kwargs["agent_state"]["provenance_context"]
+    assert context["schema"] == "s22.write_context.v1"
+    assert context["context_source"] == "process_agent_update"
+    assert context["harness_type"] == "codex-cli"
+    assert context["transport"] == "mcp-stdio"
+    assert context["model_provider"] == "openai"
+    assert context["model"] == "gpt-5.5"
+    assert context["tool_surface"] == ["terminal", "mcp:unitares"]
+    assert context["memory_context"] == "repo+kg"
+    assert context["governance_mode"] == "explicit"
+    assert context["session_resolution_source"] == "ip_ua_fingerprint"
+
+
+@pytest.mark.asyncio
 async def test_run_process_update_workflow_real_spine_retries_record_state_after_create():
     """Post-update state persistence should recover by creating the agent and retrying."""
     attempts = {"count": 0}
