@@ -2,11 +2,9 @@ defmodule UnitaresSentinel.Application do
   @moduledoc """
   OTP entry point for the Sentinel app.
 
-  Skeleton-only at this stage: the supervisor starts with no children
-  in :test mode (`config/test.exs`) and a placeholder set in :prod / :dev.
-  Cycle worker, lease consumer, WebSocket ingester, and Finch HTTP client
-  pool will be added by follow-up PRs as their respective surfaces (1–5)
-  are wired per the v0.1.1 RFC.
+  The supervisor starts with no children in :test mode (`config/test.exs`).
+  Runtime mode starts Postgrex, the Finch HTTP client pool used by Surface 2
+  findings emission, and the poller when `:start_poller` is enabled.
 
   Mirrors the `:start_application` gate that `UnitaresLeasePlane.Application`
   uses (`elixir/lease_plane/lib/unitares_lease_plane/application.ex`) so
@@ -25,7 +23,7 @@ defmodule UnitaresSentinel.Application do
   end
 
   defp start_full do
-    children = postgrex_children() ++ poller_children()
+    children = postgrex_children() ++ finch_children() ++ poller_children()
     Supervisor.start_link(children, strategy: :one_for_one, name: UnitaresSentinel.Supervisor)
   end
 
@@ -40,6 +38,14 @@ defmodule UnitaresSentinel.Application do
   defp poller_children do
     if Application.get_env(:unitares_sentinel, :start_poller, false) do
       [UnitaresSentinel.ForcedReleasePoller]
+    else
+      []
+    end
+  end
+
+  defp finch_children do
+    if Application.get_env(:unitares_sentinel, :start_finch, true) do
+      [{Finch, name: UnitaresSentinel.Finch}]
     else
       []
     end
