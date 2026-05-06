@@ -232,11 +232,15 @@ def cmd_list(args: argparse.Namespace) -> int:
             client_session_id = payload.get("client_session_id")
             if not uuid and not client_session_id:
                 continue
+            token = payload.get("continuity_token")
             entries.append({
                 "slot": slot,
                 "parent_agent_id": uuid,
                 "prior_client_session_id": client_session_id,
                 "updated_at": payload.get("updated_at"),
+                "schema_version": payload.get("schema_version"),
+                "legacy_flat": path.name == "session.json",
+                "has_legacy_token": isinstance(token, str) and bool(token.strip()),
                 "path": str(path),
             })
 

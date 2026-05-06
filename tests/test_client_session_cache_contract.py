@@ -85,6 +85,8 @@ def test_list_returns_newest_lineage_entries_and_surfaces_flat_legacy(tmp_path: 
     cache_dir.mkdir()
     (cache_dir / "session.json").write_text(json.dumps({
         "uuid": "legacy-agent",
+        "continuity_token": "v1.legacy",
+        "schema_version": 1,
         "updated_at": "2026-04-15T00:00:00+00:00",
     }))
 
@@ -115,8 +117,14 @@ def test_list_returns_newest_lineage_entries_and_surfaces_flat_legacy(tmp_path: 
     assert [entry["slot"] for entry in entries] == ["newer", "older", None]
     assert entries[0]["parent_agent_id"] == "newer-agent"
     assert entries[0]["prior_client_session_id"] == "sid-newer"
+    assert entries[0]["legacy_flat"] is False
+    assert entries[0]["has_legacy_token"] is False
+    assert entries[2]["legacy_flat"] is True
+    assert entries[2]["has_legacy_token"] is True
+    assert entries[2]["schema_version"] == 1
     assert "uuid" not in entries[0]
     assert "client_session_id" not in entries[0]
+    assert "continuity_token" not in entries[2]
 
 
 def test_merge_strips_legacy_token_but_rejects_incoming_token(tmp_path: Path) -> None:
