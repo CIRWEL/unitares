@@ -91,7 +91,7 @@ The "lowest blast radius" framing in V0.3 §Sequencing is technically correct *f
 `src/mcp_handlers/updates/phases.py` `execute_locked_update` enforces three invariants today that V0.3's "GenServer dissolves the lock structurally" claim does not name:
 
 1. **api_key PG/cache reconciliation** (`phases.py:659-716`) — atomic against concurrent `get_agent` reads under GenServer model.
-2. **thread_id / node_index monotonic advancement** (`phases.py:756-782`) — PG write must remain synchronous within message handler; fire-and-forget loses thread lineage on crash mid-sequence.
+2. **thread_id / node_index monotonic advancement** (`phases.py:756-782`) — PG write must remain synchronous within message handler; fire-and-forget loses thread lineage on crash mid-sequence. **Relaxed in master 2026-05-05 via PR #362** (perf: lock held 6569ms/10684ms per turn; in-memory `ctx.meta` treated as process-local source of truth, PG copy moved to fire-and-forget for cross-process visibility). Wave 3 RFC must decide whether to re-tighten under GenServer atomicity or inherit the eventual-consistency posture.
 3. **previous_void_active read-then-use-then-write capture** (`phases.py:734-741`) — must remain a single mailbox message, not split across two GenServer calls.
 
 **Fold:** Wave 3 RFC (when drafted) MUST include §"Lock-invariant inventory" enumerating these three plus any others it identifies, stating which become GenServer-internal synchronous message steps vs. which can be relaxed.
