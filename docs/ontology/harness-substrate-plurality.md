@@ -363,6 +363,14 @@ Durable H5 gate:
 - H5 task entries should include `comparison_key` or `task_label`; `task_outcome` is optional but encouraged
 - `scripts/diagnostics/s22_h5_comparable_entries.py` is the read-only acceptance check for the Hermes/Claude Code/Codex CLI task set
 
+Live closure 2026-05-06:
+
+- `scripts/diagnostics/s22_h5_comparable_entries.py --comparison-key s22-h5-2026-05-06 --show-missing-payloads --json` reported `decision=complete`
+- Complete key: `s22-h5-2026-05-06`
+- Comparable harnesses: Hermes, Claude Code, Codex CLI
+- Operator note: underlying model was GPT-5.5
+- Hermes caveat: the row was accepted under weak `ip_ua_fingerprint` identity assurance with confidence dampening; this satisfies S22 harness-provenance evidence, not strong identity proof
+
 ## Non-goals
 
 - Do not make Hermes the UNITARES identity source of truth.
