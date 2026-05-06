@@ -911,6 +911,53 @@ class TestHandleBindSession:
         assert data["success"] is False
         assert "resume=true" in data["error"]
 
+    @pytest.mark.asyncio
+    async def test_bind_session_rejects_expired_continuity_token_before_resolution(self):
+        """bind_session must honor the shared continuity-token TTL gate."""
+        from src.mcp_handlers.identity import session as session_mod
+        from src.mcp_handlers.identity.handlers import handle_bind_session
+
+        issued_at = 1_700_000_000
+        expired_at = (
+            issued_at
+            + session_mod._CONTINUITY_TTL
+            + session_mod._CLOCK_SKEW_TOLERANCE
+            + 1
+        )
+        token_agent_uuid = str(uuid.uuid4())
+        resolve_identity = AsyncMock(return_value={
+            "agent_uuid": token_agent_uuid,
+            "agent_id": "ExpiredTokenAgent",
+            "label": "ExpiredTokenAgent",
+            "created": False,
+        })
+        derive_session = AsyncMock(return_value="mcp:test-session")
+
+        with patch.dict("os.environ", {"UNITARES_CONTINUITY_TOKEN_SECRET": "test-secret"}, clear=False):
+            with patch("src.mcp_handlers.identity.session.time.time", return_value=issued_at):
+                token = session_mod.create_continuity_token(
+                    token_agent_uuid,
+                    "agent-bind-test",
+                )
+
+            assert token is not None
+
+            with patch("src.mcp_handlers.identity.session.time.time", return_value=expired_at), \
+                 patch("src.mcp_handlers.identity.handlers.resolve_session_identity", new=resolve_identity), \
+                 patch("src.mcp_handlers.identity.handlers.derive_session_key", new=derive_session), \
+                 patch("src.mcp_handlers.context.get_session_signals", return_value=SimpleNamespace(user_agent="test")):
+                result = await handle_bind_session({
+                    "continuity_token": token,
+                    "resume": True,
+                })
+
+        data = parse_result(result)
+
+        assert data["success"] is False
+        assert "client_session_id or continuity_token is required" in data["error"]
+        resolve_identity.assert_not_awaited()
+        derive_session.assert_not_awaited()
+
 
 # ============================================================================
 # handle_identity_adapter - full decorator-wrapped handler (lines 1208-1410)
