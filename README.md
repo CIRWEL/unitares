@@ -11,7 +11,7 @@
 
 Status: live. First public commit 2025-12-04. For architecture details, see [docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md).
 
-Most AI agents fly blind: they can't tell when they're thrashing, drifting, or overconfident until a human notices. Unitares is a runtime layer that lets agents **see their own state and regulate themselves** — slow down when disorder spikes, ask for review when integrity drops, hand off when they're running on fumes.
+Most AI agents fly blind: they can't tell when they're thrashing, drifting, or overconfident until a human notices. UNITARES is a runtime layer that lets agents **see their own state and regulate themselves** — slow down when disorder spikes, ask for review when integrity drops, hand off when they're running on fumes.
 
 Each check-in returns a verdict (`proceed` / `guide` / `pause` / `reject`) and guidance, so agents can adjust *before* external circuit breakers fire. Humans and peer agents read the same underlying state, so one signal serves three consumers: agents regulating themselves, humans watching dashboards, peers coordinating.
 
@@ -48,7 +48,7 @@ That brings up Postgres 17 + Apache AGE + pgvector + Redis + the governance serv
 ## The self-regulation loop
 
 1. **Agent acts** — tool call, response, decision.
-2. **Unitares updates state** — four numbers that summarize how it's going.
+2. **UNITARES updates state** — four numbers that summarize how it's going.
 3. **Agent reads its own state back** in the check-in response.
 4. **Agent applies its own policy** — proceed, narrow scope, ask for review, or stop.
 
@@ -64,7 +64,7 @@ elif result["metrics"]["energy"] < 0.2:
     agent.stop_and_summarize()      # avoid thrashing
 ```
 
-The agent reads its own metrics and adjusts *before* external controls have to fire. Humans see the same state on the dashboard; peer agents read it over the API. Unitares isn't an output validator (guardrails, evals) or a behavioral sandbox (permissions, container limits) — it's a state layer the agent itself can read.
+The agent reads its own metrics and adjusts *before* external controls have to fire. Humans see the same state on the dashboard; peer agents read it over the API. UNITARES isn't an output validator (guardrails, evals) or a behavioral sandbox (permissions, container limits) — it's a state layer the agent itself can read.
 
 ## What makes the signal trustworthy
 
@@ -74,7 +74,7 @@ The agent reads its own metrics and adjusts *before* external controls have to f
 
 **Trajectory as identity.** Long-run EISV patterns answer continuity questions ("still the same agent?") and surface drift no single check-in could see.
 
-**Peer review when needed.** When an agent's confidence and the system's assessment disagree, Unitares can run a short adversarial review with peer agents — or with an LLM when no peers are around — before anything halts.
+**Peer review when needed.** When an agent's confidence and the system's assessment disagree, UNITARES can run a short adversarial review with peer agents — or with an LLM when no peers are around — before anything halts.
 
 ---
 
@@ -100,7 +100,7 @@ As of April 2026 (single-operator deployment — self-traffic, not external adop
 *What these numbers are good for:* a stress test that the pipeline holds up under sustained volume. *What they are not:* evidence of product-market traction. External adoption is the open question.
 
 <p align="center">
-  <img src="docs/assets/dashboard.png" width="80%" alt="Unitares dashboard — stats overview with fleet coherence, agent count, discoveries, and system health"/>
+  <img src="docs/assets/dashboard.png" width="80%" alt="UNITARES dashboard — stats overview with fleet coherence, agent count, discoveries, and system health"/>
 </p>
 
 <details>
@@ -222,7 +222,7 @@ Agent identity: save `agent_uuid` from `onboard()` as an anchor; declare fresh-p
 
 ## How state works
 
-Agents emit text and tool results; they rarely expose a stable notion of internal condition. Unitares exposes four continuous variables any client can report and any observer can read:
+Agents emit text and tool results; they rarely expose a stable notion of internal condition. UNITARES exposes four continuous variables any client can report and any observer can read:
 
 | Variable | Range | What it tracks |
 |----------|-------|----------------|
@@ -308,7 +308,7 @@ This `unitares` repo is the governance server/runtime. Plugin-side `.codex-plugi
 
 ## Citation
 
-Kenny Wang ([ORCID 0009-0006-7544-2374](https://orcid.org/0009-0006-7544-2374)), cirwel Systems. If you build on this work, please cite — see [`CITATION.cff`](CITATION.cff).
+Kenny Wang ([ORCID 0009-0006-7544-2374](https://orcid.org/0009-0006-7544-2374)), CIRWEL Systems. If you build on this work, please cite — see [`CITATION.cff`](CITATION.cff).
 
 ```bibtex
 @misc{wang2026unitares,

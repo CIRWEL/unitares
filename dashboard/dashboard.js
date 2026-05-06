@@ -1,5 +1,5 @@
 /**
- * Unitares Governance Dashboard
+ * UNITARES Governance Dashboard
  *
  * Main application logic. Depends on:
  * - utils.js (DashboardAPI, DataProcessor)

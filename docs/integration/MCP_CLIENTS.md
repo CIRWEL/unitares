@@ -1,6 +1,6 @@
 # MCP client configuration
 
-Client-specific JSON for pointing an MCP-aware tool at a local Unitares governance server. Assumes the server is running on `http://localhost:8767/mcp/` — see the root README for startup.
+Client-specific JSON for pointing an MCP-aware tool at a local UNITARES governance server. Assumes the server is running on `http://localhost:8767/mcp/` — see the root README for startup.
 
 ## Cursor / Claude Code
 

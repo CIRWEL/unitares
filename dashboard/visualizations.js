@@ -1,5 +1,5 @@
 /**
- * Unitares Dashboard — Advanced Visualizations
+ * UNITARES Dashboard — Advanced Visualizations
  *
  * Radar charts, fleet heatmaps, sparklines, and anomaly indicators.
  * Depends on: Chart.js 4.x (already loaded), dashboard.js globals (cachedAgents, agentEISVHistory).

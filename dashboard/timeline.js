@@ -1,5 +1,5 @@
 /**
- * Unitares Dashboard — Activity Timeline & Skeletons
+ * UNITARES Dashboard — Activity Timeline & Skeletons
  *
  * Global activity feed: check-ins, verdicts, discoveries, dialectic events.
  * Also handles skeleton loaders and WS status label.

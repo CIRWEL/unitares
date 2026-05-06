@@ -1,5 +1,5 @@
 /**
- * Unitares Dashboard — Dialectic Module
+ * UNITARES Dashboard — Dialectic Module
  *
  * Dialectic session rendering, filtering, detail modal with transcript.
  * Extracted from dashboard.js to reduce monolith size.

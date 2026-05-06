@@ -1,5 +1,5 @@
 /**
- * Unitares Dashboard — EISV Charts Module
+ * UNITARES Dashboard — EISV Charts Module
  *
  * EISV time-series charts, WebSocket handler, governance pulse,
  * events log, drift gauges, and animated value updates.
