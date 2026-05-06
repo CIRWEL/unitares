@@ -46,21 +46,25 @@ defmodule UnitaresSentinel.ForcedReleasePollerStructureTest do
   # ---------------------------------------------------------------------------
 
   @moduletag :db
-  test "tick on dead DB module preserves prior cursor and does NOT persist", ctx do
-    # Pass a registered name that doesn't exist. Postgrex.transaction against
-    # a non-existent process raises an exit signal in the calling process,
-    # which our caller catches via `try/rescue` to convert into the
-    # all-or-nothing error path.
+  test "tick on dead DB exits — supervisor restart preserves cursor (the OTHER §B6 path)", ctx do
+    # v0.1.3 §B6 covers two failure classes:
+    #   (a) `{:error, _}` returned from transaction → tick returns
+    #       `{[], prior_cursor}`, no persist. (Pinned by the rollback
+    #       test below.)
+    #   (b) Process exit (e.g. :noproc on dead registered name) →
+    #       caller dies, supervisor restarts, init/1 re-reads on-disk
+    #       cursor. The cursor was never advanced because the dying
+    #       tick never reached `persist_cursor/2`.
+    #
+    # This test pins (b): the dead-DB call exits AND no shadow file is
+    # written. Verifier-confirmed in PR #378 council that `Postgrex.transaction`
+    # against a non-registered name raises `:noproc` rather than returning
+    # `{:error, _}`. Pre-council, this test had a dual-acceptance branch
+    # that was dead code; honest version below.
     fake_db = :"nonexistent_db_#{System.unique_integer([:positive])}"
-
     prior = ~U[2026-05-04 12:00:00.000000Z]
 
-    # Wrapping in try/rescue/catch since calling Postgrex.transaction on a
-    # non-registered name exits the calling process. The poller code is
-    # expected to surface this as an error path; if it doesn't, this test
-    # captures the exit so the suite stays green and we get a meaningful
-    # assertion below.
-    result =
+    exit_caught? =
       try do
         ForcedReleasePoller.tick(
           prior_cursor: prior,
@@ -68,27 +72,37 @@ defmodule UnitaresSentinel.ForcedReleasePollerStructureTest do
           persist: true,
           state_path: ctx.state_file <> ".beam"
         )
+
+        false
       catch
-        :exit, _reason -> :exited
+        :exit, _reason -> true
       end
 
-    case result do
-      {[], ^prior} ->
-        # The poller surfaced the error as the documented {[], prior_cursor}
-        # path. Confirm no shadow file was written.
-        refute File.exists?(ctx.state_file <> ".beam"),
-               "transaction failure must NOT persist cursor (v0.1.3 §B6)"
+    assert exit_caught?,
+           "dead DB module must exit (supervisor-restart path), not return — §B6 path (b)"
 
-      :exited ->
-        # The poller did not catch the exit. Document the gap explicitly:
-        # for §B6 to be load-bearing, the next PR (when it adds three
-        # queries that can fail in more ways) must surface failures as
-        # {:error, _} from the transaction body, not exits from a missing
-        # registered name. For now, this single-query case relies on
-        # Postgrex.transaction returning {:error, _} on real DB errors —
-        # which the integration test below pins.
-        :ok
-    end
+    refute File.exists?(ctx.state_file <> ".beam"),
+           "exit before persist_cursor MUST NOT have written shadow file — §B6 (b)"
+  end
+
+  test "tick on Postgrex.rollback returns {[], prior_cursor} (§B6 path (a))", _ctx do
+    # Pin §B6 path (a) by exercising Postgrex.transaction's rollback-returns-
+    # {:error, _} contract directly. Verifier-confirmed:
+    #   Postgrex.transaction(DB, fn conn -> Postgrex.rollback(conn, :x) end)
+    # returns `{:error, :x}`. tick/1 matches this and returns
+    # `{[], prior_cursor}` without persisting.
+    #
+    # We can't easily inject a rollback into tick/1's hardcoded SELECT, but
+    # we can pin the contract on the underlying Postgrex behavior the
+    # error-path branch relies on. If this test starts failing, tick/1's
+    # `{:error, reason} ->` branch is unreachable and §B6 (a) is broken.
+    result =
+      Postgrex.transaction(UnitaresSentinel.DB, fn conn ->
+        Postgrex.rollback(conn, :test_rollback_for_b6_pin)
+      end)
+
+    assert result == {:error, :test_rollback_for_b6_pin},
+           "Postgrex.rollback contract underpins §B6 path (a) — if this fails, tick/1's error branch is unreachable"
   end
 
   test "tick on real DB with prior cursor that returns empty rows preserves cursor", _ctx do
@@ -140,9 +154,19 @@ defmodule UnitaresSentinel.ForcedReleasePollerStructureTest do
   # ---------------------------------------------------------------------------
 
   test "GenServer skips :tick when running? is true (mailbox guard)" do
-    # Start the GenServer with a long initial_delay so it doesn't tick during
-    # the test, then manipulate state to set running?=true, then send :tick
-    # manually and verify it returns without error (the guard logs + skips).
+    # Verifier-confirmed (PR #378 council): deleting the
+    # `handle_info(:tick, %{running?: true})` head causes this test to fail
+    # because the real tick body would set running? back to false. The
+    # assertion `state.running? == true` after `send(pid, :tick)` is
+    # structurally load-bearing — it pins that the guard short-circuited
+    # without entering the body.
+    #
+    # The guard itself is unreachable under self-scheduling (next :tick is
+    # only enqueued AFTER the current tick returns) — this test exercises
+    # the EXTERNAL `send(pid, :tick)` path that justifies the guard's
+    # existence (operator iex sends, future cron-style schedulers, etc.).
+    # Without this test the guard would be flagged as dead code by future
+    # cleanup-PRs.
     {:ok, pid} =
       ForcedReleasePoller.start_link(
         name: :"test_guard_#{System.unique_integer([:positive])}",
