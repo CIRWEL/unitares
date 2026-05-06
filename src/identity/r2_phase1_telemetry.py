@@ -197,6 +197,7 @@ def assess_r2_phase1_telemetry(
         ),
     }
     passed = all(check["passed"] for check in checks.values())
+    failed_checks = _failed_checks(checks)
     decision = "candidate" if passed else "defer"
     reason = (
         "phase2_telemetry_thresholds_satisfied"
@@ -210,7 +211,8 @@ def assess_r2_phase1_telemetry(
         ]
         if passed
         else [
-            "Keep R2 Phase 2 consumers deferred until all telemetry thresholds pass."
+            "Keep R2 Phase 2 consumers deferred until all telemetry thresholds pass.",
+            _deficit_summary(failed_checks),
         ]
     )
 
@@ -219,6 +221,7 @@ def assess_r2_phase1_telemetry(
         "reason": reason,
         "thresholds": thresholds.to_dict(),
         "checks": checks,
+        "failed_checks": failed_checks,
         "snapshot": snapshot,
         "recommendations": recommendations,
     }
@@ -241,6 +244,32 @@ def _check(observed: Any, required: int) -> dict[str, Any]:
         "required": required,
         "passed": observed_value >= required,
     }
+
+
+def _failed_checks(checks: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    failed = []
+    for name, check in checks.items():
+        if check.get("passed"):
+            continue
+        observed = float(check.get("observed") or 0)
+        required = float(check.get("required") or 0)
+        failed.append({
+            "name": name,
+            "observed": observed,
+            "required": required,
+            "remaining": max(0.0, round(required - observed, 2)),
+        })
+    return failed
+
+
+def _deficit_summary(failed_checks: list[dict[str, Any]]) -> str:
+    if not failed_checks:
+        return "All telemetry thresholds are satisfied."
+    parts = [
+        f"{item['name']} needs {item['remaining']} more"
+        for item in failed_checks
+    ]
+    return "Remaining R2 Phase 2 deficits: " + "; ".join(parts) + "."
 
 
 def _row_int(row: Any, key: str) -> int:

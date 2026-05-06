@@ -55,6 +55,14 @@ def test_r2_phase1_assessment_defers_until_all_thresholds_pass():
     assert assessment["checks"]["confirmed_pairs"]["passed"] is False
     assert assessment["checks"]["demoted_pairs"]["passed"] is False
     assert assessment["checks"]["cross_role_rejections"]["passed"] is False
+    assert [item["name"] for item in assessment["failed_checks"]] == [
+        "telemetry_window_days",
+        "confirmed_pairs",
+        "demoted_pairs",
+        "cross_role_rejections",
+    ]
+    assert assessment["failed_checks"][1]["remaining"] == 47.0
+    assert "Remaining R2 Phase 2 deficits" in assessment["recommendations"][1]
 
 
 def test_r2_phase1_assessment_allows_phase2_candidate_when_thresholds_pass():
@@ -73,6 +81,7 @@ def test_r2_phase1_assessment_allows_phase2_candidate_when_thresholds_pass():
     assert assessment["decision"] == "candidate"
     assert assessment["reason"] == "phase2_telemetry_thresholds_satisfied"
     assert all(check["passed"] for check in assessment["checks"].values())
+    assert assessment["failed_checks"] == []
 
 
 def test_parse_since_accepts_zulu_and_naive_values():
