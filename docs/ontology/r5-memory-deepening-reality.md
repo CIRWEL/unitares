@@ -1,7 +1,7 @@
 # R5 - Memory-Deepening Reality Tooling
 
-**Status:** Design doc v0.1. No runtime gate yet.
-**Last Updated:** 2026-05-05
+**Status:** Shadow scorer implemented. No R2 runtime gate.
+**Last Updated:** 2026-05-06
 **Scope:** Plan row R5 (`docs/ontology/plan.md`). Specifies the first concrete channel for distinguishing "successor read inherited memory" from "successor's behavior actually used inherited memory."
 **Builds on:** R2 Phase 1 (#357), R1 trajectory-continuity scoring, KG `response_to` links.
 
@@ -45,11 +45,15 @@ Deferred channels remain valuable, but they are heavier:
 
 This classification is not moral judgment. A `disagree` response can be valuable, but by itself it does not show the successor integrated the parent's working memory into a new operational conclusion.
 
-## Proposed Primitive
+## Implemented Primitive
 
-Candidate signature: `async def score_memory_integration(parent_id, successor_id, *, channel="kg_cite_extend", window_days=30, min_parent_discoveries=3, min_strong_extensions=2, min_distinct_parent_targets=2) -> MemoryIntegrationScore`.
+Runtime module: `src/identity/memory_integration.py`.
 
-Candidate return shape:
+Public signature: `async def score_memory_integration(parent_id, successor_id, *, channel="kg_cite_extend", window_days=30, min_parent_discoveries=3, min_strong_extensions=2, min_distinct_parent_targets=2, graph=None, now=None, max_discoveries=500) -> MemoryIntegrationScore`.
+
+The `graph`, `now`, and `max_discoveries` parameters are operator/test controls; the normal path uses the configured KG backend and current UTC time.
+
+Return shape:
 
 | Field | Meaning |
 |---|---|
@@ -93,10 +97,10 @@ Do not enable that conjunct until there is enough shadow data to evaluate false 
 
 ## Implementation Sequence
 
-1. **PR 0: this spec + plan update.** No runtime behavior.
-2. **PR 1: read-only scorer.** Add an R5 memory-integration module with `score_memory_integration(..., channel="kg_cite_extend")`. Query existing KG rows only; no schema migration.
-3. **PR 2: tests.** Unit tests with synthetic parent/successor discoveries covering strong, weak, absent, insufficient-parent-memory, and inconclusive cases.
-4. **PR 3: operator surface.** Add an explicit script or diagnostic action for shadow scoring. Do not call from the R2 hot path.
+1. **PR 0: this spec + plan update.** Done 2026-05-05. No runtime behavior.
+2. **PR 1: read-only scorer.** Done 2026-05-06 in `src/identity/memory_integration.py`. Queries existing KG rows only; no schema migration.
+3. **PR 2: tests.** Done 2026-05-06 in `tests/test_memory_integration.py`. Synthetic coverage: strong, weak, absent, insufficient-parent-memory, inconclusive, and archived-parent exclusion.
+4. **PR 3: operator surface.** Done 2026-05-06 via `scripts/diagnostics/score_r5_memory_integration.py`. Read-only shadow scoring; not called from the R2 hot path.
 5. **PR 4: optional audit table.** Only if shadow operation needs durable score history. Candidate table name: `audit.r5_memory_integration_audit`.
 6. **PR 5: R2 v1.1 decision.** After telemetry, decide whether to add R5 as a conjunct to R2 promotion or keep it advisory.
 
