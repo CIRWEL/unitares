@@ -2549,6 +2549,62 @@ class TestEdgeCases:
         assert mock_db.graph_query.await_count >= 7
 
     @pytest.mark.asyncio
+    async def test_add_discovery_persists_provenance_chain_to_postgres(self):
+        """The Postgres-side INSERT in _persist_discovery_row must include
+        provenance_chain — the AGE node metadata path is not a substitute.
+
+        Pre-2026-05-06 the AGE backend's SQL INSERT omitted the
+        ``provenance_chain`` column (and its ON CONFLICT update) even though
+        it was added to ``KnowledgeGraphMixin.kg_add_discovery`` in commit
+        9a93579f ('Round trip KG provenance chains'). Result: discoveries
+        flowing through ``UNITARES_KNOWLEDGE_BACKEND=age`` had their
+        ``provenance_chain`` captured into the AGE graph node but silently
+        dropped from the ``knowledge.discoveries.provenance_chain`` Postgres
+        column. The pre-existing ``test_add_discovery_with_all_features``
+        only verified ``graph_query.await_count`` and never inspected the
+        ``conn.execute`` SQL — that's why the gap stayed silent. This test
+        anchors the SQL contract directly.
+        """
+        kg, mock_db = make_kg_with_mock_db()
+        kg._check_rate_limit = AsyncMock()
+        kg._pgvector_available = AsyncMock(return_value=False)
+
+        chain = [
+            {"agent_id": "ancestor-1", "relationship": "ancestor", "lineage_depth": 0},
+            {"agent_id": "parent-1", "relationship": "direct_parent", "lineage_depth": 1},
+        ]
+        discovery = make_discovery(
+            discovery_id="disc-with-chain",
+            agent_id="agent-1",
+            provenance_chain=chain,
+        )
+
+        await kg.add_discovery(discovery)
+
+        execute_calls = mock_db._mock_conn.execute.await_args_list
+        insert_calls = [
+            c for c in execute_calls
+            if c.args and "INSERT INTO knowledge.discoveries" in c.args[0]
+        ]
+        assert insert_calls, "expected one INSERT into knowledge.discoveries"
+        sql, *bound = insert_calls[0].args
+        assert "provenance_chain" in sql, (
+            "INSERT must reference provenance_chain column"
+        )
+        assert "provenance_chain = EXCLUDED.provenance_chain" in sql, (
+            "ON CONFLICT must update provenance_chain so re-adds round-trip"
+        )
+
+        # Verify the chain was bound as the JSON-encoded value.
+        # We don't pin its parameter index; the test stays robust if column
+        # ordering shifts. We just need the JSON-encoded chain to appear
+        # somewhere in the bound args, and a NULL provenance to NOT collide.
+        bound_jsons = [b for b in bound if isinstance(b, str) and b.startswith("[")]
+        assert any(json.loads(b) == chain for b in bound_jsons), (
+            f"provenance_chain JSON not bound to INSERT; bound args: {bound!r}"
+        )
+
+    @pytest.mark.asyncio
     async def test_query_combines_all_filters(self):
         """Should combine all filter types in a single query."""
         kg, mock_db = make_kg_with_mock_db()
