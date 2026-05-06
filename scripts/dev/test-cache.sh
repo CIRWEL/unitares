@@ -33,7 +33,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --- compute tree hash ---
-TREE_HASH=$(git ls-files -- 'src/*.py' 'tests/*.py' 'agents/*.py' | sort | xargs cat | shasum -a 256 | cut -d' ' -f1)
+# governance_core/ and pyproject.toml were missing pre-2026-05-06: changes there
+# could leave a stale cache HIT and skip pytest. Now included so the cache
+# invalidates on any change that affects test outcomes.
+TREE_HASH=$(git ls-files -- 'src/*.py' 'tests/*.py' 'agents/*.py' 'governance_core/*.py' 'pyproject.toml' | sort | xargs cat | shasum -a 256 | cut -d' ' -f1)
 CACHE_FILE="$CACHE_DIR/$TREE_HASH"
 
 # --- cache hit (fast path, no lock) ---
