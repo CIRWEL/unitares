@@ -1,6 +1,6 @@
 # S7 - KG Provenance Lineage Schema
 
-**Status:** Schema decision v0.1. No migration yet.
+**Status:** Schema decision v0.1 + persistence round-trip shipped. No migration.
 **Last Updated:** 2026-05-06
 **Scope:** Plan row S7 (`docs/ontology/plan.md`). Defines how KG discoveries should represent writer identity, lineage state, and chain aggregation without treating UUID continuity or declared parentage as automatically confirmed.
 **Builds on:** R1 provisional-lineage marking, R2 Phase 1 lineage lifecycle, R3 trust-tier annotation, R5 KG cite-and-extend, R6/S22 provenance envelope vocabulary.
@@ -29,10 +29,10 @@ The storage schema already has the right rough slots:
 
 The runtime does not yet use them consistently for S7:
 
-- `src/mcp_handlers/knowledge/handlers.py` computes a `provenance_chain` list from `agent_metadata`, but the single-store path does not pass it into `DiscoveryNode`.
-- `src/db/mixins/knowledge_graph.py::kg_add_discovery` inserts `provenance` but not `provenance_chain`.
-- `src/storage/knowledge_graph_postgres.py::_dict_to_discovery` does not hydrate `provenance_chain`.
-- The existing chain shape contains ancestor IDs and spawn reasons only. It does not contain R2 lineage lifecycle state (`provisional_lineage`, `confirmed_at`, `lineage_demoted_at`, `lineage_archived_at`, `chain_obs_count`).
+- `src/mcp_handlers/knowledge/handlers.py` computes a `provenance_chain` list from `agent_metadata`, and as of 2026-05-06 the single-store path passes it into `DiscoveryNode`.
+- `src/db/mixins/knowledge_graph.py::kg_add_discovery` now inserts and conflict-updates `provenance_chain`.
+- `src/storage/knowledge_graph_postgres.py::_dict_to_discovery` now hydrates `provenance_chain`.
+- The existing chain shape still contains ancestor IDs and spawn reasons only. It does not yet contain R2 lineage lifecycle state (`provisional_lineage`, `confirmed_at`, `lineage_demoted_at`, `lineage_archived_at`, `chain_obs_count`).
 
 So S7 does not need a new table first. It needs the existing JSONB column to carry an ontology-correct chain snapshot and a query policy for current-valid aggregation.
 
@@ -105,8 +105,8 @@ Provisional links are never included in default lineage-attributed aggregation. 
 ## Implementation Sequence
 
 1. **PR 0: this schema decision.** Doc-only. No runtime behavior.
-2. **PR 1: persistence round-trip.** Ensure `DiscoveryNode.provenance_chain` is passed by KG handlers, inserted by the PostgreSQL backend, hydrated on read, and covered by unit tests. No schema migration; the column already exists.
-3. **PR 2: authoritative snapshot builder.** Replace the current metadata-derived chain with a helper that walks `core.identities` and records R2 lifecycle columns per link. The helper must tolerate missing ancestors by stopping with a reason rather than fabricating continuity.
+2. **PR 1: persistence round-trip.** Done 2026-05-06. `DiscoveryNode.provenance_chain` is passed by the single-store KG handler, inserted by the PostgreSQL backend, hydrated on read, and covered by unit tests. No schema migration; the column already exists.
+3. **PR 2: authoritative snapshot builder.** Next. Replace the current metadata-derived chain with a helper that walks `core.identities` and records R2 lifecycle columns per link. The helper must tolerate missing ancestors by stopping with a reason rather than fabricating continuity.
 4. **PR 3: aggregation helper.** Add a read helper that can answer `as_written` vs `current_valid`, excluding provisional links by default. This is the first place lineage-attributed KG counts should use the new contract.
 5. **PR 4: S22 merge point.** Add harness/model/transport/tool-surface fields to `provenance` once S22 field names are settled. Keep lineage links in `provenance_chain`; do not mix harness facts into chain links.
 6. **PR 5: indexing decision.** Add JSONB or generated-column indexes only after query volume shows they are needed.

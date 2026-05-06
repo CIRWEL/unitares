@@ -8,10 +8,13 @@ coerces strings to datetime at its boundary.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.db.mixins.knowledge_graph import KnowledgeGraphMixin
+from src.knowledge_graph import DiscoveryNode
 from src.storage.knowledge_graph_postgres import (
     KnowledgeGraphPostgres,
     _coerce_timestamp,
@@ -32,6 +35,69 @@ class TestCoerceTimestamp:
         result = _coerce_timestamp("2026-04-18T01:23:45Z")
         assert isinstance(result, datetime)
         assert result.tzinfo is not None
+
+
+class _AcquireContext:
+    def __init__(self, conn):
+        self.conn = conn
+
+    async def __aenter__(self):
+        return self.conn
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _FakeKgBackend(KnowledgeGraphMixin):
+    def __init__(self, conn):
+        self.conn = conn
+
+    def acquire(self):
+        return _AcquireContext(self.conn)
+
+
+@pytest.mark.asyncio
+async def test_kg_add_discovery_persists_provenance_chain():
+    captured = {}
+
+    async def fake_execute(query, *args):
+        captured["query"] = query
+        captured["args"] = args
+
+    conn = MagicMock()
+    conn.execute = AsyncMock(side_effect=fake_execute)
+    backend = _FakeKgBackend(conn)
+    chain = [{"agent_id": "parent", "relationship": "direct_parent"}]
+
+    await backend.kg_add_discovery(
+        DiscoveryNode(
+            id="disc-1",
+            agent_id="agent-1",
+            type="note",
+            summary="summary",
+            provenance_chain=chain,
+        )
+    )
+
+    assert "provenance_chain" in captured["query"]
+    assert len(captured["args"]) == 16
+    assert json.loads(captured["args"][13]) == chain
+
+
+def test_row_to_discovery_dict_decodes_provenance_chain_json():
+    backend = _FakeKgBackend(MagicMock())
+    row = {
+        "id": "disc-1",
+        "agent_id": "agent-1",
+        "type": "note",
+        "summary": "summary",
+        "created_at": datetime.now(timezone.utc),
+        "provenance_chain": '[{"agent_id": "parent"}]',
+    }
+
+    result = backend._row_to_discovery_dict(row)
+
+    assert result["provenance_chain"] == [{"agent_id": "parent"}]
 
 
 @pytest.mark.asyncio
@@ -100,3 +166,19 @@ class TestUpdateDiscoveryTimestampCoercion:
 
         _query, args = captured[0]
         assert args[1] is now
+
+
+def test_dict_to_discovery_preserves_provenance_chain():
+    backend = KnowledgeGraphPostgres()
+
+    discovery = backend._dict_to_discovery(
+        {
+            "id": "disc-1",
+            "agent_id": "agent-1",
+            "type": "note",
+            "summary": "summary",
+            "provenance_chain": [{"agent_id": "parent"}],
+        }
+    )
+
+    assert discovery.provenance_chain == [{"agent_id": "parent"}]

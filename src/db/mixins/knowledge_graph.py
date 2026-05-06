@@ -77,13 +77,14 @@ class KnowledgeGraphMixin:
                 INSERT INTO knowledge.discoveries (
                     id, agent_id, type, summary, details, tags, severity, status,
                     references_files, related_to, response_to_id, response_type,
-                    provenance, created_at, epoch
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                    provenance, provenance_chain, created_at, epoch
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                 ON CONFLICT (id) DO UPDATE SET
                     summary = EXCLUDED.summary,
                     details = EXCLUDED.details,
                     tags = EXCLUDED.tags,
                     status = EXCLUDED.status,
+                    provenance_chain = EXCLUDED.provenance_chain,
                     updated_at = now()
             """,
                 discovery.id,
@@ -99,6 +100,7 @@ class KnowledgeGraphMixin:
                 response_to_id,
                 response_type,
                 json.dumps(discovery.provenance) if discovery.provenance else None,
+                json.dumps(discovery.provenance_chain) if discovery.provenance_chain else None,
                 created_at,
                 GovernanceConfig.CURRENT_EPOCH,
             )
@@ -284,6 +286,8 @@ class KnowledgeGraphMixin:
             d['timestamp'] = d['created_at']
         if d.get('provenance') and isinstance(d['provenance'], str):
             d['provenance'] = json.loads(d['provenance'])
+        if d.get('provenance_chain') and isinstance(d['provenance_chain'], str):
+            d['provenance_chain'] = json.loads(d['provenance_chain'])
         d.pop('search_vector', None)
         d.pop('rank', None)
         d.pop('overlap', None)

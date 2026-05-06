@@ -605,8 +605,9 @@ class TestStoreKnowledgeGraphAdditional:
             assert "agent_state" in discovery.provenance
 
     @pytest.mark.asyncio
-    async def test_store_with_provenance_chain(self, patch_common, registered_agent, mock_mcp_server):
+    async def test_store_with_provenance_chain(self, patch_common, registered_agent):
         """Store captures provenance chain for lineage (lines 338-367)."""
+        mock_mcp_server, mock_graph = patch_common
         # Set up parent agent
         parent_meta = MagicMock()
         parent_meta.spawn_reason = "split"
@@ -628,6 +629,11 @@ class TestStoreKnowledgeGraphAdditional:
 
             data = parse_result(result)
             assert data["success"] is True
+            discovery = mock_graph.add_discovery.await_args.args[0]
+            assert discovery.provenance_chain is not None
+            assert discovery.provenance_chain[0]["agent_id"] == "parent-id"
+            assert discovery.provenance_chain[0]["relationship"] == "ancestor"
+            assert discovery.provenance_chain[-1]["relationship"] == "direct_parent"
 
 
 # ============================================================================
@@ -1342,4 +1348,3 @@ class TestSupersedes:
         data = parse_result(result)
         assert data.get("success") is False
         mock_graph.add_discovery.assert_not_awaited()
-

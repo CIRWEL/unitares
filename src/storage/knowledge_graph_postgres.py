@@ -356,4 +356,5 @@ class KnowledgeGraphPostgres:
             resolved_at=d.get('resolved_at'),
             updated_at=d.get('updated_at'),
             provenance=d.get('provenance'),
+            provenance_chain=d.get('provenance_chain'),
         )

@@ -619,6 +619,7 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
             response_to=response_to,
             references_files=arguments.get("related_files", []),
             provenance=provenance,
+            provenance_chain=provenance_chain,
             confidence=parsed_confidence
         )
 
