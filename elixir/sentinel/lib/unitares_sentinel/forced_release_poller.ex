@@ -1,27 +1,24 @@
 defmodule UnitaresSentinel.ForcedReleasePoller do
   @moduledoc """
-  Surface 1 cycle worker — periodic poller that drives `CycleState`.
+  Surface 1 cycle worker plus Surface 2 forced-release findings emission.
 
   Reads the cursor from `CycleState`, queries `lease_plane.lease_plane_events`
-  for `event_type='forced'` rows past the cursor, builds alarms via
-  `ForcedReleasePoller.Logic.build_alarms/2`, advances the cursor to
-  max(rows.ts), and persists via `CycleState.save/2`.
+  for all three forced-release alarm classes, builds alarms via
+  `ForcedReleasePoller.Logic.build_all_alarms/4`, emits each alarm to
+  `/api/findings`, then persists the candidate cursor via `CycleState.save/2`.
 
-  ## Scope (this PR)
+  Cursor persistence happens after the emit loop in the GenServer path.
+  This restores the Python ordering at `agents/sentinel/agent.py:681-699`
+  and closes the Surface-1-only pre-emit-persist gap called out by v0.1.3
+  §B4. The public `tick/1` API remains an alarm builder/poller for tests and
+  explicit callers; the GenServer is the runtime writer that emits and then
+  persists.
 
-  Ad_hoc forced events (`event_type='forced'`) only — the lowest-volume
-  class. Deferred to follow-up PRs:
+  ## Phase-B promotion scope
 
-    * `event_type='lease.deprecation_swept'` deprecation-batch class
-    * `event_type='conflict_held_by_other'` conflict-batch class
-
-  ## Findings emit
-
-  This module RETURNS alarms but does NOT POST them. Surface 2 (findings
-  emit) is a separate writer-locked surface and lands in its own PR.
-  Returning alarms keeps the API forward-compatible: when Surface 2 wires
-  up, it calls `tick/1` and routes the alarms to the dashboard / Discord
-  bridge.
+  Python feeds `conflict_batch` alarms into `_emit_phase_b_transitions/2`.
+  Wave 1 BEAM does not port that evaluator; conflict_batch findings emit,
+  but phase-B promotion remains Python/Wave-2 scope.
 
   ## Tick API
 
@@ -62,13 +59,15 @@ defmodule UnitaresSentinel.ForcedReleasePoller do
 
   require Logger
 
-  alias UnitaresSentinel.{CycleState, ForcedReleasePoller.Logic}
+  alias UnitaresSentinel.{CycleState, Findings, ForcedReleasePoller.Logic}
 
   @type opts :: [
           prior_cursor: DateTime.t() | nil,
           db: GenServer.server(),
           persist: boolean(),
-          state_path: Path.t() | nil
+          state_path: Path.t() | nil,
+          emit_findings: boolean(),
+          findings_opts: keyword()
         ]
 
   # ---- Public tick API --------------------------------------------------
@@ -306,9 +305,27 @@ defmodule UnitaresSentinel.ForcedReleasePoller do
   @impl true
   def init(opts) do
     db = Keyword.get(opts, :db, UnitaresSentinel.DB)
-    interval_ms = Keyword.get(opts, :interval_ms, Application.get_env(:unitares_sentinel, :poller_interval_ms, 30_000))
-    initial_delay_ms = Keyword.get(opts, :initial_delay_ms, Application.get_env(:unitares_sentinel, :poller_initial_delay_ms, 1_000))
-    jitter_ms = Keyword.get(opts, :jitter_ms, Application.get_env(:unitares_sentinel, :poller_jitter_ms, 5_000))
+
+    interval_ms =
+      Keyword.get(
+        opts,
+        :interval_ms,
+        Application.get_env(:unitares_sentinel, :poller_interval_ms, 30_000)
+      )
+
+    initial_delay_ms =
+      Keyword.get(
+        opts,
+        :initial_delay_ms,
+        Application.get_env(:unitares_sentinel, :poller_initial_delay_ms, 1_000)
+      )
+
+    jitter_ms =
+      Keyword.get(
+        opts,
+        :jitter_ms,
+        Application.get_env(:unitares_sentinel, :poller_jitter_ms, 5_000)
+      )
 
     cursor = load_cursor_from_state()
 
@@ -317,6 +334,13 @@ defmodule UnitaresSentinel.ForcedReleasePoller do
       cursor: cursor,
       interval_ms: interval_ms,
       jitter_ms: jitter_ms,
+      emit_findings?:
+        Keyword.get(
+          opts,
+          :emit_findings,
+          Application.get_env(:unitares_sentinel, :emit_findings, true)
+        ),
+      findings_opts: Keyword.get(opts, :findings_opts, []),
       # v0.1.3 §C2 tick-skip guard. Under self-scheduling (next :tick is
       # only enqueued AFTER the current tick returns), this flag will never
       # actually be true at message-arrival time — BEAM serializes handle_*
@@ -353,8 +377,14 @@ defmodule UnitaresSentinel.ForcedReleasePoller do
     file_cursor = load_cursor_from_state()
     effective_prior = max_cursor(state.cursor, file_cursor)
 
-    {_alarms, new_cursor} =
-      tick(prior_cursor: effective_prior, db: state.db, persist: true)
+    {alarms, new_cursor} =
+      tick(prior_cursor: effective_prior, db: state.db, persist: false)
+
+    emit_findings(alarms, state)
+
+    if new_cursor != nil and not same_cursor?(new_cursor, effective_prior) do
+      persist_cursor(new_cursor, [])
+    end
 
     # Jitter the next tick to avoid Python/BEAM lockstep races after
     # simultaneous boots (architect #5).
@@ -377,6 +407,12 @@ defmodule UnitaresSentinel.ForcedReleasePoller do
 
   defp max_cursor(%DateTime{} = a, %DateTime{} = b) do
     if DateTime.compare(a, b) == :gt, do: a, else: b
+  end
+
+  defp emit_findings(_alarms, %{emit_findings?: false}), do: :ok
+
+  defp emit_findings(alarms, %{findings_opts: findings_opts}) when is_list(alarms) do
+    Enum.each(alarms, &Findings.post_alarm(&1, findings_opts))
   end
 
   defp load_cursor_from_state do

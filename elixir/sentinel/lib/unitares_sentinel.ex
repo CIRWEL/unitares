@@ -23,7 +23,8 @@ defmodule UnitaresSentinel do
   ## Bootstrap status
 
   This module + its `Application` supervisor are the minimum scaffold per
-  the §Bootstrap spec (B5 reviewer fold). The cycle worker, lease consumer,
-  WebSocket ingester, and `post_finding/2` client land in follow-up PRs.
+  the §Bootstrap spec (B5 reviewer fold). The cycle worker and Surface 2
+  forced-release alarm findings client are wired; lease consumer, WebSocket
+  ingester, and full fleet `sentinel_finding` parity land in follow-up PRs.
   """
 end
