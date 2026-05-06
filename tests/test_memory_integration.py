@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from src.identity.memory_integration import (
+    assess_memory_integration_batch,
     score_memory_integration,
     score_memory_integration_batch,
     select_memory_integration_lineage_pairs,
@@ -352,4 +353,38 @@ async def test_score_memory_integration_batch_summarizes_shadow_verdicts():
     }
     assert result["items"][0]["pair"]["successor_id"] == "successor-integrated"
     assert result["items"][0]["score"]["verdict"] == "integrated_candidate"
+    assert result["shadow_assessment"]["decision"] == "review_shadow_signal"
+    assert result["shadow_assessment"]["signal_pair_count"] == 1
     assert "read-only" in result["note"]
+
+
+def test_assess_memory_integration_batch_defers_on_sparse_parent_memory():
+    assessment = assess_memory_integration_batch(
+        pair_count=4,
+        verdict_counts={
+            "insufficient_parent_memory": 3,
+            "absent": 1,
+        },
+    )
+
+    assert assessment["decision"] == "defer_runtime_gate"
+    assert assessment["reason"] == "parent_memory_corpus_sparse"
+    assert assessment["sparse_parent_memory_pair_count"] == 3
+    assert "Do not add an R2 runtime conjunct" in assessment["recommendations"][0]
+
+
+def test_assess_memory_integration_batch_flags_empty_sample():
+    assessment = assess_memory_integration_batch(pair_count=0, verdict_counts={})
+
+    assert assessment["decision"] == "insufficient_sample"
+    assert assessment["reason"] == "no_lineage_pairs_sampled"
+
+
+def test_assess_memory_integration_batch_flags_inconclusive_scores():
+    assessment = assess_memory_integration_batch(
+        pair_count=2,
+        verdict_counts={"inconclusive": 1, "absent": 1},
+    )
+
+    assert assessment["decision"] == "investigate_inconclusive_scores"
+    assert assessment["reason"] == "kg_read_or_authorship_uncertainty"

@@ -55,6 +55,16 @@ The `graph`, `now`, and `max_discoveries` parameters are operator/test controls;
 
 Batch shadow sampling is also available via `score_memory_integration_batch(...)` and `scripts/diagnostics/score_r5_memory_integration.py --lineage-state provisional|confirmed|all`.
 
+Batch output includes `shadow_assessment`, an explicit read-only policy
+interpretation over the verdict mix. It can return:
+
+| Decision | Meaning |
+|---|---|
+| `defer_runtime_gate` | Keep R5 advisory; current evidence does not justify an R2 runtime conjunct. |
+| `review_shadow_signal` | At least one `integrated_candidate` or `weak_signal` exists; inspect cited/generated discovery IDs before any policy move. |
+| `insufficient_sample` | No lineage pairs were sampled. |
+| `investigate_inconclusive_scores` | KG read or authorship ambiguity blocked interpretation. |
+
 Return shape:
 
 | Field | Meaning |
@@ -120,7 +130,12 @@ Results:
 | `provisional` | 4 | 3 `insufficient_parent_memory`, 1 `absent` |
 | `confirmed` | 3 | 3 `insufficient_parent_memory` |
 
-Interpretation: the first corpus is too sparse to justify a durable R5 audit table or any R2 promotion conjunct. Most parent agents do not yet have enough eligible KG memory artifacts under the seeded `min_parent_discoveries=3` rule. The lone `absent` result is useful as a proof of the query path, not as policy evidence.
+Repeat sample later the same day with `--limit 25` returned the same verdict
+distribution. The diagnostic now emits `shadow_assessment.decision =
+"defer_runtime_gate"` and `reason = "parent_memory_corpus_sparse"` for both
+provisional and confirmed batches.
+
+Interpretation: the corpus remains too sparse to justify a durable R5 audit table or any R2 promotion conjunct. Most parent agents do not yet have enough eligible KG memory artifacts under the seeded `min_parent_discoveries=3` rule. The lone `absent` result is useful as a proof of the query path, not as policy evidence.
 
 ## Non-Goals
 

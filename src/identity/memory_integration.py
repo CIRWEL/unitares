@@ -338,11 +338,17 @@ async def score_memory_integration_batch(
             }
         )
 
+    shadow_assessment = assess_memory_integration_batch(
+        pair_count=len(pairs),
+        verdict_counts=verdict_counts,
+    )
+
     return {
         "lineage_state": lineage_state,
         "limit": limit,
         "pair_count": len(pairs),
         "verdict_counts": verdict_counts,
+        "shadow_assessment": shadow_assessment,
         "items": items,
         "note": (
             "R5 shadow batch is read-only: it selects lineage pairs from "
@@ -350,6 +356,78 @@ async def score_memory_integration_batch(
             "does not write audit rows, KG rows, or R2 lineage state."
         ),
     }
+
+
+def assess_memory_integration_batch(
+    *,
+    pair_count: int,
+    verdict_counts: Mapping[str, int],
+) -> dict[str, Any]:
+    """Summarize whether an R5 shadow batch warrants any runtime action."""
+    counts = {
+        verdict: _coerce_non_negative_int(verdict_counts.get(verdict, 0))
+        for verdict in (
+            "integrated_candidate",
+            "weak_signal",
+            "absent",
+            "insufficient_parent_memory",
+            "inconclusive",
+        )
+    }
+    pair_count = _coerce_non_negative_int(pair_count)
+    signal_pairs = counts["integrated_candidate"] + counts["weak_signal"]
+    sparse_pairs = counts["insufficient_parent_memory"]
+
+    if pair_count == 0:
+        decision = "insufficient_sample"
+        reason = "no_lineage_pairs_sampled"
+        recommendations = [
+            "Wait for provisional or confirmed lineage pairs before interpreting R5.",
+        ]
+    elif counts["inconclusive"]:
+        decision = "investigate_inconclusive_scores"
+        reason = "kg_read_or_authorship_uncertainty"
+        recommendations = [
+            "Inspect inconclusive score reasons before using the batch for policy decisions.",
+        ]
+    elif signal_pairs:
+        decision = "review_shadow_signal"
+        reason = "memory_integration_signal_present"
+        recommendations = [
+            "Review cited/generated discovery IDs for semantic quality before any R2 conjunct.",
+            "Keep R5 shadow-only until false-negative risk is understood across harnesses.",
+        ]
+    elif sparse_pairs:
+        decision = "defer_runtime_gate"
+        reason = "parent_memory_corpus_sparse"
+        recommendations = [
+            "Do not add an R2 runtime conjunct while parent KG memory is sparse.",
+            "Encourage real KG cite-and-extend usage; do not require performative citations.",
+        ]
+    else:
+        decision = "defer_runtime_gate"
+        reason = "no_integration_signal_observed"
+        recommendations = [
+            "Keep R5 advisory until shadow samples show constructive parent-memory use.",
+        ]
+
+    return {
+        "decision": decision,
+        "reason": reason,
+        "pair_count": pair_count,
+        "signal_pair_count": signal_pairs,
+        "sparse_parent_memory_pair_count": sparse_pairs,
+        "verdict_counts": counts,
+        "recommendations": recommendations,
+    }
+
+
+def _coerce_non_negative_int(value: Any) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, number)
 
 
 async def _load_agent_discoveries(
