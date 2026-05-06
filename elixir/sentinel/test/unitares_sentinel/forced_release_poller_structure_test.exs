@@ -155,6 +155,62 @@ defmodule UnitaresSentinel.ForcedReleasePollerStructureTest do
   # §C2 — running? guard skips :tick when previous still in flight.
   # ---------------------------------------------------------------------------
 
+  test "scheduler clamps jittered delay to non-negative timer values" do
+    assert ForcedReleasePoller.schedule_delay(1_000, 0) == 1_000
+    assert ForcedReleasePoller.schedule_delay(-1, 0) == 0
+
+    for _ <- 1..1_000 do
+      assert ForcedReleasePoller.schedule_delay(1_000, 5_000) >= 0
+    end
+  end
+
+  test "GenServer self-schedules the next tick after runtime task returns" do
+    parent = self()
+    lease_id = "77777777-7777-7777-7777-777777777777"
+
+    lease_http_post = fn url, body, _headers, _timeout_ms ->
+      cond do
+        String.ends_with?(url, "/v1/lease/acquire") ->
+          send(parent, {:lease_acquire, body})
+
+          {:ok, 200,
+           Jason.encode!(%{
+             ok: true,
+             idempotent: false,
+             lease: %{lease_id: lease_id},
+             drift_warning: []
+           })}
+
+        String.ends_with?(url, "/v1/lease/release") ->
+          {:ok, 200, ~s({"ok":true})}
+      end
+    end
+
+    {:ok, pid} =
+      GenServer.start(
+        ForcedReleasePoller,
+        [
+          db: UnitaresSentinel.DB,
+          interval_ms: 20,
+          initial_delay_ms: 1,
+          jitter_ms: 0,
+          tick_timeout_ms: 1_000,
+          lease_advisory: true,
+          lease_opts: [
+            base_url: "http://lease.test",
+            bearer_token: "test-token",
+            http_post: lease_http_post
+          ]
+        ],
+        name: :"test_self_schedule_#{System.unique_integer([:positive])}"
+      )
+
+    assert_receive {:lease_acquire, _first}, 1_000
+    assert_receive {:lease_acquire, _second}, 1_000
+
+    GenServer.stop(pid)
+  end
+
   test "GenServer skips :tick when running? is true (mailbox guard)" do
     # Verifier-confirmed (PR #378 council): deleting the
     # `handle_info(:tick, %{running?: true})` head causes this test to fail

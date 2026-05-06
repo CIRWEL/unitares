@@ -389,7 +389,7 @@ defmodule UnitaresSentinel.ForcedReleasePoller do
       running?: false
     }
 
-    Process.send_after(self(), :tick, initial_delay_ms + sample_jitter(jitter_ms))
+    Process.send_after(self(), :tick, schedule_delay(initial_delay_ms, jitter_ms))
     {:ok, state}
   end
 
@@ -413,6 +413,7 @@ defmodule UnitaresSentinel.ForcedReleasePoller do
     try do
       case await_runtime_tick(state) do
         {:ok, next_state} ->
+          schedule_next_tick(next_state)
           {:noreply, next_state}
 
         :timeout ->
@@ -463,15 +464,16 @@ defmodule UnitaresSentinel.ForcedReleasePoller do
       persist_cursor(new_cursor, [])
     end
 
-    # Jitter the next tick to avoid Python/BEAM lockstep races after
-    # simultaneous boots (architect #5).
-    schedule_next_tick(state)
-
     %{state | running?: false, cursor: new_cursor}
   end
 
   defp schedule_next_tick(state) do
-    Process.send_after(self(), :tick, state.interval_ms + sample_jitter(state.jitter_ms))
+    Process.send_after(self(), :tick, schedule_delay(state.interval_ms, state.jitter_ms))
+  end
+
+  @doc false
+  def schedule_delay(base_ms, jitter_ms) when is_integer(base_ms) do
+    max(0, base_ms + sample_jitter(jitter_ms))
   end
 
   defp acquire_runtime_lease(%{lease_advisory?: false}),
