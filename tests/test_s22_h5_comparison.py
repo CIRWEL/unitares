@@ -159,5 +159,33 @@ async def test_collect_s22_h5_entries_reads_state_and_kg_sources():
     entries = await collect_s22_h5_entries(db=db, limit_per_source=25)
 
     assert [entry.canonical_harness for entry in entries] == ["codex-cli", "hermes"]
-    assert conn.fetch.await_args_list[0].args == (AGENT_STATE_S22_SQL, 25)
-    assert conn.fetch.await_args_list[1].args == (KG_S22_SQL, 25)
+    assert conn.fetch.await_args_list[0].args == (AGENT_STATE_S22_SQL, 25, None)
+    assert conn.fetch.await_args_list[1].args == (KG_S22_SQL, 25, None)
+
+
+@pytest.mark.asyncio
+async def test_collect_s22_h5_entries_passes_comparison_key_to_queries():
+    conn = MagicMock()
+    conn.fetch = AsyncMock(side_effect=[
+        [_row("codex-cli", "target-h5")],
+        [],
+    ])
+    acquire = AsyncMock()
+    acquire.__aenter__.return_value = conn
+    acquire.__aexit__.return_value = False
+    db = MagicMock()
+    db.acquire.return_value = acquire
+
+    entries = await collect_s22_h5_entries(
+        db=db,
+        limit_per_source=25,
+        comparison_key=" target-h5 ",
+    )
+
+    assert [entry.comparison_key for entry in entries] == ["target-h5"]
+    assert conn.fetch.await_args_list[0].args == (
+        AGENT_STATE_S22_SQL,
+        25,
+        "target-h5",
+    )
+    assert conn.fetch.await_args_list[1].args == (KG_S22_SQL, 25, "target-h5")

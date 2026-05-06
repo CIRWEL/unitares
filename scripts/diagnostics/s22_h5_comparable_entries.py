@@ -48,6 +48,13 @@ async def main() -> int:
         ),
     )
     parser.add_argument(
+        "--comparison-key",
+        help=(
+            "Restrict the diagnostic to one H5 comparison key. Useful when "
+            "verifying the bounded task shared across harnesses."
+        ),
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Print the full assessment payload as JSON.",
@@ -55,7 +62,10 @@ async def main() -> int:
     args = parser.parse_args()
 
     try:
-        entries = await collect_s22_h5_entries(limit_per_source=args.limit_per_source)
+        entries = await collect_s22_h5_entries(
+            limit_per_source=args.limit_per_source,
+            comparison_key=args.comparison_key,
+        )
         assessment = assess_s22_h5_coverage(
             entries,
             required_harnesses=(
@@ -64,6 +74,8 @@ async def main() -> int:
                 else DEFAULT_REQUIRED_HARNESSES
             ),
         )
+        if args.comparison_key:
+            assessment["target_comparison_key"] = args.comparison_key
     finally:
         await close_db()
 
@@ -78,6 +90,8 @@ async def main() -> int:
 def _print_text_report(assessment: dict) -> None:
     print(f"decision: {assessment['decision']}")
     print(f"reason: {assessment['reason']}")
+    if assessment.get("target_comparison_key"):
+        print(f"target comparison key: {assessment['target_comparison_key']}")
     print(f"entries: {assessment['entry_count']}")
     print(f"comparable entries: {assessment['comparable_entry_count']}")
     print(f"required harnesses: {', '.join(assessment['required_harnesses'])}")

@@ -30,6 +30,14 @@ SELECT
 FROM core.agent_state s
 JOIN core.identities i ON i.identity_id = s.identity_id
 WHERE s.state_json ? 'provenance_context'
+  AND (
+    $2::TEXT IS NULL
+    OR COALESCE(
+        s.state_json#>>'{provenance_context,comparison_key}',
+        s.state_json#>>'{provenance_context,task_label}',
+        s.state_json#>>'{provenance_context,task}'
+    ) = $2
+  )
 ORDER BY s.recorded_at DESC
 LIMIT $1
 """
@@ -51,6 +59,14 @@ SELECT
     ) AS state_json
 FROM knowledge.discoveries d
 WHERE d.provenance ? 's22_context'
+  AND (
+    $2::TEXT IS NULL
+    OR COALESCE(
+        d.provenance#>>'{s22_context,comparison_key}',
+        d.provenance#>>'{s22_context,task_label}',
+        d.provenance#>>'{s22_context,task}'
+    ) = $2
+  )
 ORDER BY d.created_at DESC
 LIMIT $1
 """
@@ -95,15 +111,21 @@ async def collect_s22_h5_entries(
     *,
     db: Optional[Any] = None,
     limit_per_source: int = 200,
+    comparison_key: Optional[str] = None,
 ) -> tuple[S22H5Entry, ...]:
     """Collect S22 write-context entries from durable state and KG rows."""
     if limit_per_source <= 0:
         raise ValueError("limit_per_source must be positive")
 
+    target_key = _clean_text(comparison_key)
     backend = db or get_db()
     async with backend.acquire() as conn:
-        state_rows = await conn.fetch(AGENT_STATE_S22_SQL, limit_per_source)
-        kg_rows = await conn.fetch(KG_S22_SQL, limit_per_source)
+        state_rows = await conn.fetch(
+            AGENT_STATE_S22_SQL,
+            limit_per_source,
+            target_key,
+        )
+        kg_rows = await conn.fetch(KG_S22_SQL, limit_per_source, target_key)
 
     entries: list[S22H5Entry] = []
     for row in [*state_rows, *kg_rows]:
