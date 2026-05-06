@@ -1000,7 +1000,20 @@ class TestToolUsageOperations:
 class TestKnowledgeGraphOperations:
 
     def _make_discovery(self, **kwargs):
-        """Create a mock discovery object."""
+        """Create a mock discovery object.
+
+        Mirrors the canonical ``DiscoveryNode`` field set used by
+        ``KnowledgeGraphMixin.kg_add_discovery``. ``provenance_chain``
+        was added to the production schema in commit 9a93579f
+        ('Round trip KG provenance chains', 2026-05-06) — sister
+        factories in ``tests/test_kg_store.py`` and
+        ``tests/test_knowledge_graph_postgres_unit.py`` were updated,
+        but this fixture was missed, leaving 13 ``TestKnowledgeGraph
+        Operations`` tests failing with ``AttributeError: 'types.
+        SimpleNamespace' object has no attribute 'provenance_chain'``
+        until 2026-05-06. Keep this in sync when new optional
+        DiscoveryNode fields land.
+        """
         from types import SimpleNamespace
 
         defaults = {
@@ -1016,6 +1029,7 @@ class TestKnowledgeGraphOperations:
             "related_to": [],
             "response_to": None,
             "provenance": None,
+            "provenance_chain": None,
             "timestamp": _now().isoformat(),
         }
         defaults.update(kwargs)
