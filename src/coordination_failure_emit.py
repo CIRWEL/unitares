@@ -161,8 +161,17 @@ def _schedule_coordination_events_dual_write(
             )
 
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_coro_factory())
+            asyncio.get_running_loop()
+            # Use create_tracked_task (not bare loop.create_task) so the
+            # task reference is held by `_supervised_tasks` and won't be
+            # GC'd mid-flight — Watcher P001. Also gives us a crash-log
+            # callback for free if the dedicated-table coroutine raises
+            # past its own swallow (e.g., a TaskGroup cancellation).
+            from src.background_tasks import create_tracked_task
+            create_tracked_task(
+                _coro_factory(),
+                name="coord_failure_dedicated_table_write",
+            )
             return
         except RuntimeError:
             pass
@@ -181,7 +190,14 @@ def _schedule_coordination_events_dual_write(
 
         if captured_loop is not None and captured_loop.is_running():
             def _spawn_on_main():
-                captured_loop.create_task(_coro_factory())
+                # Inside the captured loop's thread, `create_tracked_task`
+                # finds the running loop via asyncio.get_running_loop(),
+                # so the same supervised-task semantics apply here too.
+                from src.background_tasks import create_tracked_task
+                create_tracked_task(
+                    _coro_factory(),
+                    name="coord_failure_dedicated_table_write_threadsafe",
+                )
 
             captured_loop.call_soon_threadsafe(_spawn_on_main)
     except Exception as exc:  # noqa: BLE001 — observability MUST NOT mask the real bug
