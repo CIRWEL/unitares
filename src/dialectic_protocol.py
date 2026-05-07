@@ -158,6 +158,7 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 import json
 import hashlib
+import hmac
 import secrets
 import numpy as np
 
@@ -347,7 +348,20 @@ class Resolution:
 
     @staticmethod
     def compute_signature(payload: bytes, api_key: str) -> str:
-        """SHA-256 of canonical_payload || ":" || api_key. Hex digest.
+        """HMAC-SHA256 over the canonical payload, keyed on the agent's api_key.
+
+        Originally (PR #411) this was raw `sha256(payload || ":" || api_key)`,
+        which CodeQL py/weak-sensitive-data-hashing flagged because the rule
+        treats raw-sha256-with-key as a misuse of the bare hash for password
+        hashing. HMAC is the correct construction for "this agent attests to
+        this payload": resists length-extension attacks and is what static
+        analyzers recognize as a keyed-MAC.
+
+        Wire-format change vs the immediately-prior raw-sha256: the bytes
+        differ. Any v2 resolutions written between #411 merging and this PR
+        landing will no longer verify_signatures() — same as the legacy v1
+        rows, which is the correct degradation since neither is provably
+        bilateral under the new construction.
 
         Symmetric scheme — verifier needs the api_key to recompute. The
         secrecy property is "an attacker without the api_key cannot forge a
@@ -359,7 +373,7 @@ class Resolution:
         """
         if not api_key:
             return ""
-        return hashlib.sha256(payload + b":" + api_key.encode("utf-8")).hexdigest()
+        return hmac.new(api_key.encode("utf-8"), payload, hashlib.sha256).hexdigest()
 
     def verify_signatures(self, api_key_a: str, api_key_b: str) -> bool:
         """Verify both agents signed the canonical payload with their keys.
@@ -387,11 +401,13 @@ class Resolution:
         payload = self.canonical_payload()
         expected_a = self.compute_signature(payload, api_key_a)
         expected_b = self.compute_signature(payload, api_key_b)
-        # Threat model: in-process trusted callers verifying their own
-        # resolutions. Python str== short-circuits which leaks length info
-        # in adversarial settings; if we ever expose verify to untrusted
-        # callers switch to hmac.compare_digest.
-        return self.signature_a == expected_a and self.signature_b == expected_b
+        # hmac.compare_digest for constant-time comparison — even though our
+        # threat model is in-process trusted callers, using the right
+        # primitive here costs nothing and documents intent.
+        return (
+            hmac.compare_digest(self.signature_a, expected_a)
+            and hmac.compare_digest(self.signature_b, expected_b)
+        )
 
 
 class DialecticSession:
