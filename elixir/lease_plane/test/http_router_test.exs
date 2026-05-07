@@ -368,7 +368,7 @@ defmodule UnitaresLeasePlane.HTTPRouterTest do
       Process.sleep(1100)
       renew = post_json("/v1/lease/renew", %{lease_id: lease_id})
       assert renew.status == 200
-      assert parsed(renew) == %{"ok" => true}
+      assert Map.delete(parsed(renew), "protocol_version") == %{"ok" => true}
 
       status =
         :get
@@ -401,7 +401,7 @@ defmodule UnitaresLeasePlane.HTTPRouterTest do
 
       resp = post_json("/v1/lease/release", %{lease_id: lease_id, release_reason: "normal"})
       assert resp.status == 200
-      assert parsed(resp) == %{"ok" => true}
+      assert Map.delete(parsed(resp), "protocol_version") == %{"ok" => true}
 
       # Subsequent status returns nil — released
       status =
@@ -452,7 +452,7 @@ defmodule UnitaresLeasePlane.HTTPRouterTest do
       handoff_id = parsed(offer)["handoff_id"]
       accept = post_json("/v1/lease/handoff/accept", %{handoff_id: handoff_id})
       assert accept.status == 200
-      assert parsed(accept) == %{"ok" => true}
+      assert Map.delete(parsed(accept), "protocol_version") == %{"ok" => true}
 
       status =
         :get
@@ -545,11 +545,12 @@ defmodule UnitaresLeasePlane.HTTPRouterTest do
       assert result.status == 503
       body = Jason.decode!(result.resp_body)
 
-      assert body == %{
+      assert Map.delete(body, "protocol_version") == %{
                "ok" => false,
                "error" => "service_unavailable",
                "reason" => "internal error"
              }
+      assert body["protocol_version"] == "v1.0"
 
       # Verify the leaky inspect string never made it to the wire.
       refute result.resp_body =~ "hunter2"
