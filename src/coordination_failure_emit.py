@@ -161,17 +161,8 @@ def _schedule_coordination_events_dual_write(
             )
 
         try:
-            asyncio.get_running_loop()
-            # Use create_tracked_task (not bare loop.create_task) so the
-            # task reference is held by `_supervised_tasks` and won't be
-            # GC'd mid-flight — Watcher P001. Also gives us a crash-log
-            # callback for free if the dedicated-table coroutine raises
-            # past its own swallow (e.g., a TaskGroup cancellation).
-            from src.background_tasks import create_tracked_task
-            create_tracked_task(
-                _coro_factory(),
-                name="coord_failure_dedicated_table_write",
-            )
+            loop = asyncio.get_running_loop()
+            _spawn_dedicated_write_task(loop, _coro_factory())
             return
         except RuntimeError:
             pass
@@ -190,14 +181,7 @@ def _schedule_coordination_events_dual_write(
 
         if captured_loop is not None and captured_loop.is_running():
             def _spawn_on_main():
-                # Inside the captured loop's thread, `create_tracked_task`
-                # finds the running loop via asyncio.get_running_loop(),
-                # so the same supervised-task semantics apply here too.
-                from src.background_tasks import create_tracked_task
-                create_tracked_task(
-                    _coro_factory(),
-                    name="coord_failure_dedicated_table_write_threadsafe",
-                )
+                _spawn_dedicated_write_task(captured_loop, _coro_factory())
 
             captured_loop.call_soon_threadsafe(_spawn_on_main)
     except Exception as exc:  # noqa: BLE001 — observability MUST NOT mask the real bug
@@ -206,6 +190,31 @@ def _schedule_coordination_events_dual_write(
             "audit.events row remains durable",
             exc,
         )
+
+
+# Module-local strong-ref set for in-flight dedicated-table coroutines.
+# Watcher P001: bare `loop.create_task(coro)` returns a Task that the GC
+# can collect mid-flight if no one holds a reference. We can't use
+# `background_tasks.create_tracked_task` because the supervisor's
+# cancellation done-callback recursively calls back into
+# `emit_coordination_failure_sync` (Wave 0 step 2C-1 cancellation emit),
+# which would re-register a fresh task on the *same* `_supervised_tasks`
+# list and break `test_stop_all_background_tasks_cancels_supervised_tasks`'s
+# emptiness invariant. A private ref set isolated to this module gives the
+# same GC protection without sharing fate with the supervisor.
+_inflight_dedicated_writes: "set[asyncio.Task]" = set()
+
+
+def _spawn_dedicated_write_task(loop, coro):
+    """Spawn coro on `loop` and pin a strong ref until it completes.
+
+    Mirrors the canonical asyncio "save the task to a set; remove on done"
+    pattern. The `name=` kwarg is preserved so a stray crash log still
+    identifies the call site as `coord_failure_dedicated_table_write`.
+    """
+    task = loop.create_task(coro, name="coord_failure_dedicated_table_write")
+    _inflight_dedicated_writes.add(task)
+    task.add_done_callback(_inflight_dedicated_writes.discard)
 
 
 async def _emit_to_coordination_events_async(
