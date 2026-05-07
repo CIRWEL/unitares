@@ -51,16 +51,11 @@ defmodule UnitaresLeasePlane.HTTPRouter do
       "lease plane HTTP error: kind=#{kind} reason=#{Exception.format_banner(kind, reason)}"
     )
 
-    body =
-      Jason.encode!(%{
-        ok: false,
-        error: "service_unavailable",
-        reason: "internal error"
-      })
-
-    conn
-    |> Plug.Conn.put_resp_content_type("application/json")
-    |> Plug.Conn.send_resp(503, body)
+    json(conn, 503, %{
+      ok: false,
+      error: "service_unavailable",
+      reason: "internal error"
+    })
   end
 
   # ---------- /v1/lease/acquire ----------
@@ -533,9 +528,30 @@ defmodule UnitaresLeasePlane.HTTPRouter do
   defp iso(nil), do: nil
   defp iso(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
 
+  # Wave 2 §"Lease-integration boundary hardening" — versioned contracts.
+  # Every response from this router carries a `protocol_version` field so
+  # clients can detect server/client shape skew without having to enumerate
+  # every endpoint. Bump when response shapes change in a way that requires
+  # a coordinated client/server deploy. The Python client
+  # (src/lease_plane/client.py) keeps its own constant and logs a WARNING
+  # on mismatch (does NOT fail) during the rollout grace window — see
+  # `tests/test_lease_plane_protocol_version.py`. URL versioning (/v1/lease/*)
+  # remains the major-version axis; `protocol_version` is the finer-grained
+  # shape-version axis within /v1.
+  @protocol_version "v1.0"
+
+  @doc """
+  Boundary protocol version. Public so tests on the Elixir side can pin
+  the constant; Python-side callers don't reach this directly — they
+  receive it in every response body as the `protocol_version` field.
+  """
+  @spec protocol_version() :: String.t()
+  def protocol_version, do: @protocol_version
+
   defp json(conn, status, body) do
+    versioned_body = Map.put(body, :protocol_version, @protocol_version)
     conn
     |> Plug.Conn.put_resp_content_type("application/json")
-    |> Plug.Conn.send_resp(status, Jason.encode!(body))
+    |> Plug.Conn.send_resp(status, Jason.encode!(versioned_body))
   end
 end

@@ -8,6 +8,7 @@ handler paths that would block the anyio task group.
 from __future__ import annotations
 
 import json
+import logging
 import random
 import time
 import urllib.error
@@ -18,6 +19,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic import ValidationError
+
+logger = logging.getLogger(__name__)
 
 from .models import (
     AcquireHeldByOther,
@@ -274,6 +277,7 @@ class LeasePlaneClient:
             return {"ok": False, "error": "service_unavailable"}
         if not isinstance(payload, Mapping):
             return {"ok": False, "error": "schema_invalid", "detail": "response was not an object"}
+        _check_protocol_version(payload, path)
         return payload
 
 
@@ -282,6 +286,57 @@ class LeasePlaneDisabledClient(LeasePlaneClient):
 
     def __init__(self) -> None:
         super().__init__(transport=lambda _: {"ok": False, "error": "service_unavailable"})
+
+
+# Wave 2 §"Lease-integration boundary hardening" — versioned contracts.
+# Module-level dedup state so a steady mismatch (post-deploy of one side
+# only) doesn't spam the log every call. The (path, server_version) key is
+# small enough to bound — `path` is a closed set of route templates and
+# `server_version` is whatever the BEAM is reporting today.
+_logged_protocol_mismatches: set[tuple[str, str]] = set()
+_logged_protocol_absences: bool = False
+
+
+def _check_protocol_version(payload: Mapping[str, Any], path: str) -> None:
+    """Compare the server's reported protocol_version to PROTOCOL_VERSION.
+
+    Failure-safe: never raises, never alters the payload. On mismatch logs
+    a single WARNING per (path, server_version) pair so a stuck mismatch
+    is loud once but quiet thereafter. On absence (older BEAM that hasn't
+    deployed the field yet) logs ONE info-level breadcrumb per process —
+    the rollout grace window where some routes are versioned and others
+    aren't is expected and shouldn't generate noise.
+    """
+    # Local import keeps tests free to monkeypatch the module-level constant.
+    from src.lease_plane import PROTOCOL_VERSION
+
+    server_version = payload.get("protocol_version")
+    if server_version is None:
+        global _logged_protocol_absences
+        if not _logged_protocol_absences:
+            logger.debug(
+                "[lease-plane] response %s has no protocol_version field — "
+                "Wave 2 rollout grace; client expecting %r once both sides "
+                "have deployed the boundary version",
+                path,
+                PROTOCOL_VERSION,
+            )
+            _logged_protocol_absences = True
+        return
+    if server_version == PROTOCOL_VERSION:
+        return
+    key = (path, str(server_version))
+    if key in _logged_protocol_mismatches:
+        return
+    _logged_protocol_mismatches.add(key)
+    logger.warning(
+        "[lease-plane] protocol_version mismatch on %s: client expected %r, "
+        "server returned %r — responses may be parsed with stale shape "
+        "assumptions; coordinate a deploy",
+        path,
+        PROTOCOL_VERSION,
+        server_version,
+    )
 
 
 def _parse_acquire(payload: Mapping[str, Any]) -> AcquireResult:
