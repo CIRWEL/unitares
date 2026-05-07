@@ -605,22 +605,36 @@ class TestStoreKnowledgeGraphAdditional:
             assert "agent_state" in discovery.provenance
 
     @pytest.mark.asyncio
-    async def test_store_with_provenance_chain(self, patch_common, registered_agent, mock_mcp_server):
+    async def test_store_with_provenance_chain(self, patch_common, registered_agent):
         """Store captures provenance chain for lineage (lines 338-367)."""
+        mock_mcp_server, mock_graph = patch_common
         # Set up parent agent
         parent_meta = MagicMock()
         parent_meta.spawn_reason = "split"
         parent_meta.created_at = "2026-01-01T00:00:00"
         mock_mcp_server.agent_metadata["parent-id"] = parent_meta
 
-        # Set current agent's parent
+        # The authoritative DB snapshot should be attempted even when
+        # in-memory metadata has not been hydrated with parentage.
         current_meta = mock_mcp_server.agent_metadata[registered_agent]
-        current_meta.parent_agent_id = "parent-id"
+        current_meta.parent_agent_id = None
 
         from src.mcp_handlers.knowledge.handlers import handle_store_knowledge_graph
 
-        with patch("src.mcp_handlers.identity.shared._get_lineage",
-                    return_value=["parent-id", registered_agent]):
+        authoritative_chain = [{
+            "schema": "s7.lineage_link.v1",
+            "source": "core.identities",
+            "parent_agent_id": "parent-id",
+            "successor_agent_id": registered_agent,
+            "relationship": "lineage_parent",
+            "lineage_state": "confirmed",
+            "provisional_lineage": False,
+            "aggregation_eligible_at_write": True,
+        }]
+        with patch(
+            "src.identity.provenance_chain.build_lineage_provenance_chain",
+            AsyncMock(return_value=authoritative_chain),
+        ):
             result = await handle_store_knowledge_graph({
                 "agent_id": registered_agent,
                 "summary": "Lineage test",
@@ -628,6 +642,77 @@ class TestStoreKnowledgeGraphAdditional:
 
             data = parse_result(result)
             assert data["success"] is True
+            discovery = mock_graph.add_discovery.await_args.args[0]
+            assert discovery.provenance_chain == authoritative_chain
+
+    @pytest.mark.asyncio
+    async def test_store_provenance_chain_falls_back_when_db_snapshot_fails(
+        self, patch_common, registered_agent
+    ):
+        mock_mcp_server, mock_graph = patch_common
+        parent_meta = MagicMock()
+        parent_meta.spawn_reason = "split"
+        parent_meta.created_at = "2026-01-01T00:00:00"
+        mock_mcp_server.agent_metadata["parent-id"] = parent_meta
+        current_meta = mock_mcp_server.agent_metadata[registered_agent]
+        current_meta.parent_agent_id = "parent-id"
+        current_meta.spawn_reason = "new_session"
+
+        from src.mcp_handlers.knowledge.handlers import handle_store_knowledge_graph
+
+        with patch(
+            "src.identity.provenance_chain.build_lineage_provenance_chain",
+            AsyncMock(side_effect=RuntimeError("db unavailable")),
+        ), patch(
+            "src.mcp_handlers.identity.shared._get_lineage",
+            return_value=["parent-id", registered_agent],
+        ):
+            result = await handle_store_knowledge_graph({
+                "agent_id": registered_agent,
+                "summary": "Lineage fallback test",
+            })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        discovery = mock_graph.add_discovery.await_args.args[0]
+        assert discovery.provenance_chain[-1]["relationship"] == "direct_parent"
+        assert discovery.provenance_chain[-1]["source"] == "agent_metadata_fallback"
+
+    @pytest.mark.asyncio
+    async def test_store_with_s22_provenance_context(
+        self, patch_common, registered_agent
+    ):
+        _, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_store_knowledge_graph
+
+        result = await handle_store_knowledge_graph({
+            "agent_id": registered_agent,
+            "summary": "S22 context test",
+            "harness": "codex-cli",
+            "transport": "mcp-stdio",
+            "model_provider": "openai",
+            "model": "gpt-5.5",
+            "tool_surface": ["terminal", "mcp:unitares", "terminal"],
+            "memory_context": "repo+kg",
+            "locus": {"workspace": "/repo"},
+            "affordance_state": {"shell": True},
+            "episode_id": "episode-1",
+            "process_instance_id": "opaque-process",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        discovery = mock_graph.add_discovery.await_args.args[0]
+        context = discovery.provenance["s22_context"]
+        assert context["schema"] == "s22.write_context.v1"
+        assert context["context_source"] == "knowledge.store"
+        assert context["harness_type"] == "codex-cli"
+        assert context["transport"] == "mcp-stdio"
+        assert context["model_provider"] == "openai"
+        assert context["model"] == "gpt-5.5"
+        assert context["tool_surface"] == ["terminal", "mcp:unitares"]
+        assert context["memory_context"] == "repo+kg"
+        assert context["governance_mode"] == "explicit"
 
 
 # ============================================================================
@@ -1342,4 +1427,3 @@ class TestSupersedes:
         data = parse_result(result)
         assert data.get("success") is False
         mock_graph.add_discovery.assert_not_awaited()
-

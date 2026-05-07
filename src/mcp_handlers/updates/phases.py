@@ -505,6 +505,19 @@ async def prepare_unlocked_inputs(ctx: UpdateContext) -> None:
         "response_text": ctx.response_text,
         "complexity": ctx.complexity
     }
+    try:
+        from src.provenance_context import build_s22_write_context
+
+        provenance_context = build_s22_write_context(
+            ctx.arguments,
+            meta=mcp_server.agent_metadata.get(ctx.agent_uuid),
+            context_source="process_agent_update",
+            default_governance_mode="explicit",
+        )
+        if provenance_context:
+            ctx.agent_state["provenance_context"] = provenance_context
+    except Exception as exc:
+        logger.debug(f"S22 provenance context skipped: {exc}")
 
     # Inject sensor EISV for spring coupling when the caller provides it.
     # Agents with physical sensors should publish `sensor_data["eisv"]` in
@@ -1225,6 +1238,7 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
             verdict=ctx.metrics_dict.get('verdict', 'continue'),
             action=(ctx.result.get('decision') or {}).get('sub_action')
                 or (ctx.result.get('decision') or {}).get('action'),
+            provenance_context=ctx.agent_state.get("provenance_context"),
         )
         logger.debug(f"PostgreSQL: Recorded state for {agent_id}")
     except ValueError:
@@ -1289,6 +1303,7 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
                 verdict=ctx.metrics_dict.get('verdict', 'continue'),
                 action=(ctx.result.get('decision') or {}).get('sub_action')
                     or (ctx.result.get('decision') or {}).get('action'),
+                provenance_context=ctx.agent_state.get("provenance_context"),
             )
             logger.debug(f"PostgreSQL: Created agent and recorded state for {agent_id}")
         except Exception as create_error:

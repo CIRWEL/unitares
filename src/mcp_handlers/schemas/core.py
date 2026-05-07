@@ -231,6 +231,24 @@ class ProcessAgentUpdateParams(AgentIdentityMixin):
             "UNITARES_PHASE5_EVIDENCE_WRITE). See docs/proposals/refined-phase-5-evidence-contract.md."
         ),
     )
+    harness: Optional[str] = Field(None, description="S22 provenance: harness type/body mediating the write")
+    harness_id: Optional[str] = Field(None, description="S22 provenance: concrete harness/runtime instance")
+    harness_type: Optional[str] = Field(None, description="S22 provenance: normalized harness family")
+    transport: Optional[str] = Field(None, description="S22 provenance: channel/protocol used for the write")
+    model_provider: Optional[str] = Field(None, description="S22 provenance: model provider")
+    model: Optional[str] = Field(None, description="S22 provenance: model identifier")
+    memory_context: Optional[str] = Field(None, description="S22 provenance: memory/KG/transcript surfaces visible to the writer")
+    tool_surface: Optional[Union[List[str], str]] = Field(None, description="S22 provenance: available tool families")
+    governance_mode: Optional[str] = Field(None, description="S22 provenance: explicit/ambient/gated/lifecycle/posthoc mode")
+    verification_source: Optional[str] = Field(None, description="S22 provenance: evidence source vocabulary")
+    comparison_key: Optional[str] = Field(None, description="S22 H5 provenance: stable key for comparing the same bounded task across harnesses")
+    task_label: Optional[str] = Field(None, description="S22 H5 provenance: human-readable bounded task label")
+    task_outcome: Optional[str] = Field(None, description="S22 H5 provenance: outcome label for the bounded task")
+    episode_id: Optional[str] = Field(None, description="S22 provenance: local interaction span")
+    invocation_id: Optional[str] = Field(None, description="S22 provenance: concrete command/run invocation")
+    process_instance_id: Optional[str] = Field(None, description="S22 provenance: opaque process-instance fingerprint")
+    locus: Optional[Dict[str, Any]] = Field(None, description="S22 provenance: situated transport context")
+    affordance_state: Optional[Dict[str, Any]] = Field(None, description="S22 provenance: available reach/capability snapshot")
 
     @model_validator(mode='after')
     def coerce_types(self):
@@ -306,4 +324,3 @@ class CallModelParams(AgentIdentityMixin):
     max_tokens: float = Field(500, description="Maximum tokens in response. Default: 500")
     temperature: float = Field(0.7, description="Temperature (creativity). Range: 0.0-1.0. Default: 0.7")
     privacy: Literal["local", "auto", "cloud"] = Field("local", description="Privacy mode. Options: local (Ollama, default), auto (system chooses), cloud (external providers)")
-

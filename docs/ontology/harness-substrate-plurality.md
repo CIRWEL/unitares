@@ -1,7 +1,7 @@
 # Harness Substrate Plurality — Ontology Plan
 
 **Created:** April 29, 2026  
-**Last Updated:** April 30, 2026
+**Last Updated:** May 6, 2026
 **Status:** Draft for review  
 **Companion to:** `docs/ontology/identity.md`, `docs/ontology/plan.md`
 
@@ -206,6 +206,12 @@ Recommended response annotation:
 }
 ```
 
+**Implementation note (2026-05-06):** identity/onboard payload builders now
+emit `identity_context.schema = "s22.identity_response.v1"` plus top-level
+`identity_assurance`. The context explicitly marks UUID as the registry anchor,
+`agent_id` as a public/structured handle, `display_name` as social/cosmetic,
+and harness/model fields as descriptive context rather than identity proof.
+
 ### Process updates
 
 `process_agent_update` should eventually accept optional context fields such as:
@@ -317,6 +323,13 @@ This is not merely DX. Evidence shape is part of how a harness describes action.
 | H7 | Tool-surface perturbation | Hermes | Same task with different toolsets; compare behavior and confidence |
 | H8 | Transport perturbation | Hermes CLI + gateway/cron | Same identity claim across interactive and non-interactive bodies |
 
+Operator helper:
+
+- `scripts/diagnostics/r6_dogfood.py --experiment h1|h3` emits read-only payload templates for the remaining controlled Hermes dogfood passes.
+- `--assess --comparison-key <key>` reads existing S22 write-context rows and reports whether the selected experiment has enough structured evidence.
+- H1 acceptance checks for one Hermes identity with two distinct model labels on the same comparison key.
+- H3 acceptance checks for distinct UNITARES identities sharing one Hermes memory-context label on the same comparison key.
+
 ## Proposed plan rows
 
 This document suggests adding one research row and one system row to `docs/ontology/plan.md` if accepted.
@@ -348,7 +361,22 @@ Resolved when:
 - `process_agent_update` can record optional harness/model/transport/tool-surface metadata
 - KG writes can expose that metadata in provenance
 - identity responses explicitly distinguish UUID, label, harness, and assurance
-- at least Hermes, Claude Code, and Codex CLI have one comparable recorded task entry
+- at least Hermes, Claude Code, and Codex CLI have one comparable recorded task entry sharing the same `comparison_key`
+
+Durable H5 gate:
+
+- `process_agent_update` persists S22 write context under `core.agent_state.state_json.provenance_context`
+- KG writes expose S22 write context under `knowledge.discoveries.provenance.s22_context`
+- H5 task entries should include `comparison_key` or `task_label`; `task_outcome` is optional but encouraged
+- `scripts/diagnostics/s22_h5_comparable_entries.py` is the read-only acceptance check for the Hermes/Claude Code/Codex CLI task set
+
+Live closure 2026-05-06:
+
+- `scripts/diagnostics/s22_h5_comparable_entries.py --comparison-key s22-h5-2026-05-06 --show-missing-payloads --json` reported `decision=complete`
+- Complete key: `s22-h5-2026-05-06`
+- Comparable harnesses: Hermes, Claude Code, Codex CLI
+- Operator note: underlying model was GPT-5.5
+- Hermes caveat: the row was accepted under weak `ip_ua_fingerprint` identity assurance with confidence dampening; this satisfies S22 harness-provenance evidence, not strong identity proof
 
 ## Non-goals
 
@@ -363,7 +391,7 @@ Resolved when:
 1. Review this document against `identity.md` for contradictions.
 2. If accepted, add R6/S22 rows to `docs/ontology/plan.md`.
 3. Run H4 as the first canonical experiment because it already has positive dogfood evidence.
-4. Run H5 next: same bounded task across Hermes, Claude Code, and Codex CLI.
+4. Run H5 next: same bounded task across Hermes, Claude Code, and Codex CLI, using the same `comparison_key` on each write.
 5. Promote concrete schema changes only after at least two harnesses expose the same need.
 
 ## Definition of done

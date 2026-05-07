@@ -72,6 +72,39 @@ Standard agent workflow:
 
 If an agent forks identity unexpectedly, inspect `session_resolution_source` first.
 
+### Legacy Flat Cache Cleanup
+
+S20 retired the shared workspace cache as a taught identity surface. New client
+cache writes should use `.unitares/session-<slot>.json`; the flat
+`.unitares/session.json` file is read-only legacy unless an operator has
+explicitly chosen `--allow-shared` for a substrate-earned single-tenant
+deployment.
+
+After upgrading clients past the S20 helper/command changes, inspect each
+workspace that may have old cache state:
+
+```bash
+WORKSPACE=/path/to/workspace
+python3 scripts/client/session_cache.py list --workspace "$WORKSPACE"
+```
+
+Entries with `"legacy_flat": true` point at the flat legacy file. If
+`"has_legacy_token": true`, the inventory has detected an old token-bearing
+cache without printing the token value. Treat that UUID only as a lineage
+candidate; do not copy or reuse any token from the file.
+
+If the flat file is not an intentional `--allow-shared` single-tenant cache,
+remove only that file:
+
+```bash
+rm "$WORKSPACE/.unitares/session.json"
+python3 scripts/client/session_cache.py list --workspace "$WORKSPACE"
+```
+
+Leave `.unitares/session-*.json` files in place. They are the slotted lineage
+inventory used by current startup paths; stale slot pruning is separate from the
+S20 migration.
+
 ## Expected Endpoints
 
 - MCP: `http://127.0.0.1:8767/mcp/`
