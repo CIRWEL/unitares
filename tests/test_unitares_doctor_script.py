@@ -150,6 +150,94 @@ def test_check_schema_migrations_detects_unexpected_out_of_band_row(doctor, monk
     assert "unexpected 24:manual hotfix" in result.detail
 
 
+def _src_root_with_insert(tmp_path: Path, sql: str) -> Path:
+    """Create a tmp_path/repo with src/fake.py containing the given SQL string."""
+    root = tmp_path / "repo"
+    src_dir = root / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "fake.py").write_text(
+        'async def insert():\n'
+        f'    await conn.execute("""\n{sql}\n""")\n'
+    )
+    return root
+
+
+def test_check_column_drift_skips_when_no_inserts(doctor, monkeypatch, tmp_path):
+    root = tmp_path / "repo"
+    (root / "src").mkdir(parents=True)
+    monkeypatch.setattr(doctor.shutil, "which", lambda _: "/usr/bin/psql")
+    result = doctor.check_column_drift("postgresql://example", root)
+    assert result.status == doctor.Status.SKIP
+    assert "no INSERT" in result.message
+
+
+def test_check_column_drift_passes_when_all_columns_exist(doctor, monkeypatch, tmp_path):
+    sql = "INSERT INTO core.identities (id, name, status) VALUES ($1, $2, $3)"
+    root = _src_root_with_insert(tmp_path, sql)
+
+    class Proc:
+        returncode = 0
+        stdout = "id\nname\nstatus\n"
+        stderr = ""
+
+    monkeypatch.setattr(doctor.shutil, "which", lambda _: "/usr/bin/psql")
+    monkeypatch.setattr(doctor.subprocess, "run", lambda *args, **kwargs: Proc())
+
+    result = doctor.check_column_drift("postgresql://example", root)
+    assert result.status == doctor.Status.PASS
+    assert "3 INSERT-referenced columns" in result.message
+
+
+def test_check_column_drift_fails_when_column_missing(doctor, monkeypatch, tmp_path):
+    """Reproduces the 2026-05-07 discoveries.provenance_chain class of bug:
+    code references a column the running DB doesn't have."""
+    sql = (
+        "INSERT INTO knowledge.discoveries (\n"
+        "    id, summary, provenance_chain\n"
+        ") VALUES ($1, $2, $3)"
+    )
+    root = _src_root_with_insert(tmp_path, sql)
+
+    class Proc:
+        returncode = 0
+        stdout = "id\nsummary\n"  # provenance_chain column missing from DB
+        stderr = ""
+
+    monkeypatch.setattr(doctor.shutil, "which", lambda _: "/usr/bin/psql")
+    monkeypatch.setattr(doctor.subprocess, "run", lambda *args, **kwargs: Proc())
+
+    result = doctor.check_column_drift("postgresql://example", root)
+    assert result.status == doctor.Status.FAIL
+    assert "missing from DB" in result.message
+    assert "knowledge.discoveries.provenance_chain" in result.detail
+
+
+def test_check_column_drift_skips_table_lookup_failure(doctor, monkeypatch, tmp_path):
+    """If a referenced table doesn't exist (psql lookup returns empty),
+    that's another check's concern — column_drift just skips."""
+    sql = "INSERT INTO some.notable_table (a, b) VALUES ($1, $2)"
+    root = _src_root_with_insert(tmp_path, sql)
+
+    class Proc:
+        returncode = 0
+        stdout = ""  # table absent
+        stderr = ""
+
+    monkeypatch.setattr(doctor.shutil, "which", lambda _: "/usr/bin/psql")
+    monkeypatch.setattr(doctor.subprocess, "run", lambda *args, **kwargs: Proc())
+
+    result = doctor.check_column_drift("postgresql://example", root)
+    # Pass with 0 refs counted (table skipped)
+    assert result.status == doctor.Status.PASS
+    assert "0 INSERT-referenced columns" in result.message
+
+
+def test_check_column_drift_skips_when_psql_missing(doctor, monkeypatch, tmp_path):
+    monkeypatch.setattr(doctor.shutil, "which", lambda _: None)
+    result = doctor.check_column_drift("postgresql://example", tmp_path)
+    assert result.status == doctor.Status.SKIP
+
+
 def test_main_json_output(doctor, monkeypatch, capsys, tmp_path):
     # Replace build_checks so we don't probe the live system.
     fake_checks = [_fake(doctor, "always_pass", "local", doctor.Status.PASS)]

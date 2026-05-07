@@ -235,6 +235,100 @@ def check_schema_migrations(db_url: str, repo_root: Path | None = None) -> Check
                        f"schema at version {version}; registry matches source manifest")
 
 
+_SQL_INSERT_COLUMNS_RE = re.compile(
+    r"INSERT\s+INTO\s+(\w+)\.(\w+)\s*\(([^)]+)\)",
+    re.IGNORECASE | re.DOTALL,
+)
+_SQL_IDENT_RE = re.compile(r"^([a-z_][a-z0-9_]*)", re.IGNORECASE)
+
+
+def _scan_insert_column_refs(src_dirs: list[Path]) -> dict[tuple[str, str], set[str]]:
+    """Scan Python source for ``INSERT INTO schema.table (...)`` SQL fragments.
+
+    Returns ``{(schema, table): {col1, col2, ...}}`` for each table whose
+    INSERT column list could be parsed. Only handles bare-identifier column
+    lists (no function calls in the column position) — that covers every
+    INSERT in the current codebase, where function calls live in VALUES.
+    """
+    refs: dict[tuple[str, str], set[str]] = {}
+    for src_dir in src_dirs:
+        if not src_dir.is_dir():
+            continue
+        for path in src_dir.rglob("*.py"):
+            try:
+                text = path.read_text()
+            except Exception:
+                continue
+            for match in _SQL_INSERT_COLUMNS_RE.finditer(text):
+                schema, table, col_list = match.group(1), match.group(2), match.group(3)
+                cleaned = re.sub(r"--[^\n]*", "", col_list)
+                cols: set[str] = set()
+                for tok in cleaned.split(","):
+                    tok = tok.strip()
+                    if not tok:
+                        continue
+                    m = _SQL_IDENT_RE.match(tok)
+                    if m:
+                        cols.add(m.group(1).lower())
+                if cols:
+                    refs.setdefault((schema.lower(), table.lower()), set()).update(cols)
+    return refs
+
+
+def _fetch_table_columns(db_url: str, schema: str, table: str) -> set[str] | None:
+    """Return the set of column names for a table, or None on lookup failure."""
+    proc = subprocess.run(
+        ["psql", db_url, "-Atqc",
+         f"SELECT column_name FROM information_schema.columns "
+         f"WHERE table_schema='{schema}' AND table_name='{table}'"],
+        capture_output=True, text=True, timeout=5,
+    )
+    if proc.returncode != 0:
+        return None
+    cols = {line.strip().lower() for line in proc.stdout.splitlines() if line.strip()}
+    return cols or None
+
+
+def check_column_drift(db_url: str, repo_root: Path) -> CheckResult:
+    """Verify columns in INSERT INTO statements exist in the running DB.
+
+    Catches code-vs-DB drift the schema_migrations check misses: code
+    references a column the migration never added, INSERT fails at runtime
+    with "column ... does not exist". Same blind-spot class as the
+    2026-04-17 last_activity_at incident, the 2026-04-19 trigger_source
+    outage, and the 2026-05-07 discoveries.provenance_chain bug.
+    """
+    name, mode = "column_drift", "local"
+    if shutil.which("psql") is None:
+        return CheckResult(name, mode, Status.SKIP, "psql not on PATH")
+    src_dirs = [repo_root / "src", repo_root / "governance_core"]
+    refs = _scan_insert_column_refs(src_dirs)
+    if not refs:
+        return CheckResult(name, mode, Status.SKIP, "no INSERT statements found")
+
+    missing: list[str] = []
+    total_refs = 0
+    for (schema, table), cols in sorted(refs.items()):
+        existing = _fetch_table_columns(db_url, schema, table)
+        if existing is None:
+            continue  # table absent or lookup error; other checks own that
+        total_refs += len(cols)
+        for col in sorted(cols):
+            if col not in existing:
+                missing.append(f"{schema}.{table}.{col}")
+
+    if missing:
+        return CheckResult(
+            name, mode, Status.FAIL,
+            f"code references {len(missing)} column(s) missing from DB",
+            detail="\n".join(missing),
+        )
+    return CheckResult(
+        name, mode, Status.PASS,
+        f"all {total_refs} INSERT-referenced columns exist across {len(refs)} table(s)",
+    )
+
+
 def check_elixir_deprecated_scheme_lint(db_url: str, repo_root: Path) -> CheckResult:
     """Phase B prep (RFC §7.11.8): WARN if any Elixir source mentions a
     surface_kind currently in lease_plane.deprecated_schemes.
@@ -568,6 +662,7 @@ def build_checks(repo_root: Path, db_url: str) -> list[Check]:
         Check("governance_database", "local", lambda: check_governance_database(db_url)),
         Check("pg_extensions", "local", lambda: check_pg_extensions(db_url)),
         Check("schema_migrations", "local", lambda: check_schema_migrations(db_url, repo_root)),
+        Check("column_drift", "local", lambda: check_column_drift(db_url, repo_root)),
         Check("elixir_deprecated_scheme_lint", "local",
               lambda: check_elixir_deprecated_scheme_lint(db_url, repo_root)),
         Check("elixir_scheme_grammar_lint", "local",
