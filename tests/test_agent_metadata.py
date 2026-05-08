@@ -343,6 +343,53 @@ class TestRegisterMintedAgentInDict:
         assert agent_metadata[uid].label == "prior_label"
         assert agent_metadata[uid].status == "paused"
 
+    def test_backfills_thread_id_when_existing_entry_has_none(self):
+        # Regression for #424: if an auto-mint path (e.g. process_agent_update
+        # self-create) populated agent_metadata with thread_id=None before
+        # onboard ran, onboard's register call must backfill the missing
+        # thread_id rather than short-circuiting. Otherwise the in-memory
+        # cache stays desynced from PG and phases.py mints a fresh UUID-form
+        # thread_id at the next update, resetting node_index to 1.
+        from src.agent_metadata_persistence import register_minted_agent_in_dict
+        from src.agent_metadata_model import agent_metadata, AgentMetadata
+        uid = "11111111-1111-4111-8111-111111111111"
+        # Auto-mint path: entry exists, thread_id is None.
+        agent_metadata[uid] = AgentMetadata(
+            agent_id="auto_minted", status="active",
+            created_at="2026-05-08", last_update="2026-05-08",
+        )
+        assert agent_metadata[uid].thread_id is None
+
+        # Onboard runs, has the real thread_id.
+        added = register_minted_agent_in_dict(
+            uid, thread_id="t-d588dc931ace7a3b", node_index=1,
+        )
+        assert added is False  # didn't insert; entry was already there
+        # But thread_id and node_index were filled.
+        assert agent_metadata[uid].thread_id == "t-d588dc931ace7a3b"
+        assert agent_metadata[uid].node_index == 1
+
+    def test_backfill_does_not_overwrite_existing_thread_id(self):
+        # Strict fill-only: never overwrite a non-None value, even with a
+        # different one. Protects against the inverse failure mode where
+        # an auto-mint *did* manage to record a thread_id and a later call
+        # would otherwise replace it.
+        from src.agent_metadata_persistence import register_minted_agent_in_dict
+        from src.agent_metadata_model import agent_metadata, AgentMetadata
+        uid = "22222222-2222-4222-8222-222222222222"
+        agent_metadata[uid] = AgentMetadata(
+            agent_id="prior", status="active",
+            created_at="2026-05-08", last_update="2026-05-08",
+            thread_id="t-existing000000",
+            node_index=3,
+        )
+        added = register_minted_agent_in_dict(
+            uid, thread_id="t-different00000", node_index=99,
+        )
+        assert added is False
+        assert agent_metadata[uid].thread_id == "t-existing000000"
+        assert agent_metadata[uid].node_index == 3
+
 
 class TestMirrorStatusToDict:
     def setup_method(self):
