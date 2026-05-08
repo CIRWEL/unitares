@@ -194,6 +194,38 @@ V0.1 has `### 3.2 Rollback procedure (named)` at line 109 and again at line 123.
 
 **Binding spec:** Below this amendment block, the second §3.2 (lines 123-131 in v0.1) is to be deleted. Recorded here for traceability; the mechanical edit lands as a separate small commit immediately following this fold.
 
+### B8 (operator-surfaced post-council, 2026-05-08) — `src/mcp_handlers/dialectic/session.py` was missing from v0.1 §5 entirely
+
+The Explore-agent dialectic survey covered `dialectic_protocol.py`, `dialectic/handlers.py`, `dialectic/resolution.py`, `dialectic/auto_resolve.py`, `dialectic/reviewer.py` — but not `session.py`. v0.1's §5 cited `get_session_lock` at the call-site (`handlers.py:1184`) without tracing to its implementation in `session.py:55`. Parallel local branch `docs/beam-footprint-v0.3.2-dialectic-session-inventory` (1 commit, 17h old, not pushed) had already enumerated session.py at parent-roadmap altitude as a "bookkeeping addition" to Wave 3's surface inventory.
+
+**Resolution:** v0.3.2 retired as superseded by this RFC at the right altitude — Wave 3 RFC owns Wave-3-level surface inventory; parent roadmap doesn't need to enumerate session.py separately if the wave RFC does. This v0.1.1 amendment subsection adds the inventory at wave-RFC altitude.
+
+**Surface inventory for `src/mcp_handlers/dialectic/session.py` (514 lines):**
+
+| Surface | Line | Description | Wave 3 BEAM mapping |
+|---------|------|-------------|----------------------|
+| `_SESSION_LOCKS` per-session asyncio.Lock dict | 51 | In-process locks, dict-of-locks guarded by `_SESSION_LOCKS_DICT_LOCK` (52). Implements invariant 5's serialization (B2 above). | **REPLACED** by session-keyed GenServer mailbox (per B2 saga). The asyncio.Lock disappears; BEAM message-handler-per-session is the new serialization. |
+| `get_session_lock` accessor | 55-68 | Lazy lock creation + dict-acquire | **DELETED.** Replaced by GenServer process registry. |
+| `_SESSION_LOCKS_DICT_LOCK` | 52 | Dict-of-locks guard | **DELETED** with its dict. |
+| `ACTIVE_SESSIONS: Dict[str, DialecticSession]` | 31 | Process-local in-memory live-session cache | **REPLACED** by per-session GenServer state. The dict-keyed-by-session-id pattern → registry of GenServer PIDs (Erlang `:via, Registry, ...`). |
+| `_SESSION_METADATA_CACHE` (60s TTL) | 35-36 | Per-agent in-session lookup cache | **REPLACED** by per-agent GenServer state on the BEAM side. Same pattern as Surface G agent metadata in §3. |
+| `save_session` PG writes | 179 (`pg_resolve_session`), 185 (`pg_update_phase`) | Phase + resolution PG persists | **PORT** to BEAM. Postgrex queries from session-keyed GenServer message handler. JSON snapshot path (env-gated) becomes BEAM-side file write or stays Python (compute-only) per implementation pass. |
+| `load_all_sessions` startup load | 213-242, asyncpg awaits at 223 (`pg_get_active_sessions`) + 230 (`pg_get_session`) | Reconstructs ACTIVE_SESSIONS from PG on startup | **PORT** to BEAM startup phase. BEAM application boot iterates active sessions, spawns one GenServer per session under a DynamicSupervisor. |
+| `load_session` lazy reload | 244-259, asyncpg await at 247 | Single-session reload from PG | **PORT** to BEAM. Becomes GenServer init message. |
+| `load_session_as_dict` raw asyncpg | 261-342, raw `compatible_acquire(db._pool)` + `conn.fetchrow` (273) + `conn.fetch` (282) | Read-only fast path for dashboard | **PORT** to BEAM Postgrex with named query. Two queries become two Postgrex round-trips (parity preserved). |
+| `list_all_sessions` raw asyncpg | 352+ (per v0.3.2: line 433) | Admin/dashboard listing | **PORT** to BEAM Postgrex. |
+| `verify_data_consistency`, `run_startup_consolidation` | 344, 348 | Utility consistency checks | **PORT** as part of BEAM startup phase. |
+
+**Critical Wave 3 precondition surfaced by session.py — multi-process lock topology.** The `get_session_lock` docstring explicitly names this (lines 47-50): "Single-process MCP deployment makes this sufficient. If/when multi-process lands, this gets replaced by a postgres advisory lock or SELECT FOR UPDATE pattern." Wave 3 IS the multi-process landing. The RFC must specify which:
+
+- **(i)** PG advisory lock per session_id at the start of any phase-mutating message handler (`pg_try_advisory_lock(hashtext(session_id))` with timeout). Same pattern as v0.1 §4 option (β) but at session-id granularity instead of agent-id.
+- **(ii)** PG `SELECT … FOR UPDATE` on `core.dialectic_sessions` row at the start of any phase-mutating message handler. Row-level lock; releases on transaction commit.
+- **(iii)** GenServer-process-registry serialization is sufficient if BEAM is single-OS-process (one BEAM application owning all session GenServers). Multi-process BEAM (e.g., a second BEAM node for HA) needs (i) or (ii).
+
+**Recommendation pending council:** **(iii) for single-BEAM-node, with (ii) as the documented escalation path.** Current `wave-3-rfc-draft` posture assumes single BEAM node; multi-node is post-Wave-3 candidate per parent roadmap §"Post-Wave-3 candidates." If multi-node BEAM ever ships, (ii) is preferred over (i) because PG advisory locks have observability gaps the row-level lock doesn't. Recorded here so the question isn't lost.
+
+**Storage tier addition to §5.4 (v0.1.1 governs):** the storage table in v0.1's §5.4 enumerated `core.dialectic_sessions`, `core.dialectic_messages`, `audit.coordination_events`. Add: `data/dialectic_sessions/<session_id>.json` (env-gated by `UNITARES_DIALECTIC_WRITE_JSON_SNAPSHOT`, default ON per `session.py:71-75`) — JSON snapshot file, write-only audit trail. Wave 3 BEAM either continues writing it (Elixir File.write) or migrates this to PG-only (the env var becomes default-OFF). Decision deferred to implementation pass.
+
 ### Verifier corrections — REFUTED + DRIFT errata table
 
 | # | v0.1 cite | Correct value | Verifier finding |
