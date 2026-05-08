@@ -484,6 +484,26 @@ def register_minted_agent_in_dict(
     enforced here.
     """
     if agent_uuid in agent_metadata:
+        # Existing entry — typically from an auto-mint path that ran with
+        # thread_id=None default. Backfill thread_id / node_index when this
+        # call has them and the existing entry doesn't, otherwise the
+        # in-memory cache stays desynced from PG and `process_agent_update`
+        # will mint a fresh thread_id (see #424). Strict fill-only — never
+        # overwrites a non-None value.
+        existing = agent_metadata[agent_uuid]
+        backfilled = False
+        if thread_id is not None and getattr(existing, "thread_id", None) is None:
+            existing.thread_id = thread_id
+            backfilled = True
+        if node_index is not None and not getattr(existing, "node_index", None):
+            existing.node_index = node_index
+            backfilled = True
+        if backfilled:
+            logger.debug(
+                f"Backfilled thread_id/node_index on existing dict entry for "
+                f"{agent_uuid[:8]}... (was registered by an earlier path "
+                f"without thread context)"
+            )
         return False
     now = datetime.now(timezone.utc).isoformat()
     agent_metadata[agent_uuid] = AgentMetadata(
