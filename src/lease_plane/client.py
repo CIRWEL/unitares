@@ -33,6 +33,9 @@ from .models import (
     ForceReleaseRequest,
     HandoffAcceptRequest,
     HandoffOfferRequest,
+    HealthOk,
+    HealthResult,
+    HealthUnavailable,
     HeartbeatRequest,
     ReleaseRequest,
     RenewRequest,
@@ -243,6 +246,65 @@ class LeasePlaneClient:
     def handoff_accept(self, request: HandoffAcceptRequest) -> SimpleResult:
         payload = self._request_json("POST", "/v1/lease/handoff/accept", request.model_dump(mode="json", exclude_none=True))
         return _parse_simple(payload)
+
+    def health_check(self, *, timeout_s: float | None = None) -> HealthResult:
+        """Liveness probe against the BEAM lease-plane (Wave 2 Phase C).
+
+        Returns HealthOk if the boundary round-trips a 200 with a valid
+        envelope, HealthUnavailable otherwise. Distinct from the typed
+        operation results: a `service_unavailable` here means the boundary
+        itself didn't confirm liveness, not that a specific lease op failed.
+
+        `timeout_s` overrides the client's default for this single probe —
+        health probes typically want a tighter budget than full ops (the
+        whole point is fast liveness, not waiting on the slow path). When
+        omitted, falls back to the client's configured timeout.
+        """
+        path = "/v1/health"
+        url = self.config.base_url.rstrip("/") + path
+        headers = {"Accept": "application/json"}
+        if self.config.bearer_token:
+            headers["Authorization"] = f"Bearer {self.config.bearer_token}"
+
+        request = LeaseHTTPRequest(
+            method="GET",
+            url=url,
+            headers=headers,
+            json_body=None,
+            timeout_s=timeout_s if timeout_s is not None else self.config.timeout_s,
+        )
+        try:
+            payload = self._transport(request)
+        except Exception as exc:  # noqa: BLE001 — health probe NEVER raises
+            return HealthUnavailable(
+                ok=False,
+                error="service_unavailable",
+                reason=f"transport failure: {type(exc).__name__}",
+            )
+        if not isinstance(payload, Mapping):
+            return HealthUnavailable(
+                ok=False,
+                error="service_unavailable",
+                reason="response was not a JSON object",
+            )
+        _check_protocol_version(payload, path)
+        try:
+            if payload.get("ok") is True:
+                return HealthOk.model_validate(payload)
+            # Server returned 401/503/etc as a JSON envelope — surface the
+            # reason if present, else describe the shape.
+            reason = payload.get("reason") or payload.get("error") or "unhealthy"
+            return HealthUnavailable(
+                ok=False,
+                error="service_unavailable",
+                reason=str(reason),
+            )
+        except ValidationError as exc:
+            return HealthUnavailable(
+                ok=False,
+                error="service_unavailable",
+                reason=f"response failed validation: {exc.errors()!r}",
+            )
 
     def _request_json(
         self,

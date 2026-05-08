@@ -324,3 +324,40 @@ class SimpleError(BaseModel):
 
 
 SimpleResult: TypeAlias = SimpleOk | SimpleError
+
+
+# ----------------------------------------------------------------------------
+# /v1/health — Wave 2 Phase C (supervised health)
+# ----------------------------------------------------------------------------
+
+class HealthOk(BaseModel):
+    """Successful liveness probe response from BEAM lease-plane /v1/health.
+
+    Minimal envelope by design — Phase C lays down the contract surface;
+    future phases extend additively (e.g., `db_ready`, `inflight_leases`).
+    Clients tolerate unknown fields per Pydantic default `extra="ignore"`.
+    """
+
+    ok: Literal[True]
+    status: Literal["ok"]
+
+
+class HealthUnavailable(BaseModel):
+    """Boundary-hardening health probe failure envelope.
+
+    Distinct from a generic `service_unavailable` error: this fires when
+    the Python client COULD NOT REACH the BEAM at all (network failure,
+    auth misconfiguration, transport timeout) OR when the BEAM responded
+    but the body shape didn't validate. Either way, the boundary is not
+    confirmed live for monitoring purposes.
+
+    `reason` is human-readable, never None — operators looking at the
+    typed result must always see an actionable string.
+    """
+
+    ok: Literal[False]
+    error: Literal["service_unavailable"]
+    reason: str
+
+
+HealthResult: TypeAlias = HealthOk | HealthUnavailable

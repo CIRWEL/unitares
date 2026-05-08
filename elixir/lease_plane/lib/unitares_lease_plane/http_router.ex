@@ -117,6 +117,24 @@ defmodule UnitaresLeasePlane.HTTPRouter do
     end
   end
 
+  # ---------- /v1/health ----------
+  # Wave 2 §"Lease-integration boundary hardening" — Phase C (supervised
+  # health). Liveness signal for the boundary itself: if this responds 200,
+  # the router is up, the auth path resolves, and the JSON envelope round-
+  # trips. Bearer auth applies (the service is localhost-only, but health
+  # info is sensitive and the auth plug runs globally — keeping it
+  # consistent simplifies the surface). Used by Python's
+  # LeasePlaneClient.health_check() and by future supervisor-side probes
+  # (governance-mcp deep-health hook is a Phase C.5 follow-on).
+  #
+  # Intentionally minimal payload: `{ok: true, status: "ok"}`. The
+  # `protocol_version` field is injected by `json/3`. Future phases extend
+  # the payload (e.g., `db_ready`, `pool_size`, `inflight_lease_count`)
+  # additively per Stability discipline; clients tolerate unknown fields.
+  get "/v1/health" do
+    json(conn, 200, %{ok: true, status: "ok"})
+  end
+
   # ---------- /v1/lease/status ----------
   get "/v1/lease/status" do
     case Map.get(conn.query_params, "surface_id") do
