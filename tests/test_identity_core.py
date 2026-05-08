@@ -151,9 +151,11 @@ class TestGenerateAgentId:
         result = self.generate(client_hint="cursor")
         assert result.startswith("cursor_")
 
-    def test_with_client_hint_spaces(self):
+    def test_client_hint_with_spaces_rejected(self):
+        # Spaces are not valid in a client_hint shape — descriptors must not
+        # become identifiers. Falls through to mcp_DATE.
         result = self.generate(client_hint="my editor")
-        assert result.startswith("my_editor_")
+        assert result.startswith("mcp_")
 
     def test_fallback_no_args(self):
         result = self.generate()

@@ -74,6 +74,25 @@ def _audit_session_resolve_miss(
 # AGENT ID GENERATION (model+date format)
 # =============================================================================
 
+_CLIENT_HINT_SHAPE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
+
+
+def _is_valid_client_hint(client_hint: Optional[str]) -> bool:
+    """Validate client_hint is a short identifier, not free text.
+
+    `client_hint` is meant to identify the client *type* (cursor, vscode,
+    claude_desktop). Free-form descriptions ("Anthropic Claude, mobile app,
+    dogfooding UX review") must not become identifier fragments — descriptors
+    are not handles.
+    """
+    if not client_hint:
+        return False
+    stripped = client_hint.strip()
+    if stripped.lower() in ("unknown", "mcp", ""):
+        return False
+    return bool(_CLIENT_HINT_SHAPE.match(stripped))
+
+
 def _client_differs_from_model(client_hint: str, model_type: str) -> bool:
     """True if the client is a third-party wrapper, not native to the model vendor.
 
@@ -125,6 +144,11 @@ def _generate_agent_id(model_type: Optional[str] = None, client_hint: Optional[s
     """
     timestamp = datetime.now().strftime("%Y%m%d")
 
+    # Reject free-text client_hint before it can leak into the identifier.
+    # Descriptors are not handles. Invalid shapes fall through as if no hint
+    # was given.
+    valid_hint = _is_valid_client_hint(client_hint)
+
     if model_type:
         # Normalize and format model name
         model = model_type.strip()
@@ -133,15 +157,16 @@ def _generate_agent_id(model_type: Optional[str] = None, client_hint: Optional[s
         model = "_".join(word.capitalize() for word in model.split())
 
         # Third-party clients get prefixed to prevent identity confusion
-        if client_hint and _client_differs_from_model(client_hint, model_type):
+        if valid_hint and _client_differs_from_model(client_hint, model_type):
             client = client_hint.strip().replace("_", " ").replace("-", " ")
             client = "_".join(word.capitalize() for word in client.split())
             return f"{client}_{model}_{timestamp}"
 
         return f"{model}_{timestamp}"
-    elif client_hint and client_hint not in ("unknown", ""):
-        # Use client as fallback identifier
-        client = client_hint.strip().lower().replace(" ", "_")
+    elif valid_hint:
+        # Use client as fallback identifier (validator already restricts to
+        # [A-Za-z0-9_-], so .strip().lower() is sufficient).
+        client = client_hint.strip().lower()
         return f"{client}_{timestamp}"
     else:
         return f"mcp_{timestamp}"
@@ -162,9 +187,9 @@ def _generate_auto_label(model_type: Optional[str] = None, client_hint: Optional
     """
     parts = []
 
-    # Client type first (if meaningful)
-    if client_hint and client_hint not in ("unknown", "", "mcp"):
-        parts.append(client_hint.strip().lower().replace(" ", "-"))
+    # Client type first (if meaningful — same shape gate as _generate_agent_id)
+    if _is_valid_client_hint(client_hint):
+        parts.append(client_hint.strip().lower())
 
     # Model family (extract short name, drop version numbers)
     if model_type:

@@ -137,6 +137,54 @@ class TestGenerateAgentId:
         assert len(result) > 0
 
 
+class TestClientHintLeakRegression:
+    """Regression tests for descriptor-as-identifier leak.
+
+    A free-text client_hint must never leak into agent_id. Identifiers are
+    structured handles; descriptors are display strings. The two layers must
+    not bleed.
+
+    Original bug: passing client_hint="Anthropic Claude, mobile app, dogfooding
+    UX review" produced agent_id "Anthropic Claude, mobile app, dogfooding UX
+    review_20260508" — a sentence, used as a primary key.
+    """
+
+    def test_dogfood_descriptor_does_not_become_identifier(self):
+        bug_input = "Anthropic Claude, mobile app, dogfooding UX review"
+        result = _generate_agent_id(client_hint=bug_input)
+        assert bug_input not in result
+        assert result.startswith("mcp_")
+
+    def test_long_hint_rejected(self):
+        result = _generate_agent_id(client_hint="x" * 41)
+        assert result.startswith("mcp_")
+
+    def test_hint_with_spaces_rejected(self):
+        result = _generate_agent_id(client_hint="cursor with extra context")
+        assert result.startswith("mcp_")
+
+    def test_hint_with_punctuation_rejected(self):
+        result = _generate_agent_id(client_hint="cursor, v1.2.3")
+        assert result.startswith("mcp_")
+
+    def test_valid_short_hints_still_work(self):
+        for hint in ("cursor", "vscode", "claude_desktop", "claude-code", "chatgpt"):
+            result = _generate_agent_id(client_hint=hint)
+            assert result.startswith(f"{hint.lower()}_"), \
+                f"Expected '{hint.lower()}_...' for hint {hint!r}, got {result!r}"
+
+    def test_valid_hint_with_model_still_prefixes(self):
+        result = _generate_agent_id(model_type="claude-opus-4-5", client_hint="cursor")
+        assert "Cursor_Claude_Opus_4_5" in result
+
+    def test_invalid_hint_with_model_uses_model_only(self):
+        bug_input = "Anthropic Claude, mobile app"
+        result = _generate_agent_id(model_type="claude-opus-4-5", client_hint=bug_input)
+        assert bug_input not in result
+        assert "Claude_Opus_4_5" in result
+        assert not result.startswith("Anthropic")
+
+
 # ============================================================================
 # derive_session_key (async, signals=None uses context/stdio fallback)
 # ============================================================================
