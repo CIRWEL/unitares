@@ -394,6 +394,74 @@ async def _bounded_scan_count(redis, pattern: str, *, cap: int = _HEALTH_KEYS_CA
     return n
 
 
+_LEASE_PLANE_PROBE_TIMEOUT_S = 2.0
+
+
+async def _probe_lease_plane_boundary(loop) -> Dict[str, Any]:
+    """Wave 2 Phase C.5: probe BEAM lease-plane /v1/health for the deep-health
+    snapshot. Returns a `checks["lease_plane"]`-shaped dict.
+
+    Failure-safe by composition: LeasePlaneClient.health_check() (Phase C,
+    PR #417) never raises — it returns a typed HealthOk | HealthUnavailable.
+    Wrapped here in a final try/except so even an import failure or config
+    misread surfaces as `status: "error"` rather than crashing the snapshot.
+
+    Uses `loop.run_in_executor` because the client is sync stdlib urllib —
+    keeps the probe off the anyio task group entirely. Tight 2s timeout
+    matches the snapshot's "fast liveness" purpose; full lease ops use the
+    config-default 5s.
+    """
+    import os
+
+    try:
+        from src.lease_plane import (
+            HealthOk,
+            LeasePlaneClient,
+            LeasePlaneClientConfig,
+        )
+
+        base_url = os.getenv("LEASE_PLANE_BASE_URL", "http://127.0.0.1:8788")
+        bearer = os.getenv("LEASE_PLANE_BEARER_TOKEN", "") or ""
+
+        # No bearer configured → this deploy doesn't have the lease-plane
+        # boundary in scope. Return "unavailable" (mirrors the redis_cache
+        # pattern when Redis isn't configured) so the snapshot's overall
+        # status logic can pop it via the line-705 special-case rather than
+        # degrading every test/CI run that doesn't have the bearer.
+        if not bearer:
+            return {
+                "status": "unavailable",
+                "ok": False,
+                "url": base_url,
+                "reason": "LEASE_PLANE_BEARER_TOKEN not configured",
+            }
+
+        config = LeasePlaneClientConfig(
+            base_url=base_url,
+            bearer_token=bearer,
+            timeout_s=_LEASE_PLANE_PROBE_TIMEOUT_S,
+        )
+        client = LeasePlaneClient(config)
+        health = await loop.run_in_executor(
+            None,
+            lambda: client.health_check(timeout_s=_LEASE_PLANE_PROBE_TIMEOUT_S),
+        )
+        if isinstance(health, HealthOk):
+            return {"status": "healthy", "ok": True, "url": base_url}
+        # HealthUnavailable: boundary did not confirm. Snapshot status is
+        # "warning" (not "error") because the deep-health probe shouldn't
+        # fail the whole snapshot just because a downstream is unhealthy —
+        # the operator wants the rest of the surface visible.
+        return {
+            "status": "warning",
+            "ok": False,
+            "url": base_url,
+            "reason": health.reason,
+        }
+    except Exception as e:  # noqa: BLE001 — probe must not poison snapshot
+        return {"status": "error", "error": str(e)}
+
+
 async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[str, Any]:
     """Build plain health-check data for operators and transports."""
     server = server or mcp_server
@@ -546,6 +614,14 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
     except Exception as e:
         checks["redis_cache"] = {"status": "error", "present": False, "error": str(e)}
 
+    # Wave 2 §"Lease-integration boundary hardening" — Phase C.5 (#417 follow-on).
+    # Surface the Python↔BEAM lease-plane boundary in the deep-health snapshot.
+    # Uses the failure-safe LeasePlaneClient.health_check() (Phase C) so a
+    # transport/auth/server failure here can't propagate. The client is sync
+    # stdlib urllib, so it runs in the executor — keeps the probe off the
+    # anyio task group entirely (the original reason the BEAM port exists).
+    checks["lease_plane"] = await _probe_lease_plane_boundary(loop)
+
     continuity_status = get_identity_continuity_status(
         redis_present=checks.get("redis_cache", {}).get("present"),
         redis_operational=checks.get("redis_cache", {}).get("status") not in {"error", "unavailable"},
@@ -649,6 +725,20 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
         and redis_check.get("status") == "unavailable"
     ):
         effective_checks.pop("redis_cache", None)
+
+    # Wave 2 Phase C.5: pop lease_plane from overall-status calculation when
+    # it's "unavailable" (no LEASE_PLANE_BEARER_TOKEN configured for this
+    # deploy). Mirrors the redis-cache treatment: an opt-in component that
+    # isn't configured shouldn't degrade the overall snapshot. A "warning"
+    # or "error" status here (i.e. bearer IS configured but the BEAM is
+    # unhealthy or unreachable) DOES still degrade — that's an actionable
+    # signal the operator needs to see in overall status.
+    lease_plane_check = effective_checks.get("lease_plane")
+    if (
+        isinstance(lease_plane_check, dict)
+        and lease_plane_check.get("status") == "unavailable"
+    ):
+        effective_checks.pop("lease_plane", None)
 
     statuses = [c.get("status") for c in effective_checks.values()]
     overall_status = "critical" if "error" in statuses else ("healthy" if all(s == "healthy" for s in statuses) else "moderate")
