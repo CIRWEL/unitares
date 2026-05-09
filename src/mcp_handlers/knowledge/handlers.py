@@ -620,11 +620,17 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
                 meta,
                 _get_lineage,
             )
+            from src.provenance_context import classify_fork_for_s22_context
+            episode_fork_kind, identity_lineage_fork = classify_fork_for_s22_context(
+                meta, agent_id
+            )
             s22_context = build_s22_write_context(
                 arguments,
                 meta=meta,
                 context_source="knowledge.store",
                 default_governance_mode="explicit",
+                episode_fork_kind=episode_fork_kind,
+                identity_lineage_fork=identity_lineage_fork,
             )
             provenance = attach_s22_context(provenance, s22_context)
         except Exception as e:

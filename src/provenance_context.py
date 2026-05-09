@@ -99,6 +99,49 @@ def build_s22_write_context(
     }
 
 
+def classify_fork_for_s22_context(
+    meta: Optional[Any],
+    agent_uuid: Optional[str],
+) -> tuple[Optional[str], Optional[bool]]:
+    """Classify the R6 fork kind for S22 persistence.
+
+    Returns ``(None, None)`` when ``meta`` is absent so ``build_s22_write_context``
+    omits the fields rather than stamping ``None``. The new-agent path
+    intentionally falls through here: there is no metadata yet, the geometry is
+    unknown, and any client-supplied ``identity_lineage_fork`` claim in
+    ``arguments`` survives — that is acceptable because the next call (once the
+    registry has the row) reclassifies and overrides.
+
+    Used by both the ``process_agent_update`` write path (early stamp at
+    ``prepare_unlocked_inputs`` plus a post-mutation re-stamp after
+    ``execute_locked_update`` increments ``node_index``) and the
+    ``knowledge.store`` write path. The post-mutation re-stamp prevents
+    divergence with ``enrich_thread_identity``, which runs in the response
+    pipeline at order=230 against the post-mutation ``node_index``.
+    """
+    if meta is None:
+        return (None, None)
+    from src.thread_identity import classify_episode_fork
+
+    try:
+        position = int(getattr(meta, "node_index", 1) or 1)
+    except (TypeError, ValueError):
+        position = 1
+    parent_uuid = getattr(meta, "parent_agent_id", None)
+    spawn_reason = getattr(meta, "spawn_reason", None)
+    agent_uuid_for_fork = (
+        agent_uuid
+        or getattr(meta, "agent_uuid", None)
+        or getattr(meta, "agent_id", None)
+    )
+    return classify_episode_fork(
+        position,
+        agent_uuid_for_fork,
+        parent_uuid,
+        spawn_reason,
+    )
+
+
 def attach_s22_context(
     provenance: Optional[dict[str, Any]],
     context: Mapping[str, Any],
