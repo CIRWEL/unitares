@@ -43,10 +43,15 @@ def apply_param_aliases(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, 
         canonical = aliases[key]
         if canonical in result:
             if result[canonical] != value:
+                # canonical is sourced from the static PARAM_ALIASES values
+                # (no taint from arguments). The aliased key itself is not
+                # logged — caller-supplied keys could in principle contain
+                # sensitive identifiers, and CodeQL's clear-text-logging
+                # rule (correctly) treats arguments.items() as tainted.
                 logger.warning(
-                    "apply_param_aliases(%r): alias %r collides with canonical %r; "
+                    "apply_param_aliases(%r): an alias collided with canonical %r; "
                     "keeping canonical, dropping alias value",
-                    tool_name, key, canonical,
+                    tool_name, canonical,
                 )
             continue
         result[canonical] = value

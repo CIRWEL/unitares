@@ -57,7 +57,7 @@ def test_collision_emits_warning(caplog):
             "leave_note", {"summary": "kept", "content": "dropped"}
         )
     assert any(
-        "alias 'content' collides with canonical 'summary'" in rec.getMessage()
+        "alias collided with canonical 'summary'" in rec.getMessage()
         for rec in caplog.records
     )
 
