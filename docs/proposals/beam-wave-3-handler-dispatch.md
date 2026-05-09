@@ -1,24 +1,27 @@
 # Wave 3 RFC: handler dispatch + identity middleware + dialectic resolution → BEAM
 
-**Status:** v0.2, 2026-05-09. Full redraft superseding v0.1 / v0.1.1 / v0.1.2 (preserved on `wave-3-rfc-draft` branch as historical record). v0.2 is a single coherent document; v0.1.x amendment-stacking is removed.
+**Status:** v0.3, 2026-05-09. Full redraft superseding v0.2 (which superseded v0.1.x). Each prior version is preserved on its branch as a historical record. v0.3 closes the architectural irony the v0.2 council surfaced: cache coherence and feature-flag state move off PostgreSQL into BEAM-native ETS, so the RFC stops piling new PG-coordination load onto the substrate it exists to relieve.
 **Parent:** `docs/proposals/beam-footprint-roadmap-v0.md` v0.3.1.
 **Sibling, completed:** `docs/proposals/beam-wave-1-sentinel.md` (Surface 1+2 shipped; Surface 3 in flight).
 **Sibling, completed:** `docs/proposals/surface-lease-plane-v0.md` Phase A + Wave 2 hardening (#412/#414/#417/#418/#419).
-**Wave 0 channel:** `audit.coordination_events` exists with `event_type ~ '^(coordination_failure)(\.[a-z_]+)+$'` CHECK constraint; zero rows as of 2026-05-09. The constraint scopes the table to failure events only — informational latency (lease-plane Phase A baseline, boundary measurements) needs a parallel channel; see §6.
+**Wave 0 channel:** `audit.coordination_events` exists with `event_type ~ '^(coordination_failure)(\.[a-z_]+)+$'` CHECK constraint; zero rows as of 2026-05-09. The constraint scopes the table to failure events only — informational latency lives in the parallel channel introduced in §6.
 **Single-writer surface:** Identity / onboarding (per `CLAUDE.md` "Before Starting Work on a Single-Writer Surface") spans this entire RFC plus its prereq PRs. Branch from this RFC's head before any parallel work.
 
-## What changed in v0.2 (vs v0.1.2)
+## What changed in v0.3 (vs v0.2)
 
-The third council pass on v0.1.2 returned BLOCK / BLOCK / DRIFT against six structural items. v0.1.2's own escalation rule named v0.2-redraft-from-scratch as the discipline; this draft executes that. v0.2 differs from v0.1.2 in six load-bearing places, all schema- or contract-grounded:
+The v0.2 three-lane council returned: architect BLOCK on three structural items, code-reviewer CONCERN on four surgical items, live-verifier APPROVE with three minor line-drift items. The architect's load-bearing finding was that v0.2's §10 (versioned baselines + reconciliation) and §4 (advisory lock) added sustained PG-coordination load to the very substrate Wave 3 exists to relieve — the fifth bias signature across four iterations. v0.3 corrects all three architect items, all four code-reviewer items, and the three drifts.
 
-1. **Shadow-divergence design (was §B3.2).** v0.1.x's comparator referenced columns (`agent_uuid`, `api_key`, `label`, `public_agent_id`) that match neither `core.identities` nor `core.agents`. v0.2 uses live schemas verbatim, ships **two** shadow tables (`core.identities_shadow` + `core.agents_shadow`), and uses a full-outer-join comparator that detects value mismatch, canonical-row-missing, and shadow-row-missing distinctly. See §8.
-2. **Saga state machine (was §B2.2).** v0.1.x's saga referenced `session_id UUID` against a live `core.dialectic_sessions.session_id TEXT`. v0.2 uses TEXT and adds two intermediate states (`reserved` → `paused_agent_applied` → `both_agents_applied` → `pg_committed`) so crash-restart can distinguish "PG committed but agents unaware" from "agents applied but PG uncommitted." See §9.
-3. **Cache coherence (was §B6.2 + §B7.2).** v0.1.x relied on fire-and-forget Redis pub-sub for baseline-cache invalidation and feature-flag updates. Lossy pub-sub plus subscriber reconnect = silent divergence — exactly the substrate-tax pattern the RFC was trying to avoid. v0.2 uses a **versioned baseline** in PG (transactional version counter) plus a bounded reconciliation loop; pub-sub is an optimization layer, not the invariant. See §10.
-4. **Latency measurement namespace (was §C2.2).** v0.1.x put informational lease-plane latency under `coordination_failure.beam_python_boundary.lease_plane_request`. The CHECK constraint on `audit.coordination_events.event_type` forces that prefix to mean "failure"; reading the table for failure metrics would pollute the result. v0.2 splits: a sibling table `audit.coordination_measurements` with the same shape but a different CHECK on event_type, scoped to informational events. See §6.
-5. **§0 framing.** v0.1.1/v0.1.2 stacked bias-acknowledgments in prose. v0.2 removes the bias archeology; the bias discipline now lives in *how disconfirmer thresholds are anchored* — every threshold names the measurement source (existing or named-TBD) and the gate halts if the measurement is missing.
-6. **Prereq-PR table.** v0.1.x had an 8-row prereq table mixed with amendment cross-references. v0.2 has one §14 table; nine rows; each row names the file paths it creates/touches and its dependency on prior PRs.
+1. **§10 redesigned around BEAM-native ETS** (architect BLOCK item 3, the bias signature). The canonical live cache for baselines and feature flags is an ETS table inside the BEAM application; PostgreSQL is the durable backing store, not the hot read path. Reads from any BEAM handler are `:ets.lookup` (lock-free, microseconds, no PG round-trip). Writes go through a single GenServer that commits to PG transactionally and then updates ETS. Python doesn't have its own cache for these surfaces post-Wave-3 — Python compute paths receive whatever they need as request payload from BEAM. The PG-on-observe pattern v0.2 introduced is gone.
+2. **Disconfirmer (F) escape hatch removed** (architect BLOCK item 1). The "OR operator's written go-decision document explicitly accepts the slip" clause is dropped. >25% slip on any of {paper, fellowship, HLH, R2 Phase 2} halts Wave 3 unconditionally; re-opening requires re-scoping, not an acceptance memo.
+3. **Three new stop signs for v0.3-introduced failure modes** (architect BLOCK item 2). §12 #10 (saga GenServer.call deadlock if two sessions ever share an agent during the saga window), #11 (ETS-vs-PG divergence detected on slow reconciliation), #12 (`audit.coordination_measurements` partition pressure exceeding a stated rate without retention policy applied). v0.2's stop sign #9 (pub-sub lag) is retired because pub-sub is no longer load-bearing.
+4. **§8 comparator covers all live columns** (code-reviewer item 1). `core.agents` adds `purpose / notes / tags / archived_at`; `core.identities` adds `provisional_recorded_at`. Verified against `\d core.agents` and `\d core.identities` 2026-05-09.
+5. **§9 saga adds `UNIQUE (session_id) WHERE state NOT IN ('reverted')`** (code-reviewer item 2). Prevents two pending sagas per session even when payload hashes differ.
+6. **§3.2 503 halt mechanism specified** (code-reviewer item 4). Counter is the `measurement.governance_mcp.503_emission` event in `audit.coordination_measurements`; halt direction is "complete step 3 (restore Python writers) before stopping"; SDK consumers (Watcher / Sentinel / dispatch) must honor `Retry-After` or use the response-body `retry_after_seconds` field, named in the prereq PR.
+7. **Disconfirmers re-lettered cleanly to A/B/C/D/E/F** (architect cleanliness CONCERN). v0.1.x's (C) was retired in v0.2 but the alphabet kept the gap; v0.3 closes it. Mapping for backward citations: v0.2 (A/B/D/E/F/G) → v0.3 (A/B/C/D/E/F).
+8. **Line cite drifts fixed** (verifier). `handlers.py:1184` → `1185`; `agent_auth.py:309-515` → `309-549`; `identity_step.py:365-474` honesty-gate range corrected to `384-474`.
+9. **`_compare_against_timeout` re-classified to PORTS-to-BEAM** (architect §5.3 CONCERN). Pure timestamp comparison is trivially native to Elixir's `DateTime`; calling Python for it would add a boundary crossing for arithmetic.
 
-The §2 lock-invariant inventory, §3 state-ownership matrix, §5 dialectic split, §7 test strategy, and §12 stop signs are preserved structurally with verifier errata (DRIFT/REFUTED items 1–12 from v0.1.1) folded inline; no separate errata table.
+The rest of the document — §2 lock-invariant inventory, §3 state-ownership matrix (modulo line-cite fixes), §5 dialectic split (modulo `_compare_against_timeout`), §7 test strategy, §6 boundary instrumentation namespaces — survives from v0.2.
 
 ---
 
@@ -26,23 +29,27 @@ The §2 lock-invariant inventory, §3 state-ownership matrix, §5 dialectic spli
 
 > **What evidence would update us away from porting handler dispatch + identity middleware + dialectic resolution to BEAM?**
 
-The RFC opens with this question because per `feedback_substrate-migration-status-quo-bias.md` and the symmetric warning in `beam-footprint-roadmap-v0.md` §"Why Read A, not Read B", both substrate enthusiasm and substrate resistance are biases. The disconfirmers below name what would actually halt Wave 3, with each threshold anchored to a measurement source.
+Per `feedback_substrate-migration-status-quo-bias.md` and the symmetric warning in `beam-footprint-roadmap-v0.md` §"Why Read A, not Read B", both substrate enthusiasm and substrate resistance are biases. The disconfirmers below name what would actually halt Wave 3, with each threshold anchored to a measurement source.
+
+The bias discipline lives in two places: (i) every threshold names its measurement source, and the gate halts if the source is missing; (ii) every new substrate cost the RFC introduces (PG queries, advisory locks, GenServer calls) is counted against disconfirmer (B)'s boundary-cost budget rather than treated as free. Item (ii) is what v0.3 corrects relative to v0.2.
+
+Note on threshold derivations: the numerical anchors below ((A.1)'s 60%, (A.2)'s 2.0s, (B)'s ×2/×3 multipliers) are *operator-chosen priors against which measurement runs*, not derived constants. They are taste choices made at this stage; sensitivity tests at ±5% of each anchor are part of prereq PR #1's deliverables, so the gate decision doesn't hinge on a brittle exact value.
 
 ### Disconfirmer set
 
 **(A) User-visible-metric headroom — two paths.**
-- **(A.1) ODE-floor dominates.** ODE profile against still-Python `governance_core/phase_aware.py` and `governance_core/stability.py` shows >60% of `process_agent_update` p99 floor in `governance_core/` math over a 7-day production sample. Anchor: 60% chosen because below 50% the answer is ambiguous (port-helps-some), above 75% would let cases through where the math is *not yet* dominant. **Measurement source:** ODE profile commit on master (named in §14 PR #1). Wave 3 implementation cannot start before this commit lands.
-- **(A.2) In-place Python fix closes the gap.** Any Python-side fix shipped during Wave 3 implementation window brings `process_agent_update` p99 below **2.0s** without porting. Anchor: per `project_locked-update-overhead-fix.md`, current per-turn overhead is ~5.0s post-#372; PR #3 deferred pending benchmark. 2.0s = "in-place fixes brought it to 40% of current" — defensible bar. **Measurement source:** `process_agent_update` p99 from existing production telemetry.
+- **(A.1) ODE-floor dominates.** ODE profile against still-Python `governance_core/phase_aware.py` and `governance_core/stability.py` shows >60% of `process_agent_update` p99 floor in `governance_core/` math over a 7-day production sample. Anchor: prior, sensitivity-tested at 50% / 65% / 75% if the result lands within ±5% of 60%. **Measurement source:** ODE profile commit on master (prereq PR #1). Wave 3 implementation cannot start before this commit lands.
+- **(A.2) In-place Python fix closes the gap.** Any Python-side fix shipped during Wave 3 implementation window brings `process_agent_update` p99 below **2.0s** without porting. Anchor: per `project_locked-update-overhead-fix.md`, current ~5.0s post-#372; 2.0s = 40% of current. **Measurement source:** `process_agent_update` p99 from existing production telemetry.
 
-**(B) Boundary cost ≥ substrate tax removed.** `audit.coordination_measurements` channel (§6, prereq PR #6) shows sustained per-call boundary cost p50 ≥ lease-plane Phase A measured p50 × 2 OR p99 ≥ lease-plane Phase A measured p99 × 3 over a 14-day window. Anchor: ×2/×3 multipliers reflect Wave 3's heavier per-call payload (full request marshalling vs lease ack). **Measurement source:** lease-plane Phase A latency instrumentation (prereq PR #6) must produce ≥14 days of `audit.coordination_measurements` rows before disconfirmer (B) thresholds can be set. If <14 days at Wave 3 implementation gate, **gate halts on missing measurement** — there is no fallback default.
+**(B) Boundary cost ≥ substrate tax removed.** `audit.coordination_measurements` channel (§6, prereq PR #6) shows sustained per-call boundary cost p50 ≥ lease-plane Phase A measured p50 × 2 OR p99 ≥ lease-plane Phase A measured p99 × 3 over a 14-day window. Anchor: ×2/×3 multipliers reflect Wave 3's heavier per-call payload (full request marshalling vs lease ack). The (B) budget MUST include all PG-touching coordination v0.3's design adds — specifically §4(β) advisory locks (per-write, bounded) and §9 saga PG transactions (per-resolution, bounded). v0.2's per-observe PG version-checks are gone. **Measurement source:** prereq PR #6 must produce ≥14 days of `audit.coordination_measurements` rows before disconfirmer (B) thresholds can be set. If <14 days at Wave 3 implementation gate, **gate halts on missing measurement** — no fallback default.
 
-**(D) MCP SDK gate reverses.** Hands-on spike on `mcp_elixir_sdk` 1.0.1 or `hermes_mcp` 0.14.1 shows production-disqualifying failure (broken-on-Anthropic-streaming, MCP-spec drift, no maintainer responsiveness). Doubles disconfirmer (B)'s budget per §6's 4-crossing topology. **Measurement source:** spike result, recorded in `docs/handoffs/wave-3-mcp-sdk-spike-<date>.md` artifact before implementation gate.
+**(C) MCP SDK gate reverses.** Hands-on spike on `mcp_elixir_sdk` 1.0.1 or `hermes_mcp` 0.14.1 shows production-disqualifying failure (broken-on-Anthropic-streaming, MCP-spec drift, no maintainer responsiveness). Doubles disconfirmer (B)'s budget per §6.6's 4-crossing topology. **Measurement source:** spike result, recorded in `docs/handoffs/wave-3-mcp-sdk-spike-<date>.md` artifact before implementation gate. (Was (D) in v0.2.)
 
-**(E) State-ownership cutover structurally unsafe.** Identity middleware port (§3) surfaces irreducible per-request semantics that can't be moved to GenServer state without replicating coordination at the boundary. **Measurement source:** §3 surface-by-surface analysis at implementation gate; if any new "irreducible" surface is found beyond the eight in §3.1, gate halts.
+**(D) State-ownership cutover structurally unsafe.** Identity middleware port (§3) surfaces irreducible per-request semantics that can't be moved to GenServer state without replicating coordination at the boundary. **Measurement source:** §3 surface-by-surface analysis at gate; if any new "irreducible" surface is found beyond the eight in §3.1, gate halts. (Was (E) in v0.2.)
 
-**(F) Opportunity cost.** Wave 3 implementation projected calendar-weeks > (Wave 1 elapsed × 3) AND any of {paper deadline, fellowship application, HLH, R2 Phase 2 gate} would be sacrificed. "Sacrificed" defined as: calendar-week slip on any named item exceeds 25% of original deadline window OR operator's written go-decision document explicitly accepts the slip. **Measurement source:** `docs/proposals/wave-3-go-decision-<date>.md` artifact written by operator at gate, with §"Calendar reasoning" section enumerating each named item.
+**(E) Opportunity cost.** Wave 3 implementation projected calendar-weeks > (Wave 1 elapsed × 3) AND any of {paper deadline, fellowship application, HLH, R2 Phase 2 gate} would be sacrificed. "Sacrificed" defined as: calendar-week slip on any named item exceeds 25% of original deadline window. **No acceptance-memo escape hatch.** Re-opening the gate requires re-scoping Wave 3, not a written acceptance of the slip. Wave 1's elapsed time is concretely named in §14 (currently estimated ~3 weeks; pinned to actual at gate). **Measurement source:** `docs/proposals/wave-3-go-decision-<date>.md` artifact written by operator at gate, with §"Calendar reasoning" section enumerating each named item with current slip vs original target. (Was (F) in v0.2.)
 
-**(G) Dialectic-quality regression.** During canary, dialectic session-resolution rate (resolved / (resolved + failed + escalated) over a 14-day window) regresses >5% against pre-Wave-3 baseline. Reviewer-reassignment rate increases >20%. **Measurement source:** baseline computed from trailing 30 days of `core.dialectic_sessions` rows (47 total as of 2026-05-09; gate halts on insufficient baseline volume if 30-day window has <30 sessions). Both baseline mean and σ pinned in §11 prior to implementation start; pinning commit is itself a Wave 3 prereq (PR #9).
+**(F) Dialectic-quality regression.** During canary, dialectic session-resolution rate (resolved / (resolved + failed + escalated) over a 14-day window) regresses >5% against pre-Wave-3 baseline. Reviewer-reassignment rate increases >20%. **Measurement source:** baseline computed from trailing 30 days of `core.dialectic_sessions` rows (47 total as of 2026-05-09; gate halts on insufficient baseline volume if 30-day window has <30 sessions). Both baseline mean and σ pinned in §11 prior to implementation start (prereq PR #9). (Was (G) in v0.2.)
 
 ### What disconfirmation is NOT
 
@@ -56,7 +63,7 @@ The RFC opens with this question because per `feedback_substrate-migration-statu
 
 ## §1 Roadmap-level scope
 
-- **Handler dispatch** (the `@mcp_tool` decorator's wrapper, per-tool routing, response shaping) ports to BEAM. The MCP transport layer itself stays Python (per disconfirmer (D)) and proxies to BEAM after request unmarshalling.
+- **Handler dispatch** (the `@mcp_tool` decorator's wrapper, per-tool routing, response shaping) ports to BEAM. The MCP transport layer itself stays Python (per disconfirmer (C)) and proxies to BEAM after request unmarshalling.
 - **Identity middleware** (`src/mcp_handlers/middleware/identity_step.py`, the session-context contextvar chain, agent_id resolution, label resolution) ports to BEAM. Largest single coordination surface in governance MCP today.
 - **Dialectic resolution** (`src/mcp_handlers/dialectic/`) ports to BEAM. The reasoning logic (numerical synthesis math, condition merging, signature crypto) stays Python and is called from BEAM via the boundary. The coordination layer (session lifecycle, quorum tracking, condition resolution, audit emission) ports.
 - **Out of scope:** `governance_core/`, Watcher, the LLM SDK call paths inside handlers (those stay Python and are called from BEAM via Ports/HTTP).
@@ -73,8 +80,8 @@ The lock surface is `StateLockManager.acquire_agent_lock_async` (`src/state_lock
 | 2 | thread_id / node_index monotonic on `active_session_key` change | `phases.py:822-851`; persist helper `phases.py:670-693` (`_persist_thread_identity_async`) | Explicit-relax with named tolerant consumer; Wave 3 BEAM saga can synchronously persist within session-resolution saga (§9), eliminating the staleness window for that path |
 | 3 | previous_void_active snapshot (read-once before ODE, used post-lock for CIRS) | `phases.py:800-807` capture; `phases.py:1125-1137` use | Single GenServer message — must NOT re-read post-ODE |
 | 4 | Monitor lifecycle: metadata fetched (743/768/789) and monitor lookup (803) refer to same agent under one lock | `phases.py:743-798, 803-807, 880-923` | Single GenServer message (corollary of 1) |
-| 5 | Dialectic session lock: SYNTHESIS→RESOLVED serialization across `submit_synthesis(agrees=True)` | `dialectic/handlers.py:1184` (uses `get_session_lock` from `dialectic/session.py:55`) | Session-keyed GenServer mailbox + saga (§9). The asyncio.Lock in `session.py:51-68` (`_SESSION_LOCKS` + `_SESSION_LOCKS_DICT_LOCK`) is replaced |
-| 6 | Baseline preload: `get_baseline_or_none(agent_id)` once per process; cached in `_baseline_cache` (`governance_core/ethical_drift.py:418`) | `phases.py:809-820, 856-899` | PG-anchored with versioned cache — see §10 |
+| 5 | Dialectic session lock: SYNTHESIS→RESOLVED serialization across `submit_synthesis(agrees=True)` | `dialectic/handlers.py:1185` (uses `get_session_lock` from `dialectic/session.py:55`) | Session-keyed GenServer mailbox + saga (§9). The asyncio.Lock in `session.py:51-68` (`_SESSION_LOCKS` + `_SESSION_LOCKS_DICT_LOCK`) is replaced |
+| 6 | Baseline preload: `get_baseline_or_none(agent_id)` once per process; cached in `_baseline_cache` (`governance_core/ethical_drift.py:418`) | `phases.py:809-820, 856-899` | BEAM-native ETS cache (§10); Python cache disappears post-Wave-3 |
 | 7 | Monitor state snapshot: pre-ODE (596-602) used for ODE input; post-ODE re-read (1143-1147) used for CIRS emission; MUST NOT cross-contaminate | `phases.py:536-602, 1143-1147, 1156-1164, 1203-1223` | Single GenServer message carrying both snapshots; BEAM must not split |
 | 8 | Metadata cache-PG eventual consistency (corollary of 2) | `phases.py:823-851, 670-693, 928-943` | Explicit-relax as cross-layer contract |
 | 9 | api_key mutable reference under lock (corollary of 1) | `phases.py:745, 778, 792, 798, 905-911` | Single GenServer message (covered by 1) |
@@ -96,37 +103,37 @@ Invariants 1, 3, 4, 5, 7, 9, 10 collapse into single GenServer mailbox messages.
 
 ### 3.1 Surface inventory
 
-Identity middleware decomposes into eight state surfaces. Source-cited from `src/mcp_handlers/middleware/identity_step.py`, `src/mcp_handlers/identity/{resolution,persistence,session}.py`, `src/mcp_handlers/support/agent_auth.py`, `src/mcp_handlers/context.py`, `src/background_tasks.py`.
+Identity middleware decomposes into eight state surfaces.
 
 | # | Surface | Read | Write | Source of truth | BEAM port strategy | Cutover semantics |
 |---|---------|------|-------|------------------|---------------------|---------------------|
 | A | ContextVars (10 declarations; 4 identity-bearing) | `context.py:131-147` (incl. `update_context_agent_id` at 141-147 — writer) | `context.py:86-114` | Process memory only (async-task-local) | Stays Python at boundary; BEAM threads request-context explicitly through GenServer state. Marshalled context-payload bytes-per-request enters disconfirmer (B) budget | Direct flip — ephemeral |
-| B | Sticky transport binding cache (3-layer: dict / Redis / PG fallback) | `identity_step.py:289-298` (Redis recovery 0.5s timeout at 292) | `identity_step.py:98-157` (fire-and-forget Redis), `:230-248` (invalidate) | In-memory dict when populated; Redis when recovered; no PG anchor | BEAM owns as per-process GenServer state OR stays Python | No shadow needed — drop in-memory cache → next request falls through |
-| C | Session→UUID Redis cache (`sticky:{ip_ua_fingerprint}:{mcp_session_id}` keys) | `resolution.py:430-470` (PATH 1) | `persistence.py:175-200` (`_cache_session` SETEX); NX in inner `_cache_session_redis_write` at 206+ | PostgreSQL canonical; Redis is speed cache | Shadow ≥1 cycle then flip | Rollback: re-enable Python writes, BEAM HTTP-read-only. ≤1-request consistency window at flip |
+| B | Sticky transport binding cache (3-layer: dict / Redis / PG fallback) | `identity_step.py:289-298` (Redis recovery 0.5s timeout at 292) | `identity_step.py:98-157` (fire-and-forget Redis), `:230-248` (invalidate) | In-memory dict when populated; Redis when recovered; no PG anchor | BEAM owns as per-process GenServer state | No shadow needed — drop in-memory cache → next request falls through |
+| C | Session→UUID Redis cache (`sticky:{ip_ua_fingerprint}:{mcp_session_id}` keys) | `resolution.py:430-470` (PATH 1) | `persistence.py:175-200` (`_cache_session` SETEX); NX in inner `_cache_session_redis_write` at 206+ | PostgreSQL canonical; Redis is speed cache | Shadow ≥1 cycle then flip | Rollback: re-enable Python writes, BEAM HTTP-read-only |
 | D | PG canonical identity (`core.identities` AND `core.agents` upsert on PATH 3 fresh mint) | `resolution.py:950-1116` (PATH 3) | `db.upsert_identity`, `db.upsert_agent` | PostgreSQL (both tables; coupled) | BEAM owns the upsert; PG INSERT/UPDATE moves into GenServer message atomicity | Shadow ≥1 cycle then dual-write window then BEAM-only. Both tables shadowed; see §8 |
-| E | Continuity token (HMAC over agent_uuid + chh + exp + iat + sid + opv); actual fields: `v`, `opv`, `sid`, `aid`, `mf`, `ch`, `iat`, `exp` (verifier-corrected from v0.1) | `session.py:176-220` | `session.py` (`create_continuity_token` at onboard) | Cryptographic — token string IS source | Stays Python OR moves to BEAM — orthogonal | No rollback contract |
+| E | Continuity token (HMAC over agent_uuid + chh + exp + iat + sid + opv); actual fields: `v`, `opv`, `sid`, `aid`, `mf`, `ch`, `iat`, `exp` | `session.py:176-220` | `session.py` (`create_continuity_token` at onboard) | Cryptographic — token string IS source | Stays Python OR moves to BEAM — orthogonal | No rollback contract |
 | F | Onboard PIN (Redis-keyed `onboard_pin:{ip_ua_fingerprint}` with model scoping; IPUA pin treats `agent_id` as proof per `project_ipua-pin-agent-id-proof.md`) | `session.py:769-797` (`lookup_onboard_pin` with `_PIN_REDIS_TIMEOUT = 0.5s` at line 28) | `session.py` (`set_onboard_pin` SETEX, 30m TTL) | Redis (TTL 30m); IPUA invariant locked by contract test | Shadow ≥1 cycle then flip; IPUA invariant CANNOT be relaxed | Shadow then flip |
-| G | Agent metadata cache (`mcp_server.agent_metadata[uuid]`) | `agent_auth.py:59-134, :151, :309-515` (`require_registered_agent` ends at 515) | `background_tasks.py:343` (`background_metadata_load` — verifier-corrected from `load_agent_metadata`) | PostgreSQL `core.agents` canonical; in-memory dict is read-side cache | PG-anchored with versioned cache, see §10. OTP gen_server watches PG for changes; both BEAM + Python subscribe via the broadcast channel | No rollback contract — read-mostly, stale degrades gracefully |
-| H | Identity honesty gates (`identity_strict_mode`, `ipua_pin_check_mode`) | `identity_step.py:365-474`, `agent_auth.py:271-293` | PG `core.feature_flags` (new in §10 — versioned, cache + reconciliation, NOT Redis pub-sub) | PG canonical | BEAM mirrors flag check at same dispatch entry | Direct flip via flag write; both runtimes converge within 60s reconciliation interval |
+| G | Agent metadata cache (`mcp_server.agent_metadata[uuid]`) | `agent_auth.py:59-134, :151, :309-549` (`require_registered_agent` body) | `background_tasks.py:343` (`background_metadata_load`) | PostgreSQL `core.agents` canonical; in-memory dict is read-side cache | BEAM-native ETS cache via single-writer GenServer (§10). Reads from any BEAM handler are `:ets.lookup`. Python compute paths receive metadata as request payload from BEAM, never read directly | No rollback contract — read-mostly |
+| H | Identity honesty gates (`identity_strict_mode`, `ipua_pin_check_mode`) | `identity_step.py:384-474`, `agent_auth.py:271-293` | `core.feature_flags` PG row + ETS via §10's FeatureFlagWriter GenServer | PG durable canonical; ETS canonical-live | BEAM mirrors flag check at same dispatch entry; reads from ETS | Direct flip via flag write; both runtimes converge within reconciliation interval (slow cadence: 5min) |
 
 ### 3.2 Rollback procedure
 
 1. **Snapshot before flip.** `pg_dump` `core.identities`, `core.agents`, `core.identities_shadow`, `core.agents_shadow`, `core.dialectic_sessions`, `core.dialectic_messages`, `coordination.session_resolution_sagas`, `core.feature_flags` into `~/backups/governance/wave-3-pre-cutover-<ISO8601>/`.
 2. **Plist swap.** New plist `com.unitares.handler-dispatch-beam.plist` in `scripts/ops/`. Cutover loads BEAM; rollback unloads BEAM and reloads `com.unitares.governance-mcp.plist`.
-3. **503 circuit-breaker for the gap.** Python MCP transport, when proxying to BEAM, returns HTTP 503 `{"ok": false, "error": "governance_temporarily_unavailable", "reason": "handler_dispatch_unavailable"}` with `Retry-After: 5` on connection-refused or timeout. Clients (Watcher, Sentinel, SDK consumers) gain matching retry-on-503 logic before cutover. Rollback step order: stop BEAM writes first → transport returns 503 during gap → restore Python writers → transport resumes 200. **Stop sign #7:** 503 rate during cutover/rollback exceeding 1% of requests for >60s halts the procedure.
+3. **503 circuit-breaker for the gap.** Python MCP transport, when proxying to BEAM, returns HTTP 503 with body `{"ok": false, "error": "governance_temporarily_unavailable", "reason": "handler_dispatch_unavailable", "retry_after_seconds": 5}` and `Retry-After: 5` header on connection-refused or timeout. **Halt mechanism (per stop sign #7):** the transport emits `measurement.governance_mcp.503_emission` to `audit.coordination_measurements` on every 503 it returns; a sliding-window aggregator over the last 60s reads that table once per 15s and emits `coordination_failure.governance_mcp.cutover_503_rate_breach` if the count exceeds 1% of total request volume in the same window. **Halt direction:** when the breach event fires, the operator completes step 3 (restore Python writers) before stopping; BEAM is unloaded last. Do not stop mid-procedure with neither runtime accepting writes. **Client retry policy:** SDK consumers (Watcher, Sentinel, dispatch worker, plugin SessionStart paths) must honor `Retry-After` OR the body's `retry_after_seconds` field; the prereq PR (#10) adds matching retry logic to each named consumer. Clients without retry-on-503 fail through to the calling layer and are not the rollback procedure's responsibility.
 4. **Schema rollback.** Every new migration ships a paired DOWN migration; tested on `governance_test` snapshot before cutover migration runs in production.
 5. **Per-surface windows:** A/E/H instantaneous; B/C/G ≤2h staleness (TTL); D ≤1-request inconsistency at flip moment (shadow + dual-write window keeps it bounded); F instantaneous.
 
 ---
 
-## §4 Multi-writer enforcement gate
+## §4 Multi-writer enforcement gate during cutover
 
-Wave 3 introduces multi-OS-process operation. Python MCP transport must stop accepting writes for an agent while its BEAM GenServer is mid-update. Two options:
+The cutover window has a dual-write phase where both BEAM and Python actively write to the same agent's state. After full cutover, BEAM is the sole writer for the migrated surfaces; this section's coordination is bounded to the cutover window.
 
 - **(α)** Open a `resident:/` Phase B window via amendment to `surface-lease-plane-v0.md`. Forces every Python resident (Sentinel, Vigil, Chronicler, in-process Steward) to learn fail-closed-on-deny semantics in the same window as cutover — couples two large changes.
-- **(β) — recommended.** Per-agent PG advisory lock at the writer entry point (`pg_try_advisory_lock(hashtext(agent_uuid))`). BEAM acquires on enter, releases on exit; Python writers attempt with 50ms timeout and fail-fast (returning 503-equivalent surfaced as `governance_temporarily_unavailable`). Keeps lease plane unchanged.
+- **(β) — recommended.** Per-agent PG advisory lock at the writer entry point (`pg_try_advisory_lock(hashtext(agent_uuid))`). BEAM acquires on enter, releases on exit; Python writers attempt with 50ms timeout and fail-fast (returning the same 503-equivalent surfaced as `governance_temporarily_unavailable`). Keeps lease plane unchanged. **Cost accounting:** the per-write advisory-lock round-trip is counted against disconfirmer (B)'s budget (§0). Bounded per write, not per observe.
 
-If (α) is chosen, B5.2 from v0.1.2 stands: operator evaluates `resident:/` against `surface-lease-plane-v0.md` §6.1 criteria and flips a flag rather than shipping a PR. If (β) is chosen (recommended), §4 is a binding implementation spec. Council confirms before implementation gate.
+If (α) is chosen, B5.2 from v0.1.2 stands: operator evaluates `resident:/` against `surface-lease-plane-v0.md` §6.1 criteria and flips a flag rather than shipping a PR. If (β) is chosen, §4 is a binding implementation spec. Council confirms before implementation gate.
 
 ---
 
@@ -144,7 +151,7 @@ If (α) is chosen, B5.2 from v0.1.2 stands: operator evaluates `resident:/` agai
 | `mcp_handlers/dialectic/handlers.py:55-63` | `_resolve_dialectic_agent_id` | Auth boundary |
 | `mcp_handlers/dialectic/handlers.py:130-177` | `check_reviewer_stuck` | Circuit-breaker (2h antithesis); phase-gated |
 | `mcp_handlers/dialectic/handlers.py:241-334` | `_build_dialectic_actionability` | State-machine assembly |
-| `mcp_handlers/dialectic/handlers.py:368-412` | `_apply_reviewer_reassignment` (verifier-corrected: 335-366 is `_validate_explicit_reviewer_candidate`, different function) | Stuck-session recovery |
+| `mcp_handlers/dialectic/handlers.py:368-412` | `_apply_reviewer_reassignment` | Stuck-session recovery |
 | `mcp_handlers/dialectic/handlers.py:414-635` | `handle_request_dialectic_review` | Session creation; PG write `pg_create_session` line 478 |
 | `mcp_handlers/dialectic/handlers.py:897-985` | `handle_submit_thesis` | PG write `pg_add_message` 910; phase transition 922 |
 | `mcp_handlers/dialectic/handlers.py:986-1147` | `handle_submit_antithesis` | Reviewer assign 1040; phase transition 1056 |
@@ -173,19 +180,19 @@ If (α) is chosen, B5.2 from v0.1.2 stands: operator evaluates `resident:/` agai
 
 | File:line | Function | Judgment | Reason |
 |-----------|----------|----------|--------|
-| `dialectic_protocol.py:995-1031` | `check_timeout` | **SPLIT**: wrapper ports to BEAM, `_compare_against_timeout(now, created_at, phase, timeouts)` predicate stays Python | Time-comparison is pure; FSM-phase decision is coordination |
-| `mcp_handlers/dialectic/reviewer.py:55-119` | `_has_recently_reviewed` | **PORTS to BEAM** as part of session-keyed GenServer's reviewer-selection coordination. PG round-trip remains (Postgrex query directly), boundary crossing disappears. | Splitting the call from selection saves nothing; the Python→BEAM→Python sandwich is the cost to remove |
+| `dialectic_protocol.py:995-1031` | `check_timeout` | **PORTS to BEAM.** Both the FSM-phase-gating wrapper AND the timestamp-comparison predicate (`_compare_against_timeout`) move; pure timestamp arithmetic is trivially native to Elixir's `DateTime` and avoids a boundary crossing for arithmetic | v0.2 had `_compare_against_timeout` staying Python; that introduced a boundary call for what's a `DateTime.diff/2` in Elixir. v0.3 corrects |
+| `mcp_handlers/dialectic/reviewer.py:55-119` | `_has_recently_reviewed` | **PORTS to BEAM** as part of session-keyed GenServer's reviewer-selection coordination. PG round-trip remains (Postgrex query directly), boundary crossing disappears | Splitting from selection saves nothing |
 | `mcp_handlers/dialectic/auto_resolve.py:32-51` | `_parse_timestamp` | Stays Python utility | Pure helper |
 | `dialectic_protocol.py:318-329` | `Resolution.hash` | Stays Python utility | Pure crypto |
 | `dialectic_protocol.py:331-347` | `Resolution.canonical_payload` | Stays Python utility (load-bearing for v2 signing) | Pure |
 
 ### 5.4 Storage surfaces
 
-- `core.dialectic_sessions` (`session_id TEXT PK, paused_agent_id TEXT, reviewer_agent_id TEXT, phase, status, ...` — verified live schema). Wave 3 BEAM session-keyed GenServer reads/writes via boundary; on-disk schema unchanged.
+- `core.dialectic_sessions` (`session_id TEXT PK, paused_agent_id TEXT, reviewer_agent_id TEXT, phase, status, ...`). Wave 3 BEAM session-keyed GenServer reads/writes via boundary; on-disk schema unchanged.
 - `core.dialectic_messages` (append-only). BEAM appends; schema unchanged.
 - `audit.coordination_events` (failure events; CHECK constraint on `event_type` prefix). Wave 3 wires dialectic state-transition emissions via the helper in §6.
-- `audit.coordination_measurements` (NEW in §6, prereq PR #6). Informational metrics including lease-plane Phase A latency baseline.
-- `data/dialectic_sessions/<session_id>.json` (env-gated by `UNITARES_DIALECTIC_WRITE_JSON_SNAPSHOT`, default ON per `session.py:71-75`). During shadow window, BEAM does NOT write; Python continues. Post-flip: BEAM writes, Python stops. Single writer always; no merge step.
+- `audit.coordination_measurements` (NEW in §6, prereq PR #6). Informational metrics including lease-plane Phase A latency baseline and §3.2 503 emissions.
+- `data/dialectic_sessions/<session_id>.json` (env-gated by `UNITARES_DIALECTIC_WRITE_JSON_SNAPSHOT`, default ON per `session.py:71-75`). During shadow window, BEAM does NOT write; Python continues. Post-flip: BEAM writes, Python stops. Single writer always.
 
 ### 5.5 Lifecycle FSM
 
@@ -209,12 +216,14 @@ For computation calls, BEAM calls Python via a single endpoint:
 ```
 POST /v1/dialectic/compute
 {
-  "mode": "synthesize" | "select_reviewer" | "compare_timeout",
+  "mode": "synthesize" | "select_reviewer",
   "session_id": "<TEXT, idempotency key>",
   "round": <int, idempotency key for synthesize>,
   "input": { ...mode-specific bounded input... }
 }
 ```
+
+(Note: v0.2 listed `compare_timeout` as a third mode; v0.3 drops it because the timestamp comparison ports to BEAM per §5.3.)
 
 Response: `{"result": {...}, "elapsed_ms": <int>, "cache_hit": <bool>}`.
 
@@ -224,7 +233,7 @@ Idempotency: `(session_id, round, mode)` tuple; same input within a 60s window r
 
 ## §6 Boundary instrumentation — failure vs measurement separation
 
-The existing typed event constants `python_to_beam_request_failed` and `beam_to_python_request_failed` (PR #408) live in `audit.coordination_events`. That table's CHECK constraint (`event_type ~ '^(coordination_failure)(\.[a-z_]+)+$'`) locks `event_type` to *failure* events. Informational latency (lease-plane Phase A baseline, per-call boundary round-trip measurements) does not belong there.
+The existing typed event constants `python_to_beam_request_failed` and `beam_to_python_request_failed` (PR #408) live in `audit.coordination_events`. That table's CHECK constraint (`event_type ~ '^(coordination_failure)(\.[a-z_]+)+$'`) locks `event_type` to *failure* events. Informational latency lives in a parallel channel.
 
 ### 6.1 New table for informational measurements
 
@@ -243,27 +252,27 @@ CREATE TABLE audit.coordination_measurements (
 ) PARTITION BY RANGE (ts);
 ```
 
-Same partition strategy + indexes as `audit.coordination_events`. Different CHECK on `event_type` admits measurement-namespace events.
+**Retention:** monthly partitions; rolling 90-day retention. Older partitions detached and dropped by `scripts/ops/wave-0-partition-roll.sh` (cron daily at 02:00). The partition-roll script is part of prereq PR #6.
 
 ### 6.2 Failure call-sites (existing channel, `audit.coordination_events`)
 
 Wave 3 wires `coordination_failure.beam_python_boundary.*` emissions at:
 - BEAM handler-dispatch ↔ Python MCP transport: `python_to_beam_request_failed` / `beam_to_python_request_failed` on non-2xx.
 - BEAM identity middleware → Python `governance_core/` math: `beam_to_python_request_failed` on Port/HTTP failure.
-- BEAM dialectic GenServer → Python `/v1/dialectic/compute`: `beam_to_python_request_failed` on synthesize/select_reviewer/compare_timeout failure.
+- BEAM dialectic GenServer → Python `/v1/dialectic/compute`: `beam_to_python_request_failed` on synthesize/select_reviewer failure.
 - BEAM handler-dispatch → Python LLM SDK paths: both directions.
-
-Plus `coordination_failure.redis_pubsub_lag` event_type (lands in prereq PR #2 with the WAVE_0_EVENT_TYPES update) emitted when the optional pub-sub layer (§10) lags >60s.
+- Python MCP transport during cutover: `coordination_failure.governance_mcp.cutover_503_rate_breach` when sliding-window 503 rate exceeds 1% per §3.2.
+- BEAM-vs-PG divergence detector (§10.4): `coordination_failure.beam_python_boundary.ets_pg_divergence` on slow reconciliation finding mismatch.
 
 ### 6.3 Measurement call-sites (new channel, `audit.coordination_measurements`)
 
-- Lease-plane Python client emits `measurement.lease_plane.request` on every request to `127.0.0.1:8788`, payload `{endpoint, method, status_code, elapsed_ms}`. Prereq PR #6's primary deliverable; runs ≥14 days before disconfirmer (B) thresholds can be set.
-- Wave 3 BEAM handler-dispatch emits `measurement.beam_python_boundary.request` on every successful boundary call (failures stay in `coordination_failure.*`), payload `{endpoint, method, elapsed_ms, payload_bytes}`.
-- Marshalled context-payload bytes-per-request (Surface A in §3) is included in the payload above; enters disconfirmer (B) via the §6.5 dashboard.
+- Lease-plane Python client emits `measurement.lease_plane.request` on every request to `127.0.0.1:8788`, payload `{endpoint, method, status_code, elapsed_ms}`. Prereq PR #6 primary deliverable; runs ≥14 days before disconfirmer (B) thresholds can be set.
+- Wave 3 BEAM handler-dispatch emits `measurement.beam_python_boundary.request` on every successful boundary call, payload `{endpoint, method, elapsed_ms, payload_bytes}`.
+- Python MCP transport during cutover emits `measurement.governance_mcp.503_emission` on every 503 it returns, payload `{request_path, error_reason}` — input to §3.2's halt aggregator.
 
 ### 6.4 Emission helper (enforcement)
 
-`governance_core/coordination_events_helpers.py::make_boundary_payload(endpoint, method, error_class, status_code, elapsed_ms) -> dict` raises `ValueError` on None/empty/missing `error_class`. All `coordination_failure.beam_python_boundary.*` emissions MUST go through this helper. New helper `make_measurement_payload(endpoint, method, status_code, elapsed_ms, payload_bytes) -> dict` for the measurement channel. Direct dict construction is prohibited; CI lint (grep for event_type constants in non-helper code) fails the PR. Same pattern applies to BEAM emissions (Elixir-side helper module).
+`governance_core/coordination_events_helpers.py::make_boundary_payload(endpoint, method, error_class, status_code, elapsed_ms) -> dict` raises `ValueError` on None/empty/missing `error_class`. All `coordination_failure.beam_python_boundary.*` emissions MUST go through this helper. Sibling helper `make_measurement_payload(endpoint, method, status_code, elapsed_ms, payload_bytes) -> dict` for the measurement channel. Direct dict construction is prohibited; CI lint at `scripts/dev/check-boundary-event-helpers.sh` greps for the event_type constants outside the helper modules and fails the PR. Same pattern applies to BEAM emissions (Elixir-side helper module).
 
 ### 6.5 Wave 0 query
 
@@ -287,7 +296,7 @@ Python MCP transport (marshal response)
 MCP response
 ```
 
-Per-call: up to 4 boundary crossings worst-case (dialectic-touching + governance_core math), 2 best-case (no dialectic + no math). Disconfirmer (B) budget at 4× per-crossing cost is correctly worst-case-anchored. The disconfirmer (B) budget MUST be set against measured-not-estimated per-crossing cost from lease-plane Phase A baseline per disconfirmer (B)'s measurement source.
+Per-call: up to 4 boundary crossings worst-case (dialectic-touching + governance_core math), 2 best-case (no dialectic + no math). Disconfirmer (B) budget at 4× per-crossing cost is correctly worst-case-anchored.
 
 ---
 
@@ -296,7 +305,7 @@ Per-call: up to 4 boundary crossings worst-case (dialectic-touching + governance
 ### 7.1 Acceptance test classes
 
 - **(a) Python suite.** All ~8400+ tests in `tests/`. Pre-cutover gate: full green.
-- **(b) ExUnit suite.** New `elixir/handler_dispatch/test/`. Tests: fixture MCP request → BEAM dispatch → Python handler invoked with correctly-marshalled args; identity middleware fixture (process_agent_update with `parent_agent_id`) → asserts lineage write to PG with shape matching `src/mcp_handlers/middleware/identity_step.py`; dialectic GenServer fixture (create → join → quorum → resolve) → asserts same `audit.coordination_events` row sequence.
+- **(b) ExUnit suite.** New `elixir/handler_dispatch/test/`. Tests: fixture MCP request → BEAM dispatch → Python handler invoked with correctly-marshalled args; identity middleware fixture (process_agent_update with `parent_agent_id`) → asserts lineage write to PG matches `src/mcp_handlers/middleware/identity_step.py`; dialectic GenServer fixture (create → join → quorum → resolve) → asserts same `audit.coordination_events` row sequence; ETS-cache invariants (BaselineWriter and FeatureFlagWriter): single-writer GenServer is the only path that mutates ETS, reads under read_concurrency are lock-free, slow reconciliation detects PG-vs-ETS divergence.
 - **(c) Cross-runtime integration.** New `tests/integration/test_wave_3_boundary.py` drives full pipeline; asserts response shape matches pre-Wave-3 Python-only path under §7.2 byte-equivalence definition.
 - **(d) Behavioral parity.** Operator-led; existing Watcher / Sentinel / SDK clients hit governance MCP with no behavioral diff.
 
@@ -320,105 +329,105 @@ During cutover (BEAM running but pre-canary-100%), failure of any test class hal
 
 ## §8 Shadow-divergence design
 
-Surface D (PG canonical identity) writes to **two coupled tables** on PATH 3 fresh mint: `core.identities` AND `core.agents`. Wave 3 BEAM shadows both during the shadow window.
+Surface D writes to two coupled tables on PATH 3 fresh mint: `core.identities` AND `core.agents`. Wave 3 BEAM shadows both during the shadow window.
 
 ### 8.1 DDL
 
 Prereq PR #1 ships:
 
 ```sql
--- Mirrors core.identities exactly + shadow_write_at
 CREATE TABLE core.identities_shadow (
     LIKE core.identities INCLUDING ALL,
     shadow_write_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Mirrors core.agents exactly + shadow_write_at
 CREATE TABLE core.agents_shadow (
     LIKE core.agents INCLUDING ALL,
     shadow_write_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
-`LIKE … INCLUDING ALL` pulls indexes, defaults, generated columns (e.g. `core.identities.metadata_tsv`), constraints. Schema drift on `core.identities` or `core.agents` would require either re-running `LIKE` or a paired migration; prereq PR #1 includes `db/postgres/schema_drift_check.sh` that fails CI if either table's shape changes without a corresponding shadow update.
+`LIKE … INCLUDING ALL` pulls indexes, defaults, generated columns (e.g. `core.identities.metadata_tsv`), constraints. **FK note:** `INCLUDING ALL` does NOT include foreign-key constraints in PostgreSQL. The shadow tables have no FKs by default. Decision: leave FKs off the shadow tables — they are write-only audit replicas, not referential targets, and FKs would impose ordering constraints on the shadow writer that the comparator doesn't need. The decision is documented inline in the migration with a comment.
 
-### 8.2 Comparator (full outer join, both tables, three divergence kinds)
+Schema drift on `core.identities` or `core.agents` would require either re-running `LIKE` or a paired migration; prereq PR #1 includes `db/postgres/schema_drift_check.sh` that fails CI if either table's shape changes without a corresponding shadow update.
+
+### 8.2 Comparator (full outer join, all live columns, three divergence kinds)
 
 Prereq PR #1 ships `scripts/ops/wave-3-shadow-divergence-check.sql`:
 
 ```sql
--- core.identities divergence (FULL OUTER JOIN catches missing rows on either side)
+-- core.identities divergence
 WITH ident_compare AS (
     SELECT
-        COALESCE(c.agent_id, s.agent_id)                       AS agent_id,
-        c.agent_id IS NULL                                      AS canonical_missing,
-        s.agent_id IS NULL                                      AS shadow_missing,
-        (c.api_key_hash    IS DISTINCT FROM s.api_key_hash)     AS api_key_hash_diff,
-        (c.status          IS DISTINCT FROM s.status)           AS status_diff,
-        (c.parent_agent_id IS DISTINCT FROM s.parent_agent_id)  AS parent_agent_id_diff,
-        (c.spawn_reason    IS DISTINCT FROM s.spawn_reason)     AS spawn_reason_diff,
-        (c.metadata        IS DISTINCT FROM s.metadata)         AS metadata_diff,
-        (c.provisional_lineage IS DISTINCT FROM s.provisional_lineage) AS provisional_diff,
-        (c.confirmed_at    IS DISTINCT FROM s.confirmed_at)     AS confirmed_diff,
-        (c.lineage_archived_at IS DISTINCT FROM s.lineage_archived_at) AS lineage_archived_diff
+        COALESCE(c.agent_id, s.agent_id)                              AS agent_id,
+        c.agent_id IS NULL                                             AS canonical_missing,
+        s.agent_id IS NULL                                             AS shadow_missing,
+        (c.api_key_hash             IS DISTINCT FROM s.api_key_hash)             AS api_key_hash_diff,
+        (c.status                   IS DISTINCT FROM s.status)                   AS status_diff,
+        (c.parent_agent_id          IS DISTINCT FROM s.parent_agent_id)          AS parent_agent_id_diff,
+        (c.spawn_reason             IS DISTINCT FROM s.spawn_reason)             AS spawn_reason_diff,
+        (c.metadata                 IS DISTINCT FROM s.metadata)                 AS metadata_diff,
+        (c.provisional_lineage      IS DISTINCT FROM s.provisional_lineage)      AS provisional_diff,
+        (c.provisional_recorded_at  IS DISTINCT FROM s.provisional_recorded_at)  AS provisional_recorded_diff,
+        (c.confirmed_at             IS DISTINCT FROM s.confirmed_at)             AS confirmed_diff,
+        (c.lineage_archived_at      IS DISTINCT FROM s.lineage_archived_at)      AS lineage_archived_diff
     FROM core.identities c
     FULL OUTER JOIN core.identities_shadow s USING (agent_id)
 )
 SELECT 'identities' AS table_name, agent_id, canonical_missing, shadow_missing,
        api_key_hash_diff, status_diff, parent_agent_id_diff, spawn_reason_diff,
-       metadata_diff, provisional_diff, confirmed_diff, lineage_archived_diff
+       metadata_diff, provisional_diff, provisional_recorded_diff, confirmed_diff, lineage_archived_diff
 FROM ident_compare
 WHERE canonical_missing OR shadow_missing
    OR api_key_hash_diff OR status_diff OR parent_agent_id_diff
-   OR spawn_reason_diff OR metadata_diff OR provisional_diff
+   OR spawn_reason_diff OR metadata_diff OR provisional_diff OR provisional_recorded_diff
    OR confirmed_diff OR lineage_archived_diff;
 
--- core.agents divergence (separate query, joined by id)
+-- core.agents divergence
 WITH agent_compare AS (
     SELECT
-        COALESCE(c.id, s.id)                                    AS agent_id,
-        c.id IS NULL                                             AS canonical_missing,
-        s.id IS NULL                                             AS shadow_missing,
-        (c.api_key         IS DISTINCT FROM s.api_key)          AS api_key_diff,
-        (c.status          IS DISTINCT FROM s.status)           AS status_diff,
-        (c.parent_agent_id IS DISTINCT FROM s.parent_agent_id)  AS parent_agent_id_diff,
-        (c.label           IS DISTINCT FROM s.label)            AS label_diff,
-        (c.spawn_reason    IS DISTINCT FROM s.spawn_reason)     AS spawn_reason_diff,
-        (c.thread_id       IS DISTINCT FROM s.thread_id)        AS thread_id_diff,
-        (c.thread_position IS DISTINCT FROM s.thread_position)  AS thread_position_diff
+        COALESCE(c.id, s.id)                                          AS agent_id,
+        c.id IS NULL                                                   AS canonical_missing,
+        s.id IS NULL                                                   AS shadow_missing,
+        (c.api_key                  IS DISTINCT FROM s.api_key)                  AS api_key_diff,
+        (c.status                   IS DISTINCT FROM s.status)                   AS status_diff,
+        (c.parent_agent_id          IS DISTINCT FROM s.parent_agent_id)          AS parent_agent_id_diff,
+        (c.label                    IS DISTINCT FROM s.label)                    AS label_diff,
+        (c.purpose                  IS DISTINCT FROM s.purpose)                  AS purpose_diff,
+        (c.notes                    IS DISTINCT FROM s.notes)                    AS notes_diff,
+        (c.tags                     IS DISTINCT FROM s.tags)                     AS tags_diff,
+        (c.archived_at              IS DISTINCT FROM s.archived_at)              AS archived_at_diff,
+        (c.spawn_reason             IS DISTINCT FROM s.spawn_reason)             AS spawn_reason_diff,
+        (c.thread_id                IS DISTINCT FROM s.thread_id)                AS thread_id_diff,
+        (c.thread_position          IS DISTINCT FROM s.thread_position)          AS thread_position_diff
     FROM core.agents c
     FULL OUTER JOIN core.agents_shadow s USING (id)
 )
 SELECT 'agents' AS table_name, agent_id, canonical_missing, shadow_missing,
-       api_key_diff, status_diff, parent_agent_id_diff, label_diff,
-       spawn_reason_diff, thread_id_diff, thread_position_diff
+       api_key_diff, status_diff, parent_agent_id_diff, label_diff, purpose_diff,
+       notes_diff, tags_diff, archived_at_diff, spawn_reason_diff, thread_id_diff, thread_position_diff
 FROM agent_compare
 WHERE canonical_missing OR shadow_missing
-   OR api_key_diff OR status_diff OR parent_agent_id_diff
-   OR label_diff OR spawn_reason_diff OR thread_id_diff OR thread_position_diff;
+   OR api_key_diff OR status_diff OR parent_agent_id_diff OR label_diff
+   OR purpose_diff OR notes_diff OR tags_diff OR archived_at_diff
+   OR spawn_reason_diff OR thread_id_diff OR thread_position_diff;
 ```
 
-`shadow_write_at` is excluded (expected to differ). The query categorizes every divergent row as **canonical_missing** (BEAM wrote, Python didn't), **shadow_missing** (Python wrote, BEAM didn't), or **value_mismatch** (both wrote, values differ). Each non-empty row emits one `coordination_failure.beam_python_boundary.shadow_divergence` event with payload `{table_name, agent_id, kind: "canonical_missing"|"shadow_missing"|"value_mismatch", divergent_columns: [list]}`.
+Each non-empty row emits one `coordination_failure.beam_python_boundary.shadow_divergence` event with payload `{table_name, agent_id, kind, divergent_columns}`.
 
 Hourly trigger via `scripts/ops/com.unitares.wave3-shadow-divergence-check.plist` (launchctl).
 
 ### 8.3 Load amplification before 7-day clock
 
-Prereq PR #1 also ships `scripts/ops/wave3-shadow-replay.sh`: replays captured production traffic at 2× rate against the shadow path. **The 7-day-zero-divergence clock starts AFTER replay completes with zero events.** No clock-start before replay; no clock-restart on replay alone (it's a precondition, not a refresh).
+Prereq PR #1 also ships `scripts/ops/wave3-shadow-replay.sh`: replays captured production traffic at 2× rate against the shadow path. **The 7-day-zero-divergence clock starts AFTER replay completes with zero events.**
 
 ### 8.4 Event type registration
 
-`src/coordination_events.py` adds:
-```python
-COORDINATION_FAILURE_BEAM_PYTHON_BOUNDARY_SHADOW_DIVERGENCE = "coordination_failure.beam_python_boundary.shadow_divergence"
-```
-and adds it to `WAVE_0_EVENT_TYPES`. `tests/test_coordination_events.py::test_event_type_constants_match_documented_set` is updated.
+`src/coordination_events.py` adds `COORDINATION_FAILURE_BEAM_PYTHON_BOUNDARY_SHADOW_DIVERGENCE` and `COORDINATION_FAILURE_BEAM_PYTHON_BOUNDARY_ETS_PG_DIVERGENCE`, plus `COORDINATION_FAILURE_GOVERNANCE_MCP_CUTOVER_503_RATE_BREACH`, all into `WAVE_0_EVENT_TYPES`. `tests/test_coordination_events.py::test_event_type_constants_match_documented_set` is updated.
 
 ---
 
 ## §9 Crash-safe saga state machine
-
-The session-resolution saga atomically applies a SYNTHESIS→RESOLVED transition across two agent GenServers + PG. v0.1.x's three-state machine (`reserved` → `applied` → `committed`) couldn't distinguish "PG committed but agents unaware of commit" from "agents applied but PG uncommitted" on crash-restart. v0.2 expands the state machine with a per-agent intermediate state and explicit recovery rules.
 
 ### 9.1 DDL
 
@@ -451,38 +460,43 @@ CREATE TABLE coordination.session_resolution_sagas (
     UNIQUE (session_id, resolution_payload_hash)
 );
 
+-- Prevent two pending sagas per session even when payload hashes differ.
+CREATE UNIQUE INDEX idx_saga_one_pending_per_session
+    ON coordination.session_resolution_sagas (session_id)
+    WHERE state IN ('reserved', 'paused_agent_applied', 'both_agents_applied', 'reverting');
+
 CREATE INDEX idx_saga_inflight ON coordination.session_resolution_sagas (state, last_attempt_at)
     WHERE state IN ('reserved', 'paused_agent_applied', 'both_agents_applied', 'reverting');
 CREATE INDEX idx_saga_session ON coordination.session_resolution_sagas (session_id);
 ```
 
-`session_id TEXT` matches live `core.dialectic_sessions.session_id` (verified live schema). `paused_agent_id` / `reviewer_agent_id` TEXT matches live shape.
+The partial unique index `idx_saga_one_pending_per_session` is the v0.3 addition (code-reviewer item 2). It enforces the invariant "at most one pending saga per session" at the DB layer; a second-saga INSERT for the same session while one is still pending now fails with a unique-constraint violation, which the session GenServer treats as a retryable conflict (ack the call without writing, await the existing saga's terminal state).
 
 ### 9.2 Forward path
 
-1. **Reserve.** Session GenServer INSERTs saga row with `state='reserved'`. Issues `GenServer.call(:reserve_for_session_resolution, {session_id, saga_id})` to both agent GenServers. Idempotent on `(session_id, saga_id)`.
-2. **Apply paused agent.** Both agents ACK reservation → session GenServer issues `GenServer.call(:apply_resolution, {session_id, saga_id, payload, hash})` to **paused agent first**. On ACK, UPDATE saga `state='paused_agent_applied', paused_agent_ack_at=now()`. Idempotent on `(session_id, hash)`.
-3. **Apply reviewer agent.** Session GenServer issues same call to reviewer. On ACK, UPDATE saga `state='both_agents_applied', reviewer_agent_ack_at=now()`.
-4. **PG commit.** Session GenServer commits `pg_resolve_session` AND UPDATEs saga to `state='pg_committed', pg_committed_at=now()` in a **single PG transaction**. Both row writes are part of the same `BEGIN/COMMIT`.
+1. **Reserve.** Session GenServer INSERTs saga row with `state='reserved'`. Issues `GenServer.call(:reserve_for_session_resolution, {session_id, saga_id})` to both agent GenServers.
+2. **Apply paused agent.** Both ACK reservation → session GenServer issues `GenServer.call(:apply_resolution, {session_id, saga_id, payload, hash})` to **paused agent first**. On ACK, UPDATE `state='paused_agent_applied'`.
+3. **Apply reviewer agent.** Session GenServer issues same call to reviewer. On ACK, UPDATE `state='both_agents_applied'`.
+4. **PG commit.** Session GenServer commits `pg_resolve_session` AND UPDATEs saga to `state='pg_committed'` in a **single PG transaction**.
 
-The two-step apply (paused-first, then reviewer) gives crash recovery a deterministic ordering — `paused_agent_applied` means exactly "paused has applied, reviewer has not yet been asked."
+The two-step apply gives crash recovery a deterministic ordering — `paused_agent_applied` means exactly "paused has applied, reviewer has not yet been asked."
 
 ### 9.3 Crash recovery rules
 
-Session GenServer init reads any pending saga rows for its `session_id`:
+Session GenServer init reads any pending saga row for its `session_id` (the partial unique index guarantees at most one):
 
-| Saga state on init | Crash interpretation | Recovery action |
-|---------------------|----------------------|------------------|
-| `reserved` | Reservation may or may not be live in either agent | Query each agent: `:has_reservation`. If neither has it → UPDATE `state='reverting'`, drop via 9.4. If at least one has it → UPDATE `state='reverting'`, issue compensating revert to all reservation-holders, then 9.4 |
-| `paused_agent_applied` | Paused agent applied; reviewer not yet asked; PG uncommitted | Query reviewer: `:has_reservation`. If yes → resume forward at step 3. If no → revert paused agent + drop via 9.4 |
-| `both_agents_applied` | Both agents applied; PG uncommitted (crash between agent ACK and PG transaction) | Query each agent: `:has_applied`. If both still applied → re-issue PG commit at step 4 (idempotent at PG layer via the saga UNIQUE constraint + `ON CONFLICT (session_id) DO NOTHING` on the resolution INSERT). If either lost it → enter compensating-revert path (9.4) |
-| `pg_committed` | PG row committed, but session GenServer might not have issued a final commit-confirmation message to agents | Re-issue `GenServer.cast(:commit_acknowledged, {session_id, saga_id})` to both agents (idempotent — agents transition `applied → committed` and discard saga state). No new PG write |
-| `reverting` | Compensating reverts in progress; crash mid-revert | Re-issue `:revert_reservation` and `:revert_apply` to both agents (idempotent: revert-of-non-existent is a no-op ACK). On both ACK → UPDATE `state='reverted', reverted_at=now()` |
-| `reverted` | Terminal | No action; row retained for audit |
+| Saga state on init | Recovery action |
+|---------------------|------------------|
+| `reserved` | Query each agent: `:has_reservation`. If neither → UPDATE `state='reverting'`, drop via 9.4. If at least one → UPDATE `state='reverting'`, issue compensating revert, then 9.4 |
+| `paused_agent_applied` | Query reviewer: `:has_reservation`. If yes → resume forward at step 3. If no → revert paused agent + drop via 9.4 |
+| `both_agents_applied` | Query each agent: `:has_applied`. If both → re-issue PG commit at step 4 (idempotent at PG layer). If either lost it (clean restart cleared in-memory) → compensating-revert path 9.4 |
+| `pg_committed` | Re-issue `GenServer.cast(:commit_acknowledged, ...)` to both agents (idempotent — agents transition `applied → committed` and discard saga state). No new PG write |
+| `reverting` | Re-issue `:revert_reservation` and `:revert_apply` to both agents. On both ACK → UPDATE `state='reverted'` |
+| `reverted` | Terminal; no action |
 
 ### 9.4 Drop / revert path
 
-Compensating revert when forward progress is unsafe: session GenServer issues `GenServer.call(:revert_reservation, {session_id, saga_id})` and (if the saga reached an `applied` state on either agent) `GenServer.call(:revert_apply, {session_id, saga_id})`. Both idempotent. On both ACK, UPDATE `state='reverted'`.
+Compensating revert when forward progress is unsafe: session GenServer issues `GenServer.call(:revert_reservation, {session_id, saga_id})` and (if applicable) `GenServer.call(:revert_apply, {session_id, saga_id})`. Both idempotent. On both ACK, UPDATE `state='reverted'`.
 
 ### 9.5 Phantom-read mitigation
 
@@ -496,51 +510,87 @@ SELECT NOT EXISTS (
 ) AS is_stable;
 ```
 
-Observers that can't accept stale-with-rollback semantics call this gate; observers that can (dashboard read paths) may proceed and re-read on the next polling cycle. **Wave 3 stop sign #8:** any observer surfacing stale `is_stable=true` reads during a `paused_agent_applied` window without checking the gate halts canary advance.
+Observers that can't accept stale-with-rollback semantics call this gate; observers that can (dashboard read paths) may proceed and re-read on the next polling cycle. **Stop sign #8** halts canary if any observer surfaces stale `is_stable=true` reads during a non-terminal saga window.
+
+### 9.6 Cross-session deadlock risk
+
+Two concurrent sagas could in principle each hold `GenServer.call`s targeting the same agent (paused agent in session A, reviewer in session B simultaneously). `is_agent_in_active_session` (`reviewer.py:121-200`) prevents this at session creation but does not prove invariant during the saga's call window. **Stop sign #10** (new in v0.3) halts canary if the cross-session-shared-agent invariant is detected as violated during canary observation.
 
 ---
 
-## §10 Durable cache coherence
+## §10 Cache coherence via BEAM-native ETS
 
-v0.1.x's cache invalidation relied on fire-and-forget Redis pub-sub. Lossy pub-sub plus subscriber reconnect = silent divergence. v0.2 grounds cache coherence in **PG-versioned data** with a **bounded reconciliation loop**; pub-sub is an optimization layer, not the invariant.
+v0.2's design used PG-versioned baselines and feature flags with bounded reconciliation; the per-observe PG read added sustained PG load to the substrate Wave 3 exists to relieve. v0.3 moves the canonical live cache into BEAM-native ETS — lock-free in-memory storage with microsecond reads — and uses PG only as durable backing storage written transactionally on writes.
 
-### 10.1 Versioned baselines
+### 10.1 ETS canonical-live, PG durable-canonical
 
-Prereq PR #8 adds:
+Two named ETS tables, each owned by a single GenServer that is the only writer:
 
-```sql
-ALTER TABLE core.agent_behavioral_baselines
-    ADD COLUMN version BIGINT NOT NULL DEFAULT 0;
+```elixir
+# In Unitares.HandlerDispatch.BaselineWriter.start_link/0:
+:ets.new(:agent_baselines, [:set, :public, :named_table, read_concurrency: true])
 
-CREATE INDEX idx_agent_behavioral_baselines_agent_version
-    ON core.agent_behavioral_baselines (agent_id, version DESC);
+# In Unitares.HandlerDispatch.FeatureFlagWriter.start_link/0:
+:ets.new(:feature_flags, [:set, :public, :named_table, read_concurrency: true])
 ```
 
-Every baseline write increments `version` in the same PG transaction:
+`:public` allows any BEAM process to read directly; `read_concurrency: true` optimizes for many-readers / few-writers workloads. The `:set` type guarantees one entry per key (agent_id for baselines, flag-key for flag values).
 
-```sql
-INSERT INTO core.agent_behavioral_baselines (agent_id, ..., version)
-VALUES ($1, ..., COALESCE((SELECT MAX(version) FROM core.agent_behavioral_baselines WHERE agent_id = $1), 0) + 1)
-ON CONFLICT (agent_id) DO UPDATE
-    SET ... = EXCLUDED. ...,
-        version = core.agent_behavioral_baselines.version + 1;
+**Read path (any BEAM handler):**
+```elixir
+case :ets.lookup(:agent_baselines, agent_id) do
+  [{^agent_id, baseline}] -> baseline
+  [] -> nil  # cold; trigger BaselineWriter.warm/1 for this agent
+end
 ```
+O(1), lock-free, no PG round-trip. Microsecond latency.
 
-Cached readers (BEAM GenServer state, Python `_baseline_cache`) hold `(agent_id, version, baseline)` tuples.
+**Write path (single GenServer):**
+```elixir
+def handle_call({:write, agent_id, baseline}, _from, state) do
+  # 1. Durable canonical write (transactional)
+  case Postgrex.transaction(state.repo, fn conn ->
+    Postgrex.query!(conn, "INSERT INTO core.agent_behavioral_baselines (agent_id, stats) VALUES ($1, $2) ON CONFLICT (agent_id) DO UPDATE SET stats = EXCLUDED.stats, updated_at = now()", [agent_id, baseline])
+  end) do
+    {:ok, _} ->
+      :ets.insert(:agent_baselines, {agent_id, baseline})
+      {:reply, :ok, state}
+    {:error, reason} ->
+      # PG write failed; ETS not updated; caller retries or surfaces.
+      {:reply, {:error, reason}, state}
+  end
+end
+```
+PG-write-then-ETS-update means readers never see a value not yet in PG; if PG fails, ETS is unchanged. Single-writer GenServer means no race within a runtime.
 
-### 10.2 Coherence rules
+### 10.2 Initial population and BEAM restart
 
-**On observe (per-agent path):** before using cached baseline for an agent, the cache reader checks `SELECT version FROM core.agent_behavioral_baselines WHERE agent_id = $1`. If returned version > cached → fetch fresh + update cache. The version-check query is cheap (indexed); single round-trip.
+On BEAM application boot, BaselineWriter and FeatureFlagWriter each run a single bulk SELECT to populate ETS:
+```elixir
+# BaselineWriter.init/1:
+rows = Postgrex.query!(repo, "SELECT agent_id, stats FROM core.agent_behavioral_baselines", [])
+Enum.each(rows, fn [agent_id, stats] -> :ets.insert(:agent_baselines, {agent_id, stats}) end)
+```
+One-shot at startup; bounded by N agents (small for unitares-scale). Subsequent reads are ETS-only until the writer GenServer mutates.
 
-**Acceptable optimization:** version-check can be batched/skipped for ≤30 seconds since the last successful check for that agent. After 30s, the next observe forces the version check. This bounds staleness to 30s.
+### 10.3 Slow reconciliation (PG → ETS divergence detector)
 
-**Bounded reconciliation (the actual invariant):** a periodic task (BEAM GenServer or Python background task — both runtimes do it) every 60s SELECTs `(agent_id, version)` pairs for all currently-cached agents and refreshes any that have advanced. This is the safety net: if pub-sub is down, if version-check-on-observe is skipped, if a subscriber reconnects mid-window — the reconciliation loop catches it within the next 60s.
+A scheduled job runs every 5 minutes inside the writer GenServer (`Process.send_after(self(), :reconcile, 300_000)`) and SELECTs all `(agent_id, stats)` pairs from PG, comparing against ETS. If any mismatch is found, the writer:
+1. Emits `coordination_failure.beam_python_boundary.ets_pg_divergence` with payload `{key, ets_value_hash, pg_value_hash}`.
+2. Updates ETS to match PG (PG is authoritative).
+3. Logs and continues.
 
-### 10.3 Pub-sub as optimization layer
+**Why slow cadence:** ETS-vs-PG divergence should never happen in steady state, because the only writer to PG for these tables is the writer GenServer itself. A divergence means either (a) an out-of-band PG write (e.g., operator running SQL by hand, or a stale Python writer that survived cutover), or (b) an ETS corruption (rare). Both are operator-investigable events, not steady-state coordination. 5 minutes is the staleness ceiling, not the steady-state correctness mechanism.
 
-Optional Redis pub-sub stays as a latency optimization, **never as source of truth**. After a successful baseline write, the writer publishes `governance:baseline:invalidate` with payload `{agent_id, written_at, source, new_version}`. Subscribers receiving the message can immediately invalidate the cached entry without waiting for the next observe / reconciliation tick. If a message is missed, dropped, or arrives out of order: bounded by 10.2's 60s reconciliation. A `coordination_failure.redis_pubsub_lag` event fires if observed pub-sub lag exceeds 60s for ≥2 consecutive reconciliation cycles (this is structural — it means reconciliation is doing all the work, optimization is dead, operator should investigate).
+**Stop sign #11** (new in v0.3): if the reconciliation detector fires more than 3× in a 24h window, halt and investigate. A repeating divergence indicates an unknown writer.
 
-### 10.4 Feature flags (was Surface H)
+### 10.4 Python-side reads during transition
+
+Python compute paths (governance_core math, LLM SDK paths) are called from BEAM with the request payload — they don't read the cache directly. BEAM reads ETS, includes the value in the boundary call payload, Python receives it.
+
+For Python paths that historically read `_baseline_cache` directly from `governance_core/ethical_drift.py:418` (`phases.py:809-820, 856-899`): these paths are part of the Wave 3 surface that ports to BEAM. After cutover, the Python reads do not exist (the surface is on BEAM). During the dual-write window, Python keeps using its in-process `_baseline_cache` and writes to PG; BEAM reads PG, populates ETS on first observe, then reads ETS thereafter. PG remains the rendezvous between runtimes during the window.
+
+### 10.5 Feature flags
 
 Same pattern, applied to identity honesty mode (`identity_strict_mode`, `ipua_pin_check_mode`):
 
@@ -548,7 +598,6 @@ Same pattern, applied to identity honesty mode (`identity_strict_mode`, `ipua_pi
 CREATE TABLE core.feature_flags (
     key         TEXT PRIMARY KEY,
     value       TEXT NOT NULL,
-    version     BIGINT NOT NULL DEFAULT 1,
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_by  TEXT
 );
@@ -558,13 +607,28 @@ INSERT INTO core.feature_flags (key, value) VALUES
     ('ipua_pin_check_mode',  'enforced');
 ```
 
-Both runtimes read flag value on startup, cache locally per-process. Version-check on every read is cheap; bounded reconciliation every 60s; pub-sub `governance:feature_flag:invalidate` is optimization. On Redis-down: read directly from PG; on PG-down: last-known-good cached value with a `coordination_failure.feature_flag_db_unavailable` event. Bootstrap: env var as default before first PG read succeeds; once PG reachable, env var becomes init-only.
+**No version column needed** — ETS holds the live value; PG is the durable canonical written on every flag mutation. Concurrent-safe write via `UPDATE core.feature_flags SET value = $1, updated_at = now(), updated_by = $2 WHERE key = $3`. The single-writer GenServer (FeatureFlagWriter) serializes flag mutations in BEAM; the UPDATE is atomic at PG layer for the single-row case.
 
-This explicitly rejects v0.1.x's "Redis is the runtime-mutable source of truth" framing — Redis being down should not lose feature-flag state, and pub-sub being lossy should not silently desynchronize the two runtimes.
+Boot: `SELECT key, value FROM core.feature_flags` populates ETS.
 
-### 10.5 Two independent caches: still rejected
+Read: `:ets.lookup(:feature_flags, key)`. Microsecond.
 
-v0.1's "two independent caches accepted" posture stays rejected. Both Python's `_baseline_cache` and BEAM's GenServer-state cache converge on PG via version-check + reconciliation. Cost: ~one extra PG version-check query per agent per 30 seconds (heavily indexed; trivial). This is the price to avoid the substrate-tax pattern recurring at the cache layer.
+Python compute paths receive the flag value as request payload from BEAM (BEAM checks the flag at handler entry and includes the relevant flag values in the boundary call).
+
+Reconciliation: every 5 minutes, same pattern as §10.3.
+
+### 10.6 What this design eliminates
+
+- **Per-observe PG read.** Eliminated. Reads are ETS only.
+- **Pub-sub lossiness.** Eliminated. No pub-sub layer; ETS is the in-runtime broadcast (any BEAM process reads the writer's update on next access).
+- **Cross-runtime cache divergence in steady state.** Eliminated post-Wave-3 (BEAM is the sole reader/writer for these surfaces; Python paths don't exist).
+- **Lost-update bugs.** Eliminated. Single-writer GenServer per ETS table.
+
+### 10.7 What this design accepts
+
+- **5-minute staleness ceiling** if an out-of-band PG write happens. Acceptable — operator-investigable, not steady-state.
+- **BEAM-only access** to the live cache. Python reads via boundary call (already the topology). No Python ETS-equivalent maintained.
+- **One-shot bulk SELECT at BEAM startup.** Cost: bounded by agent count; negligible at unitares scale; happens at boot, not per request.
 
 ---
 
@@ -573,15 +637,15 @@ v0.1's "two independent caches accepted" posture stays rejected. Both Python's `
 Each criterion names its measurement source. If any source is missing at gate, gate halts (no fallback default).
 
 1. **Wave 2 has closed.** Per Wave 2 handoff 2026-05-08; satisfied.
-2. **21-day production traffic on BEAM.** Handler dispatch on BEAM has served production governance MCP traffic for ≥21 days continuous. Source: Wave 0 dashboard.
+2. **21-day production traffic on BEAM.** Handler dispatch on BEAM has served production governance MCP traffic for ≥21 days continuous.
 3. **Zero coordination-class incidents.** `audit.coordination_events` filtered to `coordination_failure.beam_python_boundary.*` shows zero incidents over the 21-day window AND no new substrate-tax pattern at the Python-handler-body boundary.
-4. **(A.1 / ODE-floor gate)** ODE profile lands BEFORE Wave 3 implementation starts; result shows <60% of `process_agent_update` p99 floor in `governance_core/` math. Failure → halt and roadmap re-opens. Source: prereq PR #1.
-5. **(B / boundary-cost gate)** `audit.coordination_measurements` filtered to `measurement.beam_python_boundary.*` shows p50 < lease-plane Phase A measured p50 × 2 AND p99 < lease-plane Phase A measured p99 × 3 over 21-day window. Sustained breach halts. Source: prereq PR #6 (must produce ≥14 days of data before thresholds can be set).
-6. **(A.2 / in-place-fix gate)** if any Python in-place fix shipped during implementation window brought `process_agent_update` p99 below 2.0s, **gate fires pre-canary-100%**. No "operator decides post-shipment" escape hatch.
-7. **(D / MCP SDK gate)** hands-on spike on `mcp_elixir_sdk` 1.0.1 OR `hermes_mcp` 0.14.1 recorded in `docs/handoffs/wave-3-mcp-sdk-spike-<date>.md` before implementation gate; result not "production-disqualifying."
-8. **(E / state-ownership gate)** §3 surface-by-surface analysis at gate finds no irreducible per-request semantics beyond the eight surfaces.
-9. **(F / opportunity cost gate)** operator's `docs/proposals/wave-3-go-decision-<date>.md` includes §"Calendar reasoning" naming current slip vs original target on each of {paper, fellowship, HLH, R2 Phase 2}; no item slips >25% of original deadline window OR slip is explicitly accepted.
-10. **(G / dialectic-quality gate)** session-resolution rate regression ≤5% AND reviewer-reassignment rate increase ≤20% vs baseline. Baseline (mean + σ) computed from trailing 30 days of `core.dialectic_sessions`; pinned in this §11 prior to implementation start (prereq PR #9). Gate halts if baseline volume insufficient.
+4. **(A.1 / ODE-floor gate)** ODE profile lands BEFORE Wave 3 implementation starts; result shows <60% of `process_agent_update` p99 floor in `governance_core/` math. Failure → halt and roadmap re-opens. Sensitivity test at 50% / 65% / 75% if result lands within ±5% of 60%. Source: prereq PR #1.
+5. **(B / boundary-cost gate)** `audit.coordination_measurements` filtered to `measurement.beam_python_boundary.*` shows p50 < lease-plane Phase A measured p50 × 2 AND p99 < lease-plane Phase A measured p99 × 3 over 21-day window. Sustained breach halts. The boundary budget includes §4(β) advisory-lock per-write cost and §9 saga PG transaction cost. Source: prereq PR #6 (must produce ≥14 days of data before thresholds can be set).
+6. **(A.2 / in-place-fix gate)** if any Python in-place fix shipped during implementation window brought `process_agent_update` p99 below 2.0s, **gate fires pre-canary-100%**.
+7. **(C / MCP SDK gate)** hands-on spike on `mcp_elixir_sdk` 1.0.1 OR `hermes_mcp` 0.14.1 recorded in `docs/handoffs/wave-3-mcp-sdk-spike-<date>.md` before implementation gate; result not "production-disqualifying."
+8. **(D / state-ownership gate)** §3 surface-by-surface analysis at gate finds no irreducible per-request semantics beyond the eight surfaces.
+9. **(E / opportunity cost gate)** operator's `docs/proposals/wave-3-go-decision-<date>.md` includes §"Calendar reasoning" naming current slip vs original target on each of {paper, fellowship, HLH, R2 Phase 2}; no item slips >25% of original deadline window. **No acceptance-memo escape.** Wave 1 elapsed time concretely named in the document; (E)'s "× 3" cap derives from the actual measured Wave 1 elapsed.
+10. **(F / dialectic-quality gate)** session-resolution rate regression ≤5% AND reviewer-reassignment rate increase ≤20% vs baseline. Baseline (mean + σ) computed from trailing 30 days of `core.dialectic_sessions`; pinned in this §11 prior to implementation start (prereq PR #9). Gate halts if baseline volume insufficient (<30 sessions in window).
 11. **Operator-led behavioral parity.** Existing Watcher / Sentinel / SDK clients hit governance MCP with no behavioral diff; REST contract preserved per §7.2 byte-equivalence definition.
 12. **Test-class green.** ExUnit + Python + integration + golden-response-parity classes all green at gate.
 
@@ -591,56 +655,61 @@ Each criterion names its measurement source. If any source is missing at gate, g
 
 Inheriting parent roadmap stop signs #1–#4, plus Wave-3-specific:
 
-- **#5** Identity-middleware port surfaces a coordination shape Wave 1+2 didn't expose (e.g., contextvar chain holding live object references that don't survive the Port boundary). Halt before canary advance.
+- **#5** Identity-middleware port surfaces a coordination shape Wave 1+2 didn't expose. Halt before canary advance.
 - **#6** Dialectic split per §5 turns out ungratified — a function classified as "computation" mutates state across calls. Re-classify, possibly re-split.
-- **#7** 503 rate during cutover/rollback exceeding 1% of requests for >60s halts the procedure (per §3.2).
-- **#8** Any observer surfaces stale `is_stable=true` reads during a `paused_agent_applied` window without checking the §9.5 gate. Halt canary advance.
-- **#9** Bounded reconciliation loop (§10.2) firing more than 5× the steady-state expected rate of cache-mismatch detections — indicates pub-sub layer is dead AND reconciliation is masking it, possibly indicating PG version-counter contention. Halt canary; investigate.
+- **#7** Sliding-window 503 rate during cutover/rollback exceeds 1% for >60s (per §3.2). Halt; complete step 3 (restore Python writers) before stopping.
+- **#8** Any observer surfaces stale `is_stable=true` reads during a non-terminal saga window without checking the §9.5 gate. Halt canary advance.
+- **#9** *(retired in v0.3 — pub-sub no longer load-bearing under §10's ETS design)*
+- **#10** Cross-session shared-agent invariant detected as violated during canary observation (`is_agent_in_active_session` failed to prevent two sagas targeting the same agent). Halt; re-derive serialization at session creation.
+- **#11** §10.3 ETS-vs-PG reconciliation detector fires more than 3× in a 24h window. Halt; investigate the unknown writer producing out-of-band PG mutations.
+- **#12** `audit.coordination_measurements` partition pressure: row insertion rate exceeds 10× the lease-plane Phase A baseline for >24h, OR partition-roll cron fails to drop a partition within 7 days of its drop window. Halt; review retention policy and emission rate.
 
 ---
 
 ## §13 What Wave 3 deliberately does NOT do
 
 - Does not port `governance_core/`. Math stays Python.
-- Does not port the MCP transport layer. Stays Python until disconfirmer (D) is run hands-on.
+- Does not port the MCP transport layer. Stays Python until disconfirmer (C) is run hands-on.
 - Does not port the LLM SDK call paths. Anthropic/OpenAI/Ollama call paths inside handlers stay Python, called from BEAM via Ports/HTTP.
 - Does not port Watcher. Single-shot LLM pattern matcher; no coordination shape.
-- Does not modify the `lease_plane` schema. Wave 3's new state lives in GenServer memory, the new `coordination` schema (§9), shadow tables (§8), or extensions to existing `core.*` tables (§10).
-- Does not extend `surface-lease-plane-v0.md` Phase B to `resident:/` unless §4 option (α) is chosen. Default recommendation is option (β) — per-agent PG advisory lock.
+- Does not modify the `lease_plane` schema. Wave 3's new state lives in BEAM ETS (live) + new PG schemas/tables (durable): `coordination` schema (§9), `core.identities_shadow` + `core.agents_shadow` (§8), `audit.coordination_measurements` (§6), `core.feature_flags` (§10).
+- Does not extend `surface-lease-plane-v0.md` Phase B to `resident:/` unless §4 option (α) is chosen.
+- Does not version columns in `core.agent_behavioral_baselines` or `core.feature_flags`. v0.2's version-counter approach is retired in favor of single-writer ETS canonical + PG durable.
 
 ---
 
 ## §14 Implementation prereq PRs
 
-All nine prereq PRs land BEFORE any commit in `elixir/handler_dispatch/` or any new `elixir/` tree on the implementation branch. CI lint check `scripts/dev/check-wave3-ode-prereq.sh` enforces.
+All ten prereq PRs land BEFORE any commit in `elixir/handler_dispatch/` or any new `elixir/` tree on the implementation branch. CI lint check `scripts/dev/check-wave3-ode-prereq.sh` enforces.
 
 | # | PR | Creates / modifies | Depends on |
 |---|-----|---------------------|------------|
-| 1 | ODE profile + shadow DDL + comparator + event_type | `db/postgres/migrations/0NN_identities_shadow.sql`, `db/postgres/migrations/0NN_agents_shadow.sql`, `src/coordination_events.py` (shadow_divergence constant), `tests/test_coordination_events.py` (updated set), `scripts/ops/wave-3-shadow-divergence-check.sql`, `scripts/ops/com.unitares.wave3-shadow-divergence-check.plist`, `scripts/ops/wave3-shadow-replay.sh`, ODE profile commit | — |
-| 2 | Feature-flag reader (BEAM + Python) + redis-pubsub-lag event | `src/feature_flags.py` (Python reader), `elixir/feature_flags/` (BEAM reader), `coordination_failure.redis_pubsub_lag` event_type registration | #1 (event_type set) |
-| 3 | `coordination_events_helpers.py::make_boundary_payload` + Elixir helper + `make_measurement_payload` | `governance_core/coordination_events_helpers.py`, Elixir helper module, CI lint (grep prohibition) | — |
+| 1 | ODE profile + shadow DDL + comparator + event_types | `db/postgres/migrations/0NN_identities_shadow.sql`, `db/postgres/migrations/0NN_agents_shadow.sql`, `src/coordination_events.py` (shadow_divergence, ets_pg_divergence, cutover_503_rate_breach constants), `tests/test_coordination_events.py`, `scripts/ops/wave-3-shadow-divergence-check.sql`, `scripts/ops/com.unitares.wave3-shadow-divergence-check.plist`, `scripts/ops/wave3-shadow-replay.sh`, ODE profile commit | — |
+| 2 | FeatureFlagWriter (BEAM ETS + GenServer) + `core.feature_flags` migration | `db/postgres/migrations/0NN_core_feature_flags.sql`, `elixir/handler_dispatch/lib/feature_flag_writer.ex`, boundary endpoint `POST /v1/feature_flag/get` for Python reads during transition, ExUnit tests for ETS-PG single-writer invariant | #1 (event_type set) |
+| 3 | `coordination_events_helpers.py` + Elixir helper + CI lint | `governance_core/coordination_events_helpers.py` (`make_boundary_payload`, `make_measurement_payload`), Elixir helper module, `scripts/dev/check-boundary-event-helpers.sh` (CI lint) | — |
 | 4 | IPUA pin integration test | `tests/integration/test_identity_path2_ipua_pin_pipeline.py` | — |
 | 5 | Golden-capture fixture + capture script + masking + parity test | `tests/fixtures/wave3_response_golden/` (50+), `scripts/dev/wave3-capture-goldens.sh`, `tests/integration/test_wave_3_response_parity.py` | — |
-| 6 | Lease-plane Phase A latency instrumentation + measurement table | `db/postgres/migrations/0NN_audit_coordination_measurements.sql`, `src/lease_plane_client.py` (emit `measurement.lease_plane.request`), `scripts/ops/wave-0-channel-report.sh`. Runs ≥14 days before disconfirmer (B) thresholds set | #3 (`make_measurement_payload`) |
-| 7 | Saga DDL + state machine | `db/postgres/migrations/0NN_coordination_session_resolution_sagas.sql` (CREATE SCHEMA + CREATE TABLE), Python interface stubs for tests | — |
-| 8 | Versioned baseline + reconciliation loop (Python side) | `db/postgres/migrations/0NN_agent_behavioral_baselines_versioned.sql`, `core.feature_flags` migration, `governance_core/baseline_reconciliation.py`, `phases.py` baseline-write path adds version increment + optional pub-sub | #2 (event_type) |
-| 9 | Dialectic baseline pinning artifact | `docs/handoffs/wave-3-dialectic-baseline-<date>.md` with mean + σ for resolution rate and reassignment rate over trailing 30 days from `core.dialectic_sessions`; criterion #10 references this commit | — |
+| 6 | Lease-plane Phase A latency instrumentation + measurement table + retention | `db/postgres/migrations/0NN_audit_coordination_measurements.sql`, `src/lease_plane_client.py` (emit `measurement.lease_plane.request`), `scripts/ops/wave-0-channel-report.sh` (read both tables), `scripts/ops/wave-0-partition-roll.sh` + plist (90-day retention). Runs ≥14 days before disconfirmer (B) thresholds set | #3 (`make_measurement_payload`) |
+| 7 | Saga DDL + state machine | `db/postgres/migrations/0NN_coordination_session_resolution_sagas.sql` (CREATE SCHEMA + CREATE TABLE + partial unique index), Python interface stubs for tests | — |
+| 8 | BaselineWriter (BEAM ETS + GenServer) | `elixir/handler_dispatch/lib/baseline_writer.ex`, boundary endpoint `POST /v1/baseline/get` for Python reads during transition, slow-reconciliation cron, ExUnit tests for ETS-PG single-writer invariant + reconciliation divergence detection | #2 (FeatureFlagWriter pattern) |
+| 9 | Dialectic baseline pinning artifact | `docs/handoffs/wave-3-dialectic-baseline-<date>.md` with mean + σ for resolution rate and reassignment rate over trailing 30 days from `core.dialectic_sessions` | — |
+| 10 | SDK consumer retry-on-503 (Watcher/Sentinel/dispatch worker/plugin) + 503-emission measurement | Consumer-side retry logic honoring `Retry-After` or `retry_after_seconds`, `src/mcp_transport.py` emits `measurement.governance_mcp.503_emission` on every 503, sliding-window 503-rate aggregator + breach event emitter | #1, #6 |
 
-PR #1 lands first (it's the disconfirmer A.1 anchor). PRs 2–9 land in dependency order shown. PR #6 must run ≥14 days before disconfirmer (B) thresholds can be set; if Wave 3 implementation gate is reached before PR #6 has 14 days of data, gate halts (per criterion #5).
+PR #1 lands first (it's the disconfirmer A.1 anchor). PRs 2–10 land in dependency order shown. PR #6 must run ≥14 days before disconfirmer (B) thresholds can be set; if Wave 3 implementation gate is reached before PR #6 has 14 days of data, gate halts (per criterion #5).
 
-Per disconfirmer (F): if these nine + their council passes consume more than (Wave 1 elapsed × 3) calendar-weeks, halt and re-evaluate.
+Per disconfirmer (E): if these ten + their council passes consume more than (Wave 1 elapsed × 3) calendar-weeks, halt and re-evaluate. Wave 1 elapsed time is concretely named in PR #9's gate document.
 
 ---
 
-## §15 Council pass — pending v0.2
+## §15 Council pass — pending v0.3
 
 Three lanes scheduled in parallel per `feedback_design-doc-council-review.md` and `feedback_council-adversarial-prompt.md`:
 
-- **dialectic-knowledge-architect** — adversarial on §0's disconfirmer set (does each threshold actually anchor to a measurement source?), the dialectic split's structural rigor (§5), and the bias-discipline framing (does §0 honestly enumerate, or is it ratification?).
-- **feature-dev:code-reviewer** — adversarial on §8 comparator (full outer join handles all three divergence kinds correctly?), §9 saga state machine (every crash point recoverable?), §10 versioned-baseline + reconciliation (correct under PG version-counter contention, BEAM GenServer restart, simultaneous Python and BEAM writes?), §6 namespace separation (CHECK constraint on new table prevents misuse?).
-- **live-verifier** — adversarial on every named file:line, endpoint, schema column, table, plist, and runtime claim. Cross-checks against running governance-mcp + lease-plane + the audit.events schemas. Specifically: confirm `core.identities` and `core.agents` columns referenced in §8 match live; confirm `core.dialectic_sessions.session_id` is TEXT not UUID; confirm `audit.coordination_events.event_type` CHECK constraint is the regex named in §6; confirm `core.agent_behavioral_baselines` exists and has a writable schema for §10's version column.
+- **dialectic-knowledge-architect** — adversarial on §0's disconfirmer set (does each threshold actually anchor to a measurement source?), the §10 ETS-pivot rigor (is it actually free of substrate-tax pile-on, or did v0.3 introduce a new bias signature?), the §5.3 boundary-cases reclassification.
+- **feature-dev:code-reviewer** — adversarial on §8 comparator (every column accounted for?), §9 saga state machine + new partial unique index (every crash point recoverable + no concurrent-INSERT footgun introduced?), §10 ETS pattern (BEAM startup race? PG-write-then-ETS-update vs ETS-write-then-PG-write trade-off?), §3.2 503 halt mechanism (counter durable, halt direction unambiguous, retry policy implementable?).
+- **live-verifier** — adversarial on every named file:line, endpoint, schema column, table, plist, and runtime claim. Cross-checks against running governance-mcp + lease-plane + audit.events schemas. Specifically: confirm every column referenced in §8 matches live schema; confirm `core.agent_behavioral_baselines` shape is `(agent_id, stats, updated_at)` per §10's read query; confirm no `version` column is referenced anywhere in v0.3 (vs v0.2's surfaces).
 
-If the v0.2 council pass returns BLOCK on any item, the discipline is **not** another amendment fold — v0.3 is the next step. v0.2 is the attempt to write the doc cleanly from third-council findings; if it didn't succeed, the cycle continues.
+If the v0.3 council pass returns BLOCK on any item, the discipline is not another amendment fold — v0.4 is the next step. Each redraft cycle must produce a structurally cleaner doc; if v0.3 also surfaces a new bias signature, that's evidence the substrate question itself needs re-litigation rather than redraft mechanics.
 
 ---
 
