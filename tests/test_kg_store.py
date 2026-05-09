@@ -714,6 +714,52 @@ class TestStoreKnowledgeGraphAdditional:
         assert context["memory_context"] == "repo+kg"
         assert context["governance_mode"] == "explicit"
 
+    @pytest.mark.asyncio
+    async def test_store_persists_r6_fork_discriminators_in_s22_context(
+        self, mock_mcp_server, mock_graph, patch_common
+    ):
+        """KG-side counterpart to the process_agent_update fork-persist regression.
+
+        Plan-row R6/S22 follow-up: the 2026-05-08 envelope audit showed 0/3 KG
+        rows carried episode_fork_kind / identity_lineage_fork. This pins that
+        knowledge.store flows server-side classification into the durable
+        provenance.s22_context envelope alongside the rest of S22 fields.
+        """
+        from types import SimpleNamespace
+        from src.mcp_handlers.knowledge.handlers import handle_store_knowledge_graph
+
+        agent_uuid = "00000000-0000-4000-8000-000000000001"
+        meta = SimpleNamespace(
+            status="active",
+            health_status="healthy",
+            total_updates=5,
+            label="ForkChild",
+            display_name="ForkChild",
+            structured_id="fork_child_test",
+            agent_id=agent_uuid,
+            agent_uuid=agent_uuid,
+            thread_id="thread-fork",
+            node_index=1,
+            parent_agent_id="00000000-0000-4000-8000-000000000000",
+            spawn_reason="new_session",
+            created_at="2026-01-01T00:00:00",
+            paused_at=None,
+        )
+        mock_mcp_server.agent_metadata[agent_uuid] = meta
+
+        result = await handle_store_knowledge_graph({
+            "agent_id": agent_uuid,
+            "summary": "S22 fork-discriminator test",
+            "harness": "claude-code",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        discovery = mock_graph.add_discovery.await_args.args[0]
+        context = discovery.provenance["s22_context"]
+        assert context["episode_fork_kind"] == "identity_lineage"
+        assert context["identity_lineage_fork"] is True
+
 
 # ============================================================================
 # handle_search_knowledge_graph - additional coverage

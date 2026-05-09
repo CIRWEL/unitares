@@ -14,7 +14,7 @@ import os
 import re
 import secrets
 from datetime import datetime
-from typing import Any, Optional, Sequence
+from typing import Optional, Sequence
 
 from mcp.types import TextContent
 
@@ -478,50 +478,6 @@ def transform_inputs(ctx: UpdateContext) -> Optional[Sequence[TextContent]]:
 # ─── Phase 4: Locked Update ────────────────────────────────────────────
 
 
-def _classify_fork_for_s22(
-    meta: Any,
-    agent_uuid: Optional[str],
-) -> tuple[Optional[str], Optional[bool]]:
-    """Classify the R6 fork kind for S22 persistence.
-
-    Returns ``(None, None)`` when ``meta`` is absent so ``build_s22_write_context``
-    omits the fields rather than stamping ``None``. The new-agent path
-    intentionally falls through here: there is no metadata yet, the geometry is
-    unknown, and any client-supplied ``identity_lineage_fork`` claim in
-    ``arguments`` will survive — that is acceptable because the next call (once
-    the registry has the row) will reclassify and override.
-
-    Called twice per request: once at ``prepare_unlocked_inputs`` (early stamp
-    using whatever ``node_index`` is currently on ``meta``) and once at
-    ``_restamp_fork_after_thread_identity_update`` after ``execute_locked_update``
-    increments ``node_index`` on session-key transitions. The post-mutation
-    re-stamp is the persisted source of truth and prevents divergence with
-    ``enrich_thread_identity`` (which runs in the response pipeline at order=230,
-    after the lock release, against the post-mutation ``node_index``).
-    """
-    if meta is None:
-        return (None, None)
-    from src.thread_identity import classify_episode_fork
-
-    try:
-        position = int(getattr(meta, "node_index", 1) or 1)
-    except (TypeError, ValueError):
-        position = 1
-    parent_uuid = getattr(meta, "parent_agent_id", None)
-    spawn_reason = getattr(meta, "spawn_reason", None)
-    agent_uuid_for_fork = (
-        agent_uuid
-        or getattr(meta, "agent_uuid", None)
-        or getattr(meta, "agent_id", None)
-    )
-    return classify_episode_fork(
-        position,
-        agent_uuid_for_fork,
-        parent_uuid,
-        spawn_reason,
-    )
-
-
 def _restamp_fork_after_thread_identity_update(ctx: UpdateContext) -> None:
     """Override S22 fork fields with the post-``node_index``-mutation classification.
 
@@ -531,10 +487,12 @@ def _restamp_fork_after_thread_identity_update(ctx: UpdateContext) -> None:
     transition would persist ``episode_fork_kind="none"`` while the response
     pipeline returns ``"sibling_locus"`` — split-brain on the durable side.
     """
+    from src.provenance_context import classify_fork_for_s22_context
+
     pc = ctx.agent_state.get("provenance_context")
     if not isinstance(pc, dict):
         return
-    fork_kind, lineage_fork = _classify_fork_for_s22(ctx.meta, ctx.agent_uuid)
+    fork_kind, lineage_fork = classify_fork_for_s22_context(ctx.meta, ctx.agent_uuid)
     if fork_kind is not None:
         pc["episode_fork_kind"] = fork_kind
     if lineage_fork is not None:
@@ -570,10 +528,15 @@ async def prepare_unlocked_inputs(ctx: UpdateContext) -> None:
         "complexity": ctx.complexity
     }
     try:
-        from src.provenance_context import build_s22_write_context
+        from src.provenance_context import (
+            build_s22_write_context,
+            classify_fork_for_s22_context,
+        )
 
         meta = mcp_server.agent_metadata.get(ctx.agent_uuid) if ctx.agent_uuid else None
-        episode_fork_kind, identity_lineage_fork = _classify_fork_for_s22(meta, ctx.agent_uuid)
+        episode_fork_kind, identity_lineage_fork = classify_fork_for_s22_context(
+            meta, ctx.agent_uuid
+        )
 
         provenance_context = build_s22_write_context(
             ctx.arguments,
