@@ -6,7 +6,6 @@ those rows back via a batched DISTINCT ON query.
 """
 from __future__ import annotations
 
-import asyncio
 from typing import Dict, Any, Sequence
 
 from mcp.types import TextContent
@@ -75,10 +74,7 @@ async def handle_record_progress_pulse(
 
     effective_uuid = params.resident_uuid or bound_uuid
 
-    # Insert row.
-    # Pattern 3 from CLAUDE.md: asyncio.wait_for with tight timeout so we
-    # degrade gracefully rather than hang if anyio/asyncpg deadlock occurs.
-    async def _insert() -> None:
+    try:
         db = get_db()
         async with db.acquire() as conn:
             await conn.execute(
@@ -90,17 +86,6 @@ async def handle_record_progress_pulse(
                 params.metric_name,
                 params.value,
             )
-
-    try:
-        await asyncio.wait_for(_insert(), timeout=4.5)
-    except asyncio.TimeoutError:
-        logger.warning("record_progress_pulse: DB insert timed out")
-        return [error_response(
-            "Database insert timed out",
-            error_code="DB_TIMEOUT",
-            error_category="system_error",
-            recovery={"action": "Retry in a moment; DB may be under load"},
-        )]
     except Exception as exc:
         logger.error("record_progress_pulse: DB insert failed: %s", exc)
         return [error_response(
