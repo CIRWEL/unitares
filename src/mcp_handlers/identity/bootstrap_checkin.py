@@ -10,7 +10,6 @@ and the timeout-safe write so the handler stays readable.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -19,12 +18,6 @@ from typing import Any, Dict, Optional, Tuple
 from src.mcp_handlers.schemas.core import BootstrapStateParams
 
 logger = logging.getLogger(__name__)
-
-
-# Bootstrap INSERT timeout (per spec §3.5 — matches the wait_for pattern
-# already used by identity_step.py). On timeout, the handler degrades to
-# no bootstrap row rather than blocking the whole onboard call.
-BOOTSTRAP_INSERT_TIMEOUT_S = 0.5
 
 
 # Cross-substrate Pi residents not in core.substrate_claims (which is the
@@ -130,7 +123,6 @@ async def write_bootstrap(
       {written: True,  state_id: <int>, next_step: "..."}
       {written: False, state_id: <existing>, payload_digest_match: <bool>}
       {written: False, reason: "substrate-earned-exempt"}
-      {written: False, reason: "insert-timeout"}
       {written: False, reason: "error", detail: "<class>"}
 
     Idempotent (DB-level via the unique partial index from migration 018):
@@ -159,17 +151,7 @@ async def write_bootstrap(
     }
 
     try:
-        state_id, was_written = await asyncio.wait_for(
-            db.record_bootstrap_state(**insert_kwargs),
-            timeout=BOOTSTRAP_INSERT_TIMEOUT_S,
-        )
-    except asyncio.TimeoutError:
-        logger.warning(
-            "[BOOTSTRAP] record_bootstrap_state timed out for identity_id=%s "
-            "(>%ss); degrading to no bootstrap row",
-            identity_id, BOOTSTRAP_INSERT_TIMEOUT_S,
-        )
-        return {"written": False, "reason": "insert-timeout"}
+        state_id, was_written = await db.record_bootstrap_state(**insert_kwargs)
     except Exception as exc:  # noqa: BLE001 — bootstrap is fail-open
         logger.warning(
             "[BOOTSTRAP] record_bootstrap_state failed for identity_id=%s: %s",
