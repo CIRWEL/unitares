@@ -14,11 +14,11 @@ The v0.2 three-lane council returned: architect BLOCK on three structural items,
 1. **§10 redesigned around BEAM-native ETS** (architect BLOCK item 3, the bias signature). The canonical live cache for baselines and feature flags is an ETS table inside the BEAM application; PostgreSQL is the durable backing store, not the hot read path. Reads from any BEAM handler are `:ets.lookup` (lock-free, microseconds, no PG round-trip). Writes go through a single GenServer that commits to PG transactionally and then updates ETS. Python doesn't have its own cache for these surfaces post-Wave-3 — Python compute paths receive whatever they need as request payload from BEAM. The PG-on-observe pattern v0.2 introduced is gone.
 2. **Disconfirmer (F) escape hatch removed** (architect BLOCK item 1). The "OR operator's written go-decision document explicitly accepts the slip" clause is dropped. >25% slip on any of {paper, fellowship, HLH, R2 Phase 2} halts Wave 3 unconditionally; re-opening requires re-scoping, not an acceptance memo.
 3. **Three new stop signs for v0.3-introduced failure modes** (architect BLOCK item 2). §12 #10 (saga GenServer.call deadlock if two sessions ever share an agent during the saga window), #11 (ETS-vs-PG divergence detected on slow reconciliation), #12 (`audit.coordination_measurements` partition pressure exceeding a stated rate without retention policy applied). v0.2's stop sign #9 (pub-sub lag) is retired because pub-sub is no longer load-bearing.
-4. **§8 comparator covers all live columns** (code-reviewer item 1). `core.agents` adds `purpose / notes / tags / archived_at`; `core.identities` adds `provisional_recorded_at`. Verified against `\d core.agents` and `\d core.identities` 2026-05-09.
+4. **§8 comparator covers all live drift-candidate columns** (code-reviewer item 1, expanded in v0.3.1 from v0.3 council pass). `core.agents` adds `purpose / notes / tags / archived_at`, plus v0.3.1 adds `allow_rebind_after_exit / allow_concurrent_contexts`; `core.identities` adds `provisional_recorded_at`, plus v0.3.1 adds `disabled_at / last_activity_at / provisional_score_id / lineage_declared_at / lineage_demoted_at / lineage_last_eval_at / chain_obs_count` (the migration 036 lineage-lifecycle cluster + operational state). Verified against `\d core.agents` (16 cols) and `\d core.identities` (21 cols) 2026-05-13. Intentionally omitted: PK/identity columns, `created_at` / `updated_at` (would always drift on shadow-write lag), generated columns (`metadata_tsv`).
 5. **§9 saga adds `UNIQUE (session_id) WHERE state NOT IN ('reverted')`** (code-reviewer item 2). Prevents two pending sagas per session even when payload hashes differ.
 6. **§3.2 503 halt mechanism specified** (code-reviewer item 4). Counter is the `measurement.governance_mcp.503_emission` event in `audit.coordination_measurements`; halt direction is "complete step 3 (restore Python writers) before stopping"; SDK consumers (Watcher / Sentinel / dispatch) must honor `Retry-After` or use the response-body `retry_after_seconds` field, named in the prereq PR.
 7. **Disconfirmers re-lettered cleanly to A/B/C/D/E/F** (architect cleanliness CONCERN). v0.1.x's (C) was retired in v0.2 but the alphabet kept the gap; v0.3 closes it. Mapping for backward citations: v0.2 (A/B/D/E/F/G) → v0.3 (A/B/C/D/E/F).
-8. **Line cite drifts fixed** (verifier). `handlers.py:1184` → `1185`; `agent_auth.py:309-515` → `309-549`; `identity_step.py:365-474` honesty-gate range corrected to `384-474`.
+8. **Line cite drifts fixed** (verifier). `agent_auth.py:309-515` → `309-549`; `identity_step.py:365-474` honesty-gate range corrected to `384-474`. v0.3.1 corrects: `handlers.py:1185` → `1184-1185` (call site at 1184, critical-section block at 1185); `schema.sql:157` → `253` (the `core.dialectic_sessions` `updated_at` trigger relevant to §2(ii) `SELECT … FOR UPDATE` safety; 157 was an EISV column DDL).
 9. **`_compare_against_timeout` re-classified to PORTS-to-BEAM** (architect §5.3 CONCERN). Pure timestamp comparison is trivially native to Elixir's `DateTime`; calling Python for it would add a boundary crossing for arithmetic.
 
 The rest of the document — §2 lock-invariant inventory, §3 state-ownership matrix (modulo line-cite fixes), §5 dialectic split (modulo `_compare_against_timeout`), §7 test strategy, §6 boundary instrumentation namespaces — survives from v0.2.
@@ -80,7 +80,7 @@ The lock surface is `StateLockManager.acquire_agent_lock_async` (`src/state_lock
 | 2 | thread_id / node_index monotonic on `active_session_key` change | `phases.py:822-851`; persist helper `phases.py:670-693` (`_persist_thread_identity_async`) | Explicit-relax with named tolerant consumer; Wave 3 BEAM saga can synchronously persist within session-resolution saga (§9), eliminating the staleness window for that path |
 | 3 | previous_void_active snapshot (read-once before ODE, used post-lock for CIRS) | `phases.py:800-807` capture; `phases.py:1125-1137` use | Single GenServer message — must NOT re-read post-ODE |
 | 4 | Monitor lifecycle: metadata fetched (743/768/789) and monitor lookup (803) refer to same agent under one lock | `phases.py:743-798, 803-807, 880-923` | Single GenServer message (corollary of 1) |
-| 5 | Dialectic session lock: SYNTHESIS→RESOLVED serialization across `submit_synthesis(agrees=True)` | `dialectic/handlers.py:1185` (uses `get_session_lock` from `dialectic/session.py:55`) | Session-keyed GenServer mailbox + saga (§9). The asyncio.Lock in `session.py:51-68` (`_SESSION_LOCKS` + `_SESSION_LOCKS_DICT_LOCK`) is replaced |
+| 5 | Dialectic session lock: SYNTHESIS→RESOLVED serialization across `submit_synthesis(agrees=True)` | `dialectic/handlers.py:1184-1185` (`get_session_lock` call at 1184 from `dialectic/session.py:55`; `async with session_lock:` block at 1185) | Session-keyed GenServer mailbox + saga (§9). The asyncio.Lock in `session.py:51-68` (`_SESSION_LOCKS` + `_SESSION_LOCKS_DICT_LOCK`) is replaced |
 | 6 | Baseline preload: `get_baseline_or_none(agent_id)` once per process; cached in `_baseline_cache` (`governance_core/ethical_drift.py:418`) | `phases.py:809-820, 856-899` | BEAM-native ETS cache (§10); Python cache disappears post-Wave-3 |
 | 7 | Monitor state snapshot: pre-ODE (596-602) used for ODE input; post-ODE re-read (1143-1147) used for CIRS emission; MUST NOT cross-contaminate | `phases.py:536-602, 1143-1147, 1156-1164, 1203-1223` | Single GenServer message carrying both snapshots; BEAM must not split |
 | 8 | Metadata cache-PG eventual consistency (corollary of 2) | `phases.py:823-851, 670-693, 928-943` | Explicit-relax as cross-layer contract |
@@ -95,7 +95,7 @@ Invariants 1, 3, 4, 5, 7, 9, 10 collapse into single GenServer mailbox messages.
 - **(ii) `SELECT … FOR UPDATE`** on `core.dialectic_sessions` row at the start of any phase-mutating message handler. Row-level lock; releases on transaction commit. Doesn't break under multi-node BEAM.
 - **(iii) GenServer-process-registry** serialization. Sufficient for single-BEAM-node only; requires re-port if multi-node ever ships.
 
-**Recommendation: (ii).** Doesn't break under multi-node BEAM (parent roadmap §"Post-Wave-3 candidates" names multi-node as a real possibility). Verify (ii) safety against the `updated_at` trigger at `db/postgres/schema.sql:157` — FOR UPDATE + trigger + concurrent reads can deadlock under PG MVCC; council should confirm trigger doesn't acquire conflicting locks before (ii) is final. (iii) becomes the optimization, taken later if profiling shows row-level lock contends.
+**Recommendation: (ii).** Doesn't break under multi-node BEAM (parent roadmap §"Post-Wave-3 candidates" names multi-node as a real possibility). Verify (ii) safety against the `trg_dialectic_sessions_updated_at` trigger at `db/postgres/schema.sql:253-256` — FOR UPDATE + trigger + concurrent reads can deadlock under PG MVCC; council should confirm trigger doesn't acquire conflicting locks before (ii) is final. (`BEFORE UPDATE` trigger updating `NEW.updated_at` and returning `NEW` should be safe with FOR UPDATE since the row lock is taken before the trigger fires, but a council pass on the actual lock-acquisition order is owed before merge.) (iii) becomes the optimization, taken later if profiling shows row-level lock contends.
 
 ---
 
@@ -266,7 +266,7 @@ Wave 3 wires `coordination_failure.beam_python_boundary.*` emissions at:
 
 ### 6.3 Measurement call-sites (new channel, `audit.coordination_measurements`)
 
-- Lease-plane Python client emits `measurement.lease_plane.request` on every request to `127.0.0.1:8788`, payload `{endpoint, method, status_code, elapsed_ms}`. Prereq PR #6 primary deliverable; runs ≥14 days before disconfirmer (B) thresholds can be set.
+- A new `src/lease_plane_client.py` (created by prereq PR #6 — does not currently exist) will emit `measurement.lease_plane.request` on every request to `127.0.0.1:8788`, payload `{endpoint, method, status_code, elapsed_ms}`. PR #6 primary deliverable; data accrues ≥14 days before disconfirmer (B) thresholds can be set.
 - Wave 3 BEAM handler-dispatch emits `measurement.beam_python_boundary.request` on every successful boundary call, payload `{endpoint, method, elapsed_ms, payload_bytes}`.
 - Python MCP transport during cutover emits `measurement.governance_mcp.503_emission` on every 503 it returns, payload `{request_path, error_reason}` — input to §3.2's halt aggregator.
 
@@ -367,21 +367,34 @@ WITH ident_compare AS (
         (c.parent_agent_id          IS DISTINCT FROM s.parent_agent_id)          AS parent_agent_id_diff,
         (c.spawn_reason             IS DISTINCT FROM s.spawn_reason)             AS spawn_reason_diff,
         (c.metadata                 IS DISTINCT FROM s.metadata)                 AS metadata_diff,
+        (c.disabled_at              IS DISTINCT FROM s.disabled_at)              AS disabled_at_diff,
+        (c.last_activity_at         IS DISTINCT FROM s.last_activity_at)         AS last_activity_at_diff,
         (c.provisional_lineage      IS DISTINCT FROM s.provisional_lineage)      AS provisional_diff,
+        (c.provisional_score_id     IS DISTINCT FROM s.provisional_score_id)     AS provisional_score_id_diff,
         (c.provisional_recorded_at  IS DISTINCT FROM s.provisional_recorded_at)  AS provisional_recorded_diff,
         (c.confirmed_at             IS DISTINCT FROM s.confirmed_at)             AS confirmed_diff,
+        (c.lineage_declared_at      IS DISTINCT FROM s.lineage_declared_at)      AS lineage_declared_diff,
+        (c.lineage_demoted_at       IS DISTINCT FROM s.lineage_demoted_at)       AS lineage_demoted_diff,
+        (c.lineage_last_eval_at     IS DISTINCT FROM s.lineage_last_eval_at)     AS lineage_last_eval_diff,
+        (c.chain_obs_count          IS DISTINCT FROM s.chain_obs_count)          AS chain_obs_count_diff,
         (c.lineage_archived_at      IS DISTINCT FROM s.lineage_archived_at)      AS lineage_archived_diff
     FROM core.identities c
     FULL OUTER JOIN core.identities_shadow s USING (agent_id)
 )
 SELECT 'identities' AS table_name, agent_id, canonical_missing, shadow_missing,
        api_key_hash_diff, status_diff, parent_agent_id_diff, spawn_reason_diff,
-       metadata_diff, provisional_diff, provisional_recorded_diff, confirmed_diff, lineage_archived_diff
+       metadata_diff, disabled_at_diff, last_activity_at_diff,
+       provisional_diff, provisional_score_id_diff, provisional_recorded_diff, confirmed_diff,
+       lineage_declared_diff, lineage_demoted_diff, lineage_last_eval_diff, chain_obs_count_diff,
+       lineage_archived_diff
 FROM ident_compare
 WHERE canonical_missing OR shadow_missing
    OR api_key_hash_diff OR status_diff OR parent_agent_id_diff
-   OR spawn_reason_diff OR metadata_diff OR provisional_diff OR provisional_recorded_diff
-   OR confirmed_diff OR lineage_archived_diff;
+   OR spawn_reason_diff OR metadata_diff
+   OR disabled_at_diff OR last_activity_at_diff
+   OR provisional_diff OR provisional_score_id_diff OR provisional_recorded_diff OR confirmed_diff
+   OR lineage_declared_diff OR lineage_demoted_diff OR lineage_last_eval_diff OR chain_obs_count_diff
+   OR lineage_archived_diff;
 
 -- core.agents divergence
 WITH agent_compare AS (
@@ -399,18 +412,22 @@ WITH agent_compare AS (
         (c.archived_at              IS DISTINCT FROM s.archived_at)              AS archived_at_diff,
         (c.spawn_reason             IS DISTINCT FROM s.spawn_reason)             AS spawn_reason_diff,
         (c.thread_id                IS DISTINCT FROM s.thread_id)                AS thread_id_diff,
-        (c.thread_position          IS DISTINCT FROM s.thread_position)          AS thread_position_diff
+        (c.thread_position          IS DISTINCT FROM s.thread_position)          AS thread_position_diff,
+        (c.allow_rebind_after_exit  IS DISTINCT FROM s.allow_rebind_after_exit)  AS allow_rebind_diff,
+        (c.allow_concurrent_contexts IS DISTINCT FROM s.allow_concurrent_contexts) AS allow_concurrent_diff
     FROM core.agents c
     FULL OUTER JOIN core.agents_shadow s USING (id)
 )
 SELECT 'agents' AS table_name, agent_id, canonical_missing, shadow_missing,
        api_key_diff, status_diff, parent_agent_id_diff, label_diff, purpose_diff,
-       notes_diff, tags_diff, archived_at_diff, spawn_reason_diff, thread_id_diff, thread_position_diff
+       notes_diff, tags_diff, archived_at_diff, spawn_reason_diff, thread_id_diff, thread_position_diff,
+       allow_rebind_diff, allow_concurrent_diff
 FROM agent_compare
 WHERE canonical_missing OR shadow_missing
    OR api_key_diff OR status_diff OR parent_agent_id_diff OR label_diff
    OR purpose_diff OR notes_diff OR tags_diff OR archived_at_diff
-   OR spawn_reason_diff OR thread_id_diff OR thread_position_diff;
+   OR spawn_reason_diff OR thread_id_diff OR thread_position_diff
+   OR allow_rebind_diff OR allow_concurrent_diff;
 ```
 
 Each non-empty row emits one `coordination_failure.beam_python_boundary.shadow_divergence` event with payload `{table_name, agent_id, kind, divergent_columns}`.
