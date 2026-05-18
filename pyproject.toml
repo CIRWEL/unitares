@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "mcp>=1.26.0,<2.0.0",
     "numpy>=1.24.0,<3.0.0",
+    "PyYAML>=6.0.0",
     # governance_core (EISV ODE engine) lives in this repo at top-level
     # governance_core/ — pure Python, no separate install needed. The package
     # was previously a separate private compiled wheel (CIRWEL/unitares-core);

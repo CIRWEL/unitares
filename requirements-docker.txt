@@ -13,6 +13,9 @@ mcp>=1.26.0,<2.0.0
 # Governance system core math (governance_core/ is in-repo, pure Python)
 numpy>=1.24.0,<3.0.0
 
+# Skill and taxonomy metadata parsing
+PyYAML>=6.0.0
+
 # HTTP server support (multi-client mode)
 uvicorn>=0.30.0
 starlette>=0.37.0

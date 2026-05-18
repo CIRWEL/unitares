@@ -70,21 +70,21 @@ BEGIN
     -- Check if agent vertex exists
     EXECUTE format(
         $q$SELECT EXISTS(
-            SELECT 1 FROM cypher('governance_graph', $$
-                MATCH (a:Agent {agent_id: '%s'}) RETURN a
-            $$) as (a agtype)
+            SELECT 1 FROM cypher('governance_graph', $cypher$
+                MATCH (a:Agent {agent_id: %L}) RETURN a
+            $cypher$) as (a agtype)
         )$q$, p_agent_id
     ) INTO v_exists;
 
     IF NOT v_exists THEN
         -- Create agent vertex
         EXECUTE format(
-            $q$SELECT * FROM cypher('governance_graph', $$
+            $q$SELECT * FROM cypher('governance_graph', $cypher$
                 CREATE (a:Agent {
-                    agent_id: '%s',
+                    agent_id: %L,
                     created_at: datetime()
                 })
-            $$) as (a agtype)$q$, p_agent_id
+            $cypher$) as (a agtype)$q$, p_agent_id
         );
     END IF;
 END;
