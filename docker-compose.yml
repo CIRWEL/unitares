@@ -32,16 +32,11 @@ services:
       - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - postgres-age-data:/var/lib/postgresql/data
-      # Schema bootstrap: docker-entrypoint-initdb.d runs *.sql in lexical
-      # order on first startup (empty data volume). Numbering matches the
-      # order documented in db/postgres/README.md. 00-init-extensions.sql
-      # is baked into the image.
-      - ./db/postgres/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-      - ./db/postgres/partitions.sql:/docker-entrypoint-initdb.d/02-partitions.sql:ro
-      - ./db/postgres/knowledge_schema.sql:/docker-entrypoint-initdb.d/03-knowledge_schema.sql:ro
-      - ./db/postgres/embeddings_schema.sql:/docker-entrypoint-initdb.d/04-embeddings_schema.sql:ro
-      - ./db/postgres/embeddings_bge_m3_schema.sql:/docker-entrypoint-initdb.d/05-embeddings_bge_m3_schema.sql:ro
-      - ./db/postgres/graph_schema.sql:/docker-entrypoint-initdb.d/06-graph_schema.sql:ro
+      # Schema bootstrap: the official Postgres entrypoint runs this script
+      # once for an empty data volume. The script owns ordering across base
+      # schema files, migrations, partition setup, and AGE graph setup.
+      - ./db/postgres/docker-initdb.sh:/docker-entrypoint-initdb.d/01-unitares-init.sh:ro
+      - ./db/postgres:/docker-entrypoint-initdb.d/unitares:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-governance}"]
       interval: 5s
